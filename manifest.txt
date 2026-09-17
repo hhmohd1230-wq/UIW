@@ -39,6 +39,7 @@ src/patches/v44_21_player_style.lua
 src/patches/v44_22_low_effects.lua
 src/patches/v44_23_cast_facing.lua
 src/dungeons/crystal_golem/v44_24_sweepers_and_domes.lua
+src/patches/v44_25_smoothness.lua
 src/experiments/flat_arena.lua
 src/experiments/field_dodge.lua
 src/99_start.lua
