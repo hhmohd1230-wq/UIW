@@ -12,10 +12,11 @@ reproduces that file byte for byte.
 loadstring(game:HttpGet("https://raw.githubusercontent.com/hhmohd1230-wq/UIW/main/loader.lua"))()
 ```
 
-The loader downloads the built script, saves it to `UIW/UIW.lua` (so Auto
-Execute still works after a teleport) and falls back to that saved copy when
-GitHub cannot be reached. To pick another build, set one of these before the
-line above:
+The loader always takes the current build from GitHub, saves it next to the
+executor (`UIW/UIW_main.lua`, `UIW_flat.lua`, `UIW_stable.lua` — so Auto
+Execute still works after a teleport) and falls back to that saved copy only
+when GitHub cannot be reached. To pick another build, set one of these before
+the line above:
 
 ```lua
 getgenv().UIW_BUILD = "flat"    -- the flat-arena experiment
