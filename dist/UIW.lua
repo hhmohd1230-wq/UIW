@@ -16237,9 +16237,10 @@ end
 do
     -- a sweeping beam: big, armed, and still moving
     CONFIG.SweeperMinSize = 20              -- studs, longest side of the hitbox
-    CONFIG.SweeperMotionGrace = 0.6         -- stays live this long after it stops
+    CONFIG.SweeperQuietGrace = 3.0          -- stays live this long after it stops changing
     CONFIG.SweeperMaxLife = 16              -- ...but never longer than this
     CONFIG.SweeperMoveEpsilon = 0.2         -- studs between samples
+    CONFIG.SweeperGrowEpsilon = 0.5         -- the bar growing counts as being alive
     CONFIG.SweeperTurnEpsilon = math.rad(1)
 
     CONFIG.DomeMaxRadius = 20               -- innerBall ends at 40 wide
@@ -16266,22 +16267,29 @@ do
 
     local function stillSweeping(container, now)
         local info = motion[container]
-        if info == false then
-            return false                    -- checked once, not a sweeper
-        end
-        if not info then
-            local part = sweeperPart(container)
-            if not part then
-                motion[container] = false
+
+        if not info or not info.Part then
+            -- The model can be registered before its hitBox has replicated, so
+            -- a miss is retried for a few seconds instead of being remembered
+            -- as "not a sweeper" for good.
+            local first = info and info.FirstLook or now
+            if not info then
+                info = { FirstLook = now, LookAt = -1 }
+                motion[container] = info
+            end
+            if now - first > 4 then
                 return false
             end
-            motion[container] = {
-                Part = part,
-                CF = part.CFrame,
-                At = now,
-                Born = now,
-                LastMove = now,
-            }
+            if now - info.LookAt < 0.4 then
+                return false
+            end
+            info.LookAt = now
+            local part = sweeperPart(container)
+            if not part then
+                return false
+            end
+            info.Part, info.CF, info.Size = part, part.CFrame, part.Size
+            info.At, info.Born, info.LastChange = now, now, now
             return true
         end
 
@@ -16289,16 +16297,28 @@ do
         if not part or not part.Parent or now - info.Born > CONFIG.SweeperMaxLife then
             return false
         end
+
+        -- A sweeper is quiet for a moment between landing and turning: it grows
+        -- its bar first. Growth counts as life, otherwise the attack is retired
+        -- during the wind-up and is gone by the time it starts killing people.
         if now - info.At >= 0.08 then
-            local cf = part.CFrame
+            local cf, size = part.CFrame, part.Size
             local moved = (cf.Position - info.CF.Position).Magnitude
             local turned = math.acos(math.clamp(cf.LookVector:Dot(info.CF.LookVector), -1, 1))
-            if moved >= CONFIG.SweeperMoveEpsilon or turned >= CONFIG.SweeperTurnEpsilon then
-                info.LastMove = now
+            local grew = (size - info.Size).Magnitude
+            if moved >= CONFIG.SweeperMoveEpsilon
+                or turned >= CONFIG.SweeperTurnEpsilon
+                or grew >= CONFIG.SweeperGrowEpsilon
+            then
+                info.LastChange = now
             end
-            info.CF, info.At = cf, now
+            info.CF, info.Size, info.At = cf, size, now
         end
-        return now - info.LastMove <= CONFIG.SweeperMotionGrace
+
+        -- While it is still doing anything at all it stays live; a bar that has
+        -- sat completely still for a while is a leftover and goes back to the
+        -- normal rules.
+        return now - info.LastChange <= CONFIG.SweeperQuietGrace
     end
 
     local oldActive = HazardTracker.IsContainerActive
@@ -16382,6 +16402,15 @@ do
         end
         local root = character.Root
         if not root then
+            return nil
+        end
+
+        -- Standing in a shelter region beats the dome: missing the falling
+        -- crystal is a one-shot kill, the dome is damage over time. Merely
+        -- walking to some other mechanic goal does not beat it - that is how
+        -- we ate 38% while strolling through a fully grown dome.
+        if self.ForcedRegionPart then
+            self.DomeEscaping = false
             return nil
         end
 
