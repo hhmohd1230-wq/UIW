@@ -26,6 +26,18 @@ getgenv().UIW_LOCAL = true      -- run the saved copy, no download
 Note: the raw file is served from a cache, so a push can take a few minutes
 to reach the loader.
 
+## Share it with someone else
+
+The one line above is all anyone needs — no key, no account, nothing to
+install. It works for other people only while this repository is **public**
+(Settings → General → Danger Zone → Change visibility). Making it private
+again breaks the link for everyone, including you; `getgenv().UIW_LOCAL = true`
+keeps working from the saved copy.
+
+Every push rebuilds `dist/UIW.lua` from `src/` automatically (GitHub Actions,
+`.github/workflows/build.yml`), so whoever runs the loader always gets the
+current source.
+
 ## Build
 
 Double-click `build.cmd`, or from a terminal in this folder:
