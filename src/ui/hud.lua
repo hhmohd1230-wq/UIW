@@ -925,6 +925,14 @@ function HUD.new(controller)
     toggleRow(automationPage, 8, "Mob Group Circles", "Marks enemy packs",
         function() return controller.ShowMobGroups end,
         function(value) controller.ShowMobGroups = value end)
+    toggleRow(automationPage, 9, "Low Effects", "Hides attack effects in boss fights and when the game lags",
+        function() return controller.LowEffects ~= false end,
+        function(value)
+            controller.LowEffects = value
+            if not value and controller.LowFx then
+                controller.LowFx:Disable()
+            end
+        end)
 
     -----------------------------------------------------------------------
     -- Settings
@@ -1055,8 +1063,9 @@ function HUD.new(controller)
         function() return CONFIG.WalkSpeed end,
         function(value)
             CONFIG.WalkSpeed = value
-            if controller.Character.Humanoid then
-                controller.Character.Humanoid.WalkSpeed = value
+            local humanoid = controller.Character.Humanoid
+            if humanoid and humanoid.WalkSpeed <= 24 then
+                humanoid.WalkSpeed = math.max(value, 16)
             end
         end, 12, 40, 1)
     sliderRow(2, "Combat Range", "Distance kept from normal enemies",

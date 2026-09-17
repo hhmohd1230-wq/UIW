@@ -157,7 +157,9 @@ function CharacterService:Refresh()
     self.Humanoid = humanoid
     self.Root = root
 
-    humanoid.WalkSpeed = CONFIG.WalkSpeed
+    if humanoid.WalkSpeed < CONFIG.WalkSpeed then
+        humanoid.WalkSpeed = CONFIG.WalkSpeed -- only raise; keeps speed buffs
+    end
 
     if changed then
         self:CalculateBodyBounds()

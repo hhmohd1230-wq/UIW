@@ -35,5 +35,7 @@ src/dungeons/crystal_golem/v44_19_electric_sweepers.lua
 src/patches/v44_20_mob_combos.lua
 src/patches/v44_19_evict_finished_hazards.lua
 src/patches/v44_20_shelter_and_sources.lua
+src/patches/v44_21_player_style.lua
+src/patches/v44_22_low_effects.lua
 src/99_start.lua
 src/99_telemetry.lua

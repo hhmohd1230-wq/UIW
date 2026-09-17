@@ -41,7 +41,7 @@ local HttpService = game:GetService("HttpService")
 local LocalPlayer = Players.LocalPlayer
 
 local CONFIG = {
-    WalkSpeed = 20,
+    WalkSpeed = 16,
 
     DesiredCombatRange = 42,
     MinimumCombatRange = 22,
@@ -301,7 +301,8 @@ local DEFAULT_SETTINGS = {
     ShowAura = true,
     ShowMobGroups = true,
     AutoExecuteOnTeleport = false,
-    WalkSpeed = 20,
+    LowEffects = true,
+    WalkSpeed = 16,
     DesiredCombatRange = 42,
     DamageCastRange = 64,
 }
@@ -1243,7 +1244,9 @@ function CharacterService:Refresh()
     self.Humanoid = humanoid
     self.Root = root
 
-    humanoid.WalkSpeed = CONFIG.WalkSpeed
+    if humanoid.WalkSpeed < CONFIG.WalkSpeed then
+        humanoid.WalkSpeed = CONFIG.WalkSpeed -- only raise; keeps speed buffs
+    end
 
     if changed then
         self:CalculateBodyBounds()
@@ -7363,6 +7366,14 @@ function HUD.new(controller)
     toggleRow(automationPage, 8, "Mob Group Circles", "Marks enemy packs",
         function() return controller.ShowMobGroups end,
         function(value) controller.ShowMobGroups = value end)
+    toggleRow(automationPage, 9, "Low Effects", "Hides attack effects in boss fights and when the game lags",
+        function() return controller.LowEffects ~= false end,
+        function(value)
+            controller.LowEffects = value
+            if not value and controller.LowFx then
+                controller.LowFx:Disable()
+            end
+        end)
 
     -----------------------------------------------------------------------
     -- Settings
@@ -7493,8 +7504,9 @@ function HUD.new(controller)
         function() return CONFIG.WalkSpeed end,
         function(value)
             CONFIG.WalkSpeed = value
-            if controller.Character.Humanoid then
-                controller.Character.Humanoid.WalkSpeed = value
+            local humanoid = controller.Character.Humanoid
+            if humanoid and humanoid.WalkSpeed <= 24 then
+                humanoid.WalkSpeed = math.max(value, 16)
             end
         end, 12, 40, 1)
     sliderRow(2, "Combat Range", "Distance kept from normal enemies",
@@ -8171,8 +8183,9 @@ function UIWController:ApplySettings(settings)
     CONFIG.DesiredCombatRange = validNumber(settings.DesiredCombatRange, 24, 60, CONFIG.DesiredCombatRange)
     CONFIG.DamageCastRange = validNumber(settings.DamageCastRange, 30, 80, CONFIG.DamageCastRange)
 
-    if self.Character and self.Character.Humanoid then
-        self.Character.Humanoid.WalkSpeed = CONFIG.WalkSpeed
+    local humanoid = self.Character and self.Character.Humanoid
+    if humanoid and humanoid.WalkSpeed < CONFIG.WalkSpeed then
+        humanoid.WalkSpeed = CONFIG.WalkSpeed
     end
 
     if not self.Enabled and self.Character and self.Dodger then
@@ -8441,8 +8454,10 @@ function UIWController:RefreshWorld()
     self.Character:Refresh()
     self.Dungeon:Refresh()
 
-    if self.Character.Humanoid then
-        self.Character.Humanoid.WalkSpeed = CONFIG.WalkSpeed
+    -- only raise the speed: never undo a speed buff (Inner Rage 16 -> 24)
+    local humanoid = self.Character.Humanoid
+    if humanoid and humanoid.WalkSpeed < CONFIG.WalkSpeed then
+        humanoid.WalkSpeed = CONFIG.WalkSpeed
     end
 end
 
@@ -14777,6 +14792,10 @@ do
     ---------------------------------------------------------------------------
     -- Warning faded -> attack done.
     ---------------------------------------------------------------------------
+    -- (v44.22: the warning is looked for during the whole attack, and a
+    -- warning that was shown and then removed also counts as faded. Before,
+    -- a warning added late or deleted after fading kept the attack "live"
+    -- forever - e.g. the Crystal Golem's crystals.)
     local oldActive = HazardTracker.IsContainerActive
     function HazardTracker:IsContainerActive(container, now)
         now = now or os.clock()
@@ -14788,23 +14807,25 @@ do
         if not state then
             return result
         end
-        if not state.PrecastPart and (now - (state.FirstSeen or now) < 0.8) then
-            local pre = container:FindFirstChild("precast", true)
-            if pre and pre:IsA("BasePart") then
-                state.PrecastPart = pre
+        local pre = state.PrecastPart
+        if (not pre or not pre.Parent) and now - (state.PrecastLookAt or -1) >= 0.3 then
+            state.PrecastLookAt = now
+            local found = container:FindFirstChild("precast", true)
+            if found and found:IsA("BasePart") then
+                state.PrecastPart = found
+                pre = found
             end
         end
-        local pre = state.PrecastPart
-        if not pre or not pre.Parent then
-            return result
-        end
-        if pre.Transparency < 0.95 then
+        local visible = pre ~= nil and pre.Parent ~= nil and pre.Transparency < 0.95
+        if visible then
             state.PrecastSeen = true
             state.PrecastLastVisible = now
             return true
         end
-        if state.PrecastSeen
-            and now - state.PrecastLastVisible > CONFIG.PostWarningWindow
+        if not state.PrecastSeen then
+            return result -- attack without a warning: trust the normal check
+        end
+        if now - state.PrecastLastVisible > CONFIG.PostWarningWindow
             and now - (state.FirstSeen or now) > CONFIG.TouchDangerWindow + 0.2
         then
             return false
@@ -15727,6 +15748,380 @@ do
             self.LastCacheTime = 0
         end
         return oldRefreshDeadSource(self, force)
+    end
+end
+
+-- v44.21: moves copied from a live player run (Enchanted Forest, 3:23 clear,
+-- recording rec_0917_205046):
+--   * one Q + E per mob pack: Q (Inner Rage) at ~60-80 studs, E about 1.1 s
+--     later at ~40-52 studs, then straight on to the next pack
+--   * Inner Rage is also used just to run faster (walk speed 16 -> 24)
+--     between packs and on the way to bosses, whenever nothing is close
+do
+    CONFIG.MobBurstRange = 46
+    CONFIG.ForestMobCastRange = 46
+
+    CONFIG.TravelBuff = true
+    CONFIG.TravelBuffMinDistance = 110   -- target this far (or none): cast the buff to run
+    CONFIG.TravelBuffClearRadius = 80    -- no living enemy this close
+    CONFIG.TravelBuffInterval = 1.0
+
+    local function nearestEnemyDistance(controller, position)
+        local best = math.huge
+        local ok, enemies = pcall(function()
+            return controller.Dungeon:GetAliveEnemies()
+        end)
+        if not ok or type(enemies) ~= "table" then
+            return best
+        end
+        for _, enemy in ipairs(enemies) do
+            if enemy.Root and enemy.Root.Parent then
+                best = math.min(best, (enemy.Root.Position - position).Magnitude)
+            end
+        end
+        return best
+    end
+
+    function UIWController:TryTravelBuff()
+        if not CONFIG.TravelBuff or not self.AutoCombat then
+            return false
+        end
+        local now = os.clock()
+        if now - (self.TravelBuffCheckAt or 0) < CONFIG.TravelBuffInterval then
+            return false
+        end
+        self.TravelBuffCheckAt = now
+
+        local character = self.Character
+        local root = character.Root
+        if not root or not character:IsAlive() then
+            return false
+        end
+        -- only while actually travelling, never while dodging or holding
+        if (self.LastCommandedMovement or Vector3.zero).Magnitude < 0.6
+            or self.Dodger.IsDodging
+            or self.Dodger.CooldownHold
+            or self.Combat.CooldownHolding
+            or self.InWaterStream
+        then
+            return false
+        end
+        local humanoid = character.Humanoid
+        if humanoid and humanoid.WalkSpeed > CONFIG.WalkSpeed + 1 then
+            return false -- already buffed
+        end
+
+        local enemy = self.CurrentEnemy
+        if enemy and enemy.Root and enemy.Root.Parent then
+            local distance = flatten(enemy.Root.Position - root.Position).Magnitude
+            if distance < CONFIG.TravelBuffMinDistance then
+                return false
+            end
+        end
+        if nearestEnemyDistance(self, root.Position) < CONFIG.TravelBuffClearRadius then
+            return false
+        end
+
+        local combat = self.Combat
+        if not combat:CanSendInput() or combat:IsBusyCasting() then
+            return false
+        end
+        for _, slot in ipairs({ "q", "e" }) do
+            local tool = combat:GetTool(slot)
+            if tool and combat:IsBuffTool(tool) and combat:IsReady(slot) then
+                combat:Press(slot)
+                self.TravelBuffs = (self.TravelBuffs or 0) + 1
+                return true
+            end
+        end
+        return false
+    end
+
+    ---------------------------------------------------------------------------
+    -- Crystal Golem: the player killed it with two Q+E combos from 60-80 studs
+    -- in about 10 s and never used the rock wall. Only go for rocks when the
+    -- golem is still alive after GolemBurstWindow seconds of fighting.
+    ---------------------------------------------------------------------------
+    CONFIG.GolemBurstWindow = 25
+
+    local oldRockWall = UIWController.GetCrystalGolemRockWallGoal
+    function UIWController:GetCrystalGolemRockWallGoal()
+        local enemy = self.CurrentEnemy
+        local golem = self:IsCrystalGolemFight() and enemy and enemy.Model or nil
+        if not golem then
+            self.GolemFightModel, self.GolemFightStart = nil, nil
+            return oldRockWall(self)
+        end
+        local root = self.Character.Root
+        local close = root and enemy.Root and flatten(enemy.Root.Position - root.Position).Magnitude <= 110
+        if self.GolemFightModel ~= golem then
+            self.GolemFightModel, self.GolemFightStart = golem, nil
+        end
+        if close and not self.GolemFightStart then
+            self.GolemFightStart = os.clock()
+        end
+        if not self.GolemFightStart or os.clock() - self.GolemFightStart < CONFIG.GolemBurstWindow then
+            self:ResetCrystalGolemMechanicState()
+            return nil, nil, nil
+        end
+        return oldRockWall(self)
+    end
+
+    local oldStep = UIWController.Step
+    function UIWController:Step()
+        oldStep(self)
+        if self.Destroyed or not self.Enabled then
+            return
+        end
+        pcall(self.TryTravelBuff, self)
+    end
+
+    local oldNew = UIWController.new
+    function UIWController.new()
+        local self = oldNew()
+        self.Version = "44.21"
+        return self
+    end
+end
+
+-- v44.22: low effects. In boss fights (and whenever the lag guard is on) the
+-- game's attack effects are hidden to keep the frame rate up:
+--   * particles / trails / beams become fully transparent and stop emitting
+--     (their Enabled flag is left alone - hazard detection reads it)
+--   * lights, explosions and screen post effects are switched off
+-- Warning (precast) and hitBox parts are never touched.
+do
+    CONFIG.LowEffectsDefault = true
+    CONFIG.LowEffectsScanBudget = 400     -- descendants handled per frame
+
+    local Lighting = game:GetService("Lighting")
+    local INVISIBLE = NumberSequence.new(1)
+    local SKIP_ROOTS = {
+        map = true, dungeon = true, Terrain = true, Camera = true,
+        UIW_HitboxESP = true, UIW_PathESP = true,
+    }
+
+    local function quiet(object)
+        local class = object.ClassName
+        if class == "ParticleEmitter" then
+            object.Rate = 0
+            object.Transparency = INVISIBLE
+        elseif class == "Trail" or class == "Beam" then
+            object.Transparency = INVISIBLE
+        elseif class == "PointLight" or class == "SpotLight" or class == "SurfaceLight"
+            or class == "Fire" or class == "Smoke" or class == "Sparkles"
+        then
+            object.Enabled = false
+        elseif class == "Explosion" then
+            object.Visible = false
+        end
+    end
+
+    local LowFx = {}
+    LowFx.__index = LowFx
+
+    function LowFx.new(controller)
+        return setmetatable({
+            Controller = controller,
+            Active = false,
+            Queue = {},
+            Done = setmetatable({}, { __mode = "k" }),
+            Watched = setmetatable({}, { __mode = "k" }),
+            Lighting = nil,
+            Maid = Maid.new(),
+            Quieted = 0,
+        }, LowFx)
+    end
+
+    function LowFx:ShouldSkipRoot(child)
+        if SKIP_ROOTS[child.Name] then
+            return true
+        end
+        if child == LocalPlayer.Character then
+            return true
+        end
+        return Players:GetPlayerFromCharacter(child) ~= nil
+    end
+
+    function LowFx:QueueRoot(child)
+        if self.Done[child] or self:ShouldSkipRoot(child) then
+            return
+        end
+        self.Done[child] = true
+        table.insert(self.Queue, child)
+        if not self.Watched[child] then
+            self.Watched[child] = true
+            child.DescendantAdded:Connect(function(object)
+                if self.Active then
+                    pcall(quiet, object)
+                end
+            end)
+        end
+    end
+
+    function LowFx:Enable()
+        if self.Active then
+            return
+        end
+        self.Active = true
+        table.clear(self.Queue)
+        self.Done = setmetatable({}, { __mode = "k" })
+        for _, child in ipairs(Workspace:GetChildren()) do
+            self:QueueRoot(child)
+        end
+        -- enemies live inside the dungeon folder
+        local dungeon = Workspace:FindFirstChild("dungeon")
+        if dungeon then
+            for _, room in ipairs(dungeon:GetChildren()) do
+                local folder = room:FindFirstChild("enemyFolder")
+                if folder then
+                    for _, enemy in ipairs(folder:GetChildren()) do
+                        self:QueueRoot(enemy)
+                    end
+                end
+            end
+        end
+        if not self.Lighting then
+            local saved = { GlobalShadows = Lighting.GlobalShadows, Effects = {} }
+            pcall(function()
+                Lighting.GlobalShadows = false
+            end)
+            for _, effect in ipairs(Lighting:GetChildren()) do
+                if effect:IsA("PostEffect") and effect.Enabled then
+                    saved.Effects[effect] = true
+                    pcall(function() effect.Enabled = false end)
+                end
+            end
+            self.Lighting = saved
+        end
+    end
+
+    function LowFx:RestoreLighting()
+        local saved = self.Lighting
+        if not saved then
+            return
+        end
+        self.Lighting = nil
+        pcall(function()
+            Lighting.GlobalShadows = saved.GlobalShadows
+        end)
+        for effect in pairs(saved.Effects) do
+            pcall(function() effect.Enabled = true end)
+        end
+    end
+
+    function LowFx:Disable()
+        if not self.Active then
+            return
+        end
+        self.Active = false
+        table.clear(self.Queue)
+        self:RestoreLighting()
+    end
+
+    function LowFx:Start()
+        self.Maid:Give(Workspace.ChildAdded:Connect(function(child)
+            if self.Active then
+                self:QueueRoot(child)
+            end
+        end))
+    end
+
+    -- process queued roots a little every frame (no frame spikes)
+    function LowFx:Step()
+        if not self.Active then
+            return
+        end
+        local budget = CONFIG.LowEffectsScanBudget
+        while budget > 0 and #self.Queue > 0 do
+            local root = table.remove(self.Queue)
+            if root.Parent then
+                pcall(quiet, root)
+                local descendants = root:GetDescendants()
+                budget -= #descendants
+                for _, object in ipairs(descendants) do
+                    local ok = pcall(quiet, object)
+                    if ok then
+                        self.Quieted += 1
+                    end
+                end
+            end
+        end
+    end
+
+    function LowFx:Destroy()
+        self:Disable()
+        self.Maid:Clean()
+    end
+
+    ---------------------------------------------------------------------------
+    local function inBossFight(controller)
+        local enemy = controller.CurrentEnemy
+        if not enemy or not enemy.Root or not enemy.Root.Parent or not isBossEnemy(enemy) then
+            return false
+        end
+        local root = controller.Character.Root
+        return root ~= nil and (enemy.Root.Position - root.Position).Magnitude <= 260
+    end
+
+    local oldNew = UIWController.new
+    function UIWController.new()
+        local self = oldNew()
+        self.LowFx = LowFx.new(self)
+        if self.LowEffects == nil then
+            self.LowEffects = CONFIG.LowEffectsDefault
+        end
+        self.Version = "44.22"
+        return self
+    end
+
+    local oldStart = UIWController.Start
+    function UIWController:Start()
+        oldStart(self)
+        self.LowFx:Start()
+    end
+
+    local oldStep = UIWController.Step
+    function UIWController:Step()
+        oldStep(self)
+        if self.Destroyed then
+            return
+        end
+        local now = os.clock()
+        if now - (self.LowFxCheckAt or 0) >= 0.5 then
+            self.LowFxCheckAt = now
+            local perf = getgenv().UIW_Perf
+            local lagging = type(perf) == "table" and perf.Lite == true
+            local want = self.LowEffects and (inBossFight(self) or lagging)
+            if want then
+                self.LowFxHoldUntil = now + 8
+                self.LowFx:Enable()
+            elseif self.LowFx.Active and now > (self.LowFxHoldUntil or 0) then
+                self.LowFx:Disable()
+            end
+        end
+        pcall(self.LowFx.Step, self.LowFx)
+    end
+
+    local oldDestroy = UIWController.Destroy
+    function UIWController:Destroy()
+        pcall(function() self.LowFx:Destroy() end)
+        return oldDestroy(self)
+    end
+
+    local oldApply = UIWController.ApplySettings
+    function UIWController:ApplySettings(settings)
+        if type(settings) == "table" and type(settings.LowEffects) == "boolean" then
+            self.LowEffects = settings.LowEffects
+        end
+        return oldApply(self, settings)
+    end
+
+    local oldGet = UIWController.GetSettings
+    function UIWController:GetSettings()
+        local settings = oldGet(self)
+        settings.LowEffects = self.LowEffects ~= false
+        return settings
     end
 end
 

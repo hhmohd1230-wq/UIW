@@ -27,6 +27,10 @@ do
     ---------------------------------------------------------------------------
     -- Warning faded -> attack done.
     ---------------------------------------------------------------------------
+    -- (v44.22: the warning is looked for during the whole attack, and a
+    -- warning that was shown and then removed also counts as faded. Before,
+    -- a warning added late or deleted after fading kept the attack "live"
+    -- forever - e.g. the Crystal Golem's crystals.)
     local oldActive = HazardTracker.IsContainerActive
     function HazardTracker:IsContainerActive(container, now)
         now = now or os.clock()
@@ -38,23 +42,25 @@ do
         if not state then
             return result
         end
-        if not state.PrecastPart and (now - (state.FirstSeen or now) < 0.8) then
-            local pre = container:FindFirstChild("precast", true)
-            if pre and pre:IsA("BasePart") then
-                state.PrecastPart = pre
+        local pre = state.PrecastPart
+        if (not pre or not pre.Parent) and now - (state.PrecastLookAt or -1) >= 0.3 then
+            state.PrecastLookAt = now
+            local found = container:FindFirstChild("precast", true)
+            if found and found:IsA("BasePart") then
+                state.PrecastPart = found
+                pre = found
             end
         end
-        local pre = state.PrecastPart
-        if not pre or not pre.Parent then
-            return result
-        end
-        if pre.Transparency < 0.95 then
+        local visible = pre ~= nil and pre.Parent ~= nil and pre.Transparency < 0.95
+        if visible then
             state.PrecastSeen = true
             state.PrecastLastVisible = now
             return true
         end
-        if state.PrecastSeen
-            and now - state.PrecastLastVisible > CONFIG.PostWarningWindow
+        if not state.PrecastSeen then
+            return result -- attack without a warning: trust the normal check
+        end
+        if now - state.PrecastLastVisible > CONFIG.PostWarningWindow
             and now - (state.FirstSeen or now) > CONFIG.TouchDangerWindow + 0.2
         then
             return false

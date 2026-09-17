@@ -1,6 +1,6 @@
 
 local CONFIG = {
-    WalkSpeed = 20,
+    WalkSpeed = 16,
 
     DesiredCombatRange = 42,
     MinimumCombatRange = 22,
@@ -260,7 +260,8 @@ local DEFAULT_SETTINGS = {
     ShowAura = true,
     ShowMobGroups = true,
     AutoExecuteOnTeleport = false,
-    WalkSpeed = 20,
+    LowEffects = true,
+    WalkSpeed = 16,
     DesiredCombatRange = 42,
     DamageCastRange = 64,
 }

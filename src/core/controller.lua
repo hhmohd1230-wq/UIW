@@ -99,8 +99,9 @@ function UIWController:ApplySettings(settings)
     CONFIG.DesiredCombatRange = validNumber(settings.DesiredCombatRange, 24, 60, CONFIG.DesiredCombatRange)
     CONFIG.DamageCastRange = validNumber(settings.DamageCastRange, 30, 80, CONFIG.DamageCastRange)
 
-    if self.Character and self.Character.Humanoid then
-        self.Character.Humanoid.WalkSpeed = CONFIG.WalkSpeed
+    local humanoid = self.Character and self.Character.Humanoid
+    if humanoid and humanoid.WalkSpeed < CONFIG.WalkSpeed then
+        humanoid.WalkSpeed = CONFIG.WalkSpeed
     end
 
     if not self.Enabled and self.Character and self.Dodger then
@@ -369,8 +370,10 @@ function UIWController:RefreshWorld()
     self.Character:Refresh()
     self.Dungeon:Refresh()
 
-    if self.Character.Humanoid then
-        self.Character.Humanoid.WalkSpeed = CONFIG.WalkSpeed
+    -- only raise the speed: never undo a speed buff (Inner Rage 16 -> 24)
+    local humanoid = self.Character.Humanoid
+    if humanoid and humanoid.WalkSpeed < CONFIG.WalkSpeed then
+        humanoid.WalkSpeed = CONFIG.WalkSpeed
     end
 end
 
