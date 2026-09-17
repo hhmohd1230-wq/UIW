@@ -6,6 +6,26 @@ split by area; `dist/UIW.lua` is the joined, ready-to-run file.
 Base version: **v44.20** (from `UIW_v44.17.lua`). The split is lossless: building
 reproduces that file byte for byte.
 
+## Load it in Volt
+
+```lua
+loadstring(game:HttpGet("https://raw.githubusercontent.com/hhmohd1230-wq/UIW/main/loader.lua"))()
+```
+
+The loader downloads the built script, saves it to `UIW/UIW.lua` (so Auto
+Execute still works after a teleport) and falls back to that saved copy when
+GitHub cannot be reached. To pick another build, set one of these before the
+line above:
+
+```lua
+getgenv().UIW_BUILD = "flat"    -- the flat-arena experiment
+getgenv().UIW_BUILD = "stable"  -- the v44.22 build
+getgenv().UIW_LOCAL = true      -- run the saved copy, no download
+```
+
+Note: the raw file is served from a cache, so a push can take a few minutes
+to reach the loader.
+
 ## Build
 
 Double-click `build.cmd`, or from a terminal in this folder:
