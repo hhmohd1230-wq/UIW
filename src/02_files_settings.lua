@@ -39,7 +39,8 @@ function SafeFile.Write(path, content, force)
     if type(writefile) ~= "function" or type(content) ~= "string" then
         return false
     end
-    if SafeFile.LastContent[path] == content then
+    -- skip identical rewrites, but only while the file is really still there
+    if SafeFile.LastContent[path] == content and SafeFile.IsFile(path) then
         return true
     end
     local now = os.clock()
@@ -103,6 +104,147 @@ local function writeSettingsFile(settings)
     end
     local ok = SafeFile.WriteJson(SETTINGS_FILE, settings, true)
     return ok, ok and "Config saved" or "Could not save config (check the executor workspace folder)"
+end
+
+function SafeFile.Delete(path)
+    SafeFile.LastContent[path] = nil
+    SafeFile.LastWrite[path] = nil
+    if type(delfile) ~= "function" or not SafeFile.IsFile(path) then
+        return not SafeFile.IsFile(path)
+    end
+    pcall(delfile, path)
+    return not SafeFile.IsFile(path)
+end
+
+---------------------------------------------------------------------------
+-- Named configs: UIW/configs/<name>.json
+-- Script-wide switches (which config loads on start, auto execute, where
+-- the script file is) live in UIW/uiw_meta.json.
+---------------------------------------------------------------------------
+local ConfigStore = {
+    Folder = SETTINGS_FOLDER .. "/configs",
+    MetaFile = SETTINGS_FOLDER .. "/uiw_meta.json",
+    DefaultScriptPath = SETTINGS_FOLDER .. "/UIW.lua",
+}
+
+function ConfigStore.Supported()
+    return type(writefile) == "function" and type(readfile) == "function" and type(isfile) == "function"
+end
+
+function ConfigStore.CleanName(name)
+    name = tostring(name or "")
+    name = string.gsub(name, "[^%w%s_%-]", "")
+    name = string.gsub(name, "^%s+", "")
+    name = string.gsub(name, "%s+$", "")
+    name = string.sub(name, 1, 24)
+    if name == "" then
+        return nil
+    end
+    return name
+end
+
+function ConfigStore.PathFor(name)
+    return ConfigStore.Folder .. "/" .. name .. ".json"
+end
+
+function ConfigStore.EnsureFolder()
+    SafeFile.EnsureFolder()
+    if type(isfolder) ~= "function" or type(makefolder) ~= "function" then
+        return
+    end
+    local ok, exists = pcall(isfolder, ConfigStore.Folder)
+    if not (ok and exists) then
+        pcall(makefolder, ConfigStore.Folder)
+    end
+end
+
+function ConfigStore.List()
+    local names = {}
+    if type(listfiles) ~= "function" then
+        return names
+    end
+    ConfigStore.EnsureFolder()
+    local ok, files = pcall(listfiles, ConfigStore.Folder)
+    if not ok or type(files) ~= "table" then
+        return names
+    end
+    for _, file in ipairs(files) do
+        local name = string.match(tostring(file), "([^/\\]+)%.json$")
+        if name then
+            table.insert(names, name)
+        end
+    end
+    table.sort(names, function(a, b)
+        return string.lower(a) < string.lower(b)
+    end)
+    return names
+end
+
+function ConfigStore.Exists(name)
+    return name ~= nil and SafeFile.IsFile(ConfigStore.PathFor(name))
+end
+
+function ConfigStore.Save(name, data)
+    if not ConfigStore.Supported() then
+        return false, "Your executor cannot save files"
+    end
+    ConfigStore.EnsureFolder()
+    local ok = SafeFile.WriteJson(ConfigStore.PathFor(name), data, true)
+    return ok, ok and ("Saved config \"" .. name .. "\"") or "Could not write the config file"
+end
+
+function ConfigStore.Load(name)
+    if not ConfigStore.Exists(name) then
+        return nil, "Config \"" .. tostring(name) .. "\" not found"
+    end
+    local data = SafeFile.ReadJson(ConfigStore.PathFor(name))
+    if not data then
+        return nil, "Config \"" .. name .. "\" could not be read"
+    end
+    return data
+end
+
+function ConfigStore.Delete(name)
+    local ok = SafeFile.Delete(ConfigStore.PathFor(name))
+    if not ok then
+        return false, type(delfile) == "function" and "Could not delete the config" or "Your executor cannot delete files"
+    end
+    return true, "Deleted config \"" .. name .. "\""
+end
+
+function ConfigStore.ReadMeta()
+    local meta = SafeFile.ReadJson(ConfigStore.MetaFile) or {}
+    return {
+        AutoLoad = type(meta.AutoLoad) == "string" and meta.AutoLoad or "",
+        AutoExecute = meta.AutoExecute == true,
+        ScriptPath = type(meta.ScriptPath) == "string" and meta.ScriptPath or nil,
+    }
+end
+
+function ConfigStore.WriteMeta(meta)
+    return SafeFile.WriteJson(ConfigStore.MetaFile, {
+        AutoLoad = meta.AutoLoad or "",
+        AutoExecute = meta.AutoExecute == true,
+        ScriptPath = meta.ScriptPath,
+    }, true)
+end
+
+-- One-time move of the old single UIW/settings.json into the new layout.
+function ConfigStore.Migrate()
+    if SafeFile.IsFile(ConfigStore.MetaFile) or not SafeFile.IsFile(SETTINGS_FILE) then
+        return
+    end
+    local old = SafeFile.ReadJson(SETTINGS_FILE)
+    local meta = { AutoLoad = "", AutoExecute = false }
+    if old then
+        if ConfigStore.Save("default", old) then
+            meta.AutoLoad = "default"
+        end
+        meta.AutoExecute = old.AutoExecuteOnTeleport == true
+    end
+    if ConfigStore.WriteMeta(meta) then
+        SafeFile.Delete(SETTINGS_FILE)
+    end
 end
 
 local function validNumber(value, minimum, maximum, fallback)

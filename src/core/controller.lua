@@ -27,8 +27,10 @@ function UIWController.new()
     self.ShowAura = true
     self.ShowMobGroups = true
     self.AutoExecuteOnTeleport = false
+    self.ActiveConfig = nil
+    self.AutoLoadConfig = ""
 
-    self:LoadSettings(false)
+    self:InitConfigs()
 
     self.HUD = HUD.new(self)
 
@@ -78,7 +80,10 @@ function UIWController:ApplySettings(settings)
     if type(settings) ~= "table" then return false end
 
     local function readBoolean(name, fallback)
-        return type(settings[name]) == "boolean" and settings[name] or fallback
+        if type(settings[name]) == "boolean" then
+            return settings[name]
+        end
+        return fallback
     end
 
     self.Enabled = readBoolean("Enabled", self.Enabled)
@@ -89,7 +94,6 @@ function UIWController:ApplySettings(settings)
     self.AutoRetryEnabled = readBoolean("AutoRetryEnabled", self.AutoRetryEnabled)
     self.ShowAura = readBoolean("ShowAura", self.ShowAura)
     self.ShowMobGroups = readBoolean("ShowMobGroups", self.ShowMobGroups)
-    self.AutoExecuteOnTeleport = readBoolean("AutoExecuteOnTeleport", self.AutoExecuteOnTeleport)
 
     CONFIG.WalkSpeed = validNumber(settings.WalkSpeed, 12, 40, CONFIG.WalkSpeed)
     CONFIG.DesiredCombatRange = validNumber(settings.DesiredCombatRange, 24, 60, CONFIG.DesiredCombatRange)
@@ -97,6 +101,14 @@ function UIWController:ApplySettings(settings)
 
     if self.Character and self.Character.Humanoid then
         self.Character.Humanoid.WalkSpeed = CONFIG.WalkSpeed
+    end
+
+    if not self.Enabled and self.Character and self.Dodger then
+        pcall(function()
+            self.Character:ReleaseAutomationFacing()
+            self.Dodger.CommittedDodgeDirection = Vector3.zero
+            self.Dodger.DodgeCommitUntil = 0
+        end)
     end
 
     if self.HUD then self.HUD:RefreshControls() end
@@ -113,86 +125,242 @@ function UIWController:GetSettings()
         AutoRetryEnabled = self.AutoRetryEnabled,
         ShowAura = self.ShowAura,
         ShowMobGroups = self.ShowMobGroups,
-        AutoExecuteOnTeleport = self.AutoExecuteOnTeleport,
         WalkSpeed = CONFIG.WalkSpeed,
         DesiredCombatRange = CONFIG.DesiredCombatRange,
         DamageCastRange = CONFIG.DamageCastRange,
     }
 end
 
-function UIWController:SaveSettings()
-    local ok, message = writeSettingsFile(self:GetSettings())
-    if self.HUD then self.HUD:SetStatus(ok and "RUNNING" or "IDLE", message) end
+---------------------------------------------------------------------------
+-- Configs
+---------------------------------------------------------------------------
+function UIWController:Notify(text, kind)
+    if self.HUD and self.HUD.Notify then
+        self.HUD:Notify(text, kind)
+    end
+end
+
+function UIWController:WriteMeta()
+    local meta = ConfigStore.ReadMeta()
+    meta.AutoLoad = self.AutoLoadConfig or ""
+    meta.AutoExecute = self.AutoExecuteOnTeleport == true
+    meta.ScriptPath = self:GetScriptPath()
+    return ConfigStore.WriteMeta(meta)
+end
+
+-- Where the script file lives in the executor workspace. A loader can set
+-- getgenv().UIW_SCRIPT_PATH before running the script to change it.
+function UIWController:GetScriptPath()
+    local custom = getgenv().UIW_SCRIPT_PATH
+    if type(custom) == "string" and custom ~= "" then
+        return custom
+    end
+    local meta = ConfigStore.ReadMeta()
+    return meta.ScriptPath or ConfigStore.DefaultScriptPath
+end
+
+function UIWController:InitConfigs()
+    pcall(ConfigStore.Migrate)
+    local meta = ConfigStore.ReadMeta()
+    self.AutoExecuteOnTeleport = meta.AutoExecute
+    self.AutoLoadConfig = meta.AutoLoad
+    if meta.AutoLoad ~= "" then
+        local data = ConfigStore.Load(meta.AutoLoad)
+        if data then
+            self:ApplySettings(data)
+            self.ActiveConfig = meta.AutoLoad
+            self.StartupNotice = "Auto loaded config \"" .. meta.AutoLoad .. "\""
+        else
+            -- the auto-load config was removed outside the script
+            self.AutoLoadConfig = ""
+            self:WriteMeta()
+        end
+    end
+end
+
+function UIWController:ListConfigs()
+    return ConfigStore.List()
+end
+
+function UIWController:SaveConfig(name)
+    name = ConfigStore.CleanName(name) or self.ActiveConfig or "default"
+    local ok, message = ConfigStore.Save(name, self:GetSettings())
+    if ok then
+        self.ActiveConfig = name
+    end
+    self:Notify(message, ok and "success" or "error")
+    if self.HUD then self.HUD:RefreshConfigs() end
     return ok
 end
 
-function UIWController:LoadSettings(showStatus)
-    local settings, message = readSettingsFile()
-    local ok = settings ~= nil and self:ApplySettings(settings)
-    if showStatus and self.HUD then
-        self.HUD:SetStatus(ok and "RUNNING" or "IDLE", ok and "Config loaded" or message)
+function UIWController:LoadConfig(name)
+    local data, message = ConfigStore.Load(name)
+    local ok = data ~= nil and self:ApplySettings(data)
+    if ok then
+        self.ActiveConfig = name
     end
+    self:Notify(ok and ("Loaded config \"" .. name .. "\"") or message, ok and "success" or "error")
+    if self.HUD then self.HUD:RefreshConfigs() end
+    return ok
+end
+
+-- Deleting the config in use puts everything back to the defaults,
+-- including Auto Load and Auto Execute.
+function UIWController:DeleteConfig(name)
+    local ok, message = ConfigStore.Delete(name)
+    if not ok then
+        self:Notify(message, "error")
+        return false
+    end
+    local wasActive = name == self.ActiveConfig or name == self.AutoLoadConfig
+    if name == self.AutoLoadConfig then
+        self.AutoLoadConfig = ""
+    end
+    if wasActive then
+        self.ActiveConfig = nil
+        self.AutoLoadConfig = ""
+        self.AutoExecuteOnTeleport = false
+        self:ApplySettings(DEFAULT_SETTINGS)
+        message = message .. " - everything reset to defaults"
+    end
+    self:WriteMeta()
+    self:Notify(message, "warning")
+    if self.HUD then self.HUD:RefreshConfigs() end
+    return true
+end
+
+function UIWController:SetAutoLoad(name)
+    if name and name ~= "" and not ConfigStore.Exists(name) then
+        self:Notify("Save the config first, then turn on Auto Load", "error")
+        return false
+    end
+    self.AutoLoadConfig = name or ""
+    local ok = self:WriteMeta()
+    if not ok then
+        self:Notify("Could not save the Auto Load choice", "error")
+    elseif self.AutoLoadConfig ~= "" then
+        self:Notify("\"" .. self.AutoLoadConfig .. "\" will load on every start", "success")
+    else
+        self:Notify("Auto Load off", "info")
+    end
+    if self.HUD then self.HUD:RefreshConfigs() end
+    return ok
+end
+
+function UIWController:SetAutoExecute(value)
+    self.AutoExecuteOnTeleport = value == true
+    local ok = self:WriteMeta()
+    if not ok then
+        self:Notify("Could not save the Auto Execute choice", "error")
+    elseif value then
+        self:ConfigureAutoExecute(true)
+    else
+        self:Notify("Auto Execute off", "info")
+    end
+    if self.HUD then self.HUD:RefreshConfigs() end
     return ok
 end
 
 function UIWController:ResetSettings()
     self:ApplySettings(DEFAULT_SETTINGS)
-    local ok, message = writeSettingsFile(self:GetSettings())
-    if self.HUD then
-        self.HUD:SetStatus(ok and "RUNNING" or "IDLE", ok and "Defaults restored and saved" or message)
-    end
+    self:Notify("Switches and sliders reset to defaults (saved configs kept)", "info")
+    if self.HUD then self.HUD:RefreshConfigs() end
 end
 
-function UIWController:ConfigureAutoExecute()
+-- Old names, kept for anything that still calls them.
+function UIWController:SaveSettings()
+    return self:SaveConfig(self.ActiveConfig or "default")
+end
+
+function UIWController:LoadSettings()
+    if self.ActiveConfig then
+        return self:LoadConfig(self.ActiveConfig)
+    end
+    return false
+end
+
+---------------------------------------------------------------------------
+-- Auto execute: the executor runs this code once after the next teleport.
+-- It re-reads uiw_meta.json at that moment, so turning the switch off later
+-- still stops it, and it loads the script file named in the meta file.
+---------------------------------------------------------------------------
+local AUTO_EXECUTE_CODE = [==[
+if getgenv().UIW_AUTOEXEC_STARTED then
+    return -- queued more than once; the first copy does the work
+end
+getgenv().UIW_AUTOEXEC_STARTED = true
+task.spawn(function()
+    if not game:IsLoaded() then
+        game.Loaded:Wait()
+    end
+    local HttpService = game:GetService("HttpService")
+    local function exists(path)
+        local ok, result = pcall(isfile, path)
+        return ok and result == true
+    end
+    local okMeta, meta = pcall(function()
+        return HttpService:JSONDecode(readfile("UIW/uiw_meta.json"))
+    end)
+    if not okMeta or type(meta) ~= "table" or meta.AutoExecute ~= true then
+        return
+    end
+    task.wait(1)
+    local existing = getgenv().UIW
+    if existing and not existing.Destroyed then
+        return -- already running (executor auto-execute folder)
+    end
+    for _, path in ipairs({ meta.ScriptPath, "UIW/UIW.lua" }) do
+        if type(path) == "string" and exists(path) then
+            getgenv().UIW_SCRIPT_PATH = path
+            local chunk, err = loadstring(readfile(path))
+            if not chunk then
+                warn("[UIW] Auto Execute: " .. tostring(err))
+                return
+            end
+            local ok, runErr = pcall(chunk)
+            if not ok then
+                warn("[UIW] Auto Execute: " .. tostring(runErr))
+            end
+            return
+        end
+    end
+    warn("[UIW] Auto Execute: script file not found (" .. tostring(meta.ScriptPath) .. ")")
+end)
+]==]
+
+function UIWController:ConfigureAutoExecute(announce)
     if not self.AutoExecuteOnTeleport then
-        if self.HUD then self.HUD:SetRetryStatus("Auto Execute disabled", COLORS.Idle) end
         return false
     end
 
-    local queueTeleport = queue_on_teleport
+    local path = self:GetScriptPath()
+    if not SafeFile.IsFile(path) then
+        self:Notify("Auto Execute needs the script saved at workspace/" .. path, "error")
+        if self.HUD then self.HUD:SetRetryStatus("auto execute: " .. path .. " missing", COLORS.Emergency) end
+        return false
+    end
+
+    if getgenv().UIW_AUTOEXEC_QUEUED == game.JobId then
+        if announce then self:Notify("Auto Execute on - runs after every teleport", "success") end
+        return true
+    end
+
+    local queueTeleport = (type(queue_on_teleport) == "function" and queue_on_teleport)
+        or (type(queueonteleport) == "function" and queueonteleport)
         or (syn and syn.queue_on_teleport)
         or (fluxus and fluxus.queue_on_teleport)
 
     if type(queueTeleport) ~= "function" then
-        if self.HUD then self.HUD:SetRetryStatus("executor has no teleport queue", COLORS.Emergency) end
+        self:Notify("Your executor has no teleport queue", "error")
         return false
     end
 
-    local queuedCode = [[
-        task.wait(2)
-        local HttpService = game:GetService("HttpService")
-        local enabled = true
-        pcall(function()
-            if type(isfile) == "function" and isfile("UIW/settings.json") then
-                local settings = HttpService:JSONDecode(readfile("UIW/settings.json"))
-                enabled = settings.AutoExecuteOnTeleport == true
-            end
-        end)
-        local existing = getgenv().UIW
-        if existing and not existing.Destroyed then
-            enabled = false -- already started by the executor's own auto-execute
-        end
-        local function exists(p)
-            local ok, r = pcall(isfile, p)
-            return ok and r == true
-        end
-        if enabled and type(isfile) == "function" and type(readfile) == "function" and type(loadstring) == "function" then
-            local path = exists("UIW/UIW_Aura_Mage_v13.lua") and "UIW/UIW_Aura_Mage_v13.lua"
-                or (exists("UIW_Aura_Mage_v13.lua") and "UIW_Aura_Mage_v13.lua" or nil)
-            if path then
-                local ok, err = pcall(function()
-                    loadstring(readfile(path))()
-                end)
-                if not ok then warn("[UIW] Auto Execute failed: " .. tostring(err)) end
-            else
-                warn("[UIW] Auto Execute file missing: UIW_Aura_Mage_v13.lua")
-            end
-        end
-    ]]
-
-    local ok, err = pcall(queueTeleport, queuedCode)
-    if self.HUD then
-        self.HUD:SetRetryStatus(ok and "Auto Execute queued for teleport" or ("queue failed: " .. tostring(err)), ok and COLORS.Running or COLORS.Emergency)
+    local ok, err = pcall(queueTeleport, AUTO_EXECUTE_CODE)
+    if ok then
+        getgenv().UIW_AUTOEXEC_QUEUED = game.JobId
+        if announce then self:Notify("Auto Execute on - runs after every teleport", "success") end
+    else
+        self:Notify("Auto Execute failed: " .. tostring(err), "error")
     end
     return ok
 end

@@ -24,6 +24,27 @@ Load it in Volt:
 loadstring(readfile("UIW/UIW.lua"))()
 ```
 
+## Configs and Auto Execute
+
+Everything is in the **Configs** tab of the window.
+
+| File (Volt `workspace/UIW/`) | What it holds |
+| --- | --- |
+| `configs/<name>.json` | One saved setup (switches + sliders) |
+| `uiw_meta.json` | Which config loads on start (`AutoLoad`), `AutoExecute`, `ScriptPath` |
+
+* **Save** writes the current setup under the typed name. **Load** applies it.
+* **Delete** asks once more ("Sure?"). Deleting the config that is in use or
+  set to Auto Load puts everything back to the defaults, including Auto Load
+  and Auto Execute.
+* **Auto Load** loads the selected config every time the script starts.
+* **Auto Execute** queues the script for the next teleport and re-queues
+  itself in every new server. After the teleport it runs the file named in
+  `ScriptPath` (default `UIW/UIW.lua`, which `build.cmd -Volt` writes). To use
+  another file, set `getgenv().UIW_SCRIPT_PATH = "UIW/other.lua"` before
+  loading the script once.
+* An old `UIW/settings.json` is moved to `configs/default.json` on first start.
+
 ## Layout
 
 | Path | What it is |
@@ -31,7 +52,7 @@ loadstring(readfile("UIW/UIW.lua"))()
 | `manifest.txt` | Build order. Every part is listed here once. |
 | `src/00_bootstrap.lua` | Waits for the game/player, removes an old instance, services |
 | `src/01_config.lua` | `CONFIG`, default settings |
-| `src/02_files_settings.lua` | Safe file access, settings file |
+| `src/02_files_settings.lua` | Safe file access, `ConfigStore` (named configs + meta file) |
 | `src/03_names_and_helpers.lua` | Enemy/boss/hazard name tables, filters, math helpers, `Maid` |
 | `src/core/character.lua` | `CharacterService` (movement, facing) |
 | `src/core/self_abilities.lua` | `SelfAbilityTracker` (our own spells) |
@@ -42,7 +63,8 @@ loadstring(readfile("UIW/UIW.lua"))()
 | `src/core/dodge_solver.lua` | `DodgeSolver` |
 | `src/core/combat.lua` | `CombatController` (Q/E casting) |
 | `src/core/controller.lua` | `UIWController` (targets, main loop) |
-| `src/ui/*` | Hitbox ESP, path ESP, target health bar, tactical display, HUD |
+| `src/ui/hud.lua` | The hub window (tabs, cards, toasts, config page) |
+| `src/ui/*` | Hitbox ESP, path ESP, target health bar, tactical display |
 | `src/patches/*` | Version layers that extend the classes above (v42 ... v44.20) |
 | `src/dungeons/<name>/*` | Dungeon-specific logic (Aquatic Temple, Enchanted Forest, Crystal Golem) |
 | `src/99_start.lua` | Creates and starts the controller |
