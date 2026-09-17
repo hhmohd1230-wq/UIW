@@ -890,6 +890,8 @@ function HUD.new(controller)
         return row
     end
 
+    self.AddToggleRow = toggleRow   -- later parts can add their own switches
+
     local function setMaster(value)
         controller.Enabled = value
         if not value then
