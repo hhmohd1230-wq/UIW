@@ -24,12 +24,72 @@ do
     CONFIG.FieldRescueUnder = 0.8        -- take over when our spot dies within this
     CONFIG.FieldBetterBy = 0.4           -- ...and only if we find something this much better
     CONFIG.FieldCacheTime = 0.05
+    CONFIG.FieldSpinMinRate = math.rad(6)  -- slower than this counts as not turning
+    CONFIG.FieldSpinMaxRate = math.rad(400)
+    CONFIG.FieldSpinHorizon = 1.6          -- how far ahead a turning box is followed
+    CONFIG.FieldSpinSteps = 8              -- fewest time samples for a turning box
+    CONFIG.FieldSpinMaxSteps = 32          -- and the most, so one beam cannot eat a frame
 
     local Field = {}
 
-    -- every live attack as { CF, HalfX, HalfZ, HalfY, V }
+    -- rotate around Y, +X towards +Z, the same sense as atan2(z, x)
+    local function spinXZ(vector, radians)
+        local c, s = math.cos(radians), math.sin(radians)
+        return Vector3.new(
+            vector.X * c - vector.Z * s,
+            vector.Y,
+            vector.X * s + vector.Z * c
+        )
+    end
+
+    -- How fast a hazard part is turning. Sweeping beams (the golem's electrical
+    -- cross, anything that rotates around an anchor) look like a harmless static
+    -- wall to a straight-line model: they never move towards you, they turn into
+    -- you. Measuring the turn is what makes them predictable.
+    local spinTracks = setmetatable({}, { __mode = "k" })
+
+    local function trackSpin(part, cf, now)
+        local look = flatten(cf.LookVector)
+        if look.Magnitude < 0.01 then
+            return 0
+        end
+        local angle = math.atan2(look.Z, look.X)
+        local info = spinTracks[part]
+        if not info then
+            spinTracks[part] = { Angle = angle, At = now, Omega = 0 }
+            return 0
+        end
+        local dt = now - info.At
+        if dt >= 0.03 then
+            local delta = (angle - info.Angle + math.pi) % (math.pi * 2) - math.pi
+            local measured = delta / dt
+            if math.abs(measured) <= CONFIG.FieldSpinMaxRate then
+                info.Omega = info.Omega * 0.5 + measured * 0.5
+            end
+            info.Angle, info.At = angle, now
+        end
+        if math.abs(info.Omega) < CONFIG.FieldSpinMinRate then
+            return 0
+        end
+        return info.Omega
+    end
+
+    -- what a turning part turns around: its model's pivot, else itself
+    local function pivotOf(part)
+        local model = part.Parent
+        if model and model:IsA("Model") then
+            local ok, cf = pcall(model.GetPivot, model)
+            if ok and cf then
+                return cf.Position
+            end
+        end
+        return part.Position
+    end
+
+    -- every live attack as { CF, HalfX, HalfZ, HalfY, V, Omega, Pivot }
     function Field.Collect(solver)
         local hazards = solver.Hazards
+        local now = os.clock()
         local list = {}
         for _, data in ipairs(hazards.CachedActive or {}) do
             local part = data.Part
@@ -41,12 +101,39 @@ do
                     cf, half = part.CFrame, part.Size * 0.5
                 end
                 local velocity = flatten(hazards:GetProjectileVelocity(data))
+                local omega = 0
+                local pivot = nil
+                local okSpin, measured = pcall(trackSpin, part, part.CFrame, now)
+                if okSpin and measured ~= 0 then
+                    omega = measured
+                    pivot = pivotOf(part)
+                    -- a turning hitbox has to be predicted from its live pose;
+                    -- the frozen warning pose would be turned forward from the
+                    -- wrong starting angle
+                    cf, half = part.CFrame, part.Size * 0.5
+                end
+                local reach = nil
+                if omega ~= 0 then
+                    -- furthest the bar reaches from what it turns around, so a
+                    -- point outside that circle can be rejected in two steps
+                    local right = flatten(cf.RightVector) * (half.X + CONFIG.FieldPadXZ)
+                    local ahead = flatten(cf.LookVector) * (half.Z + CONFIG.FieldPadXZ)
+                    local middle = flatten(cf.Position - pivot)
+                    reach = 0
+                    for _, corner in ipairs({ middle + right + ahead, middle + right - ahead,
+                                              middle - right + ahead, middle - right - ahead }) do
+                        reach = math.max(reach, corner.Magnitude)
+                    end
+                end
                 table.insert(list, {
                     CF = cf,
+                    RMax = reach,
                     HX = half.X + CONFIG.FieldPadXZ,
                     HY = half.Y + CONFIG.FieldPadY,
                     HZ = half.Z + CONFIG.FieldPadXZ,
                     V = velocity,
+                    Omega = omega,
+                    Pivot = pivot,
                     Part = part,
                 })
             end
@@ -54,8 +141,45 @@ do
         return list
     end
 
+    -- is `point` covered by the box as it will stand `t` seconds from now?
+    -- Instead of turning the box we turn the point backwards around the pivot,
+    -- which is the same test and needs no CFrame rebuilding.
+    local function coveredAt(box, point, t)
+        local p = point - box.V * t
+        if box.Omega ~= 0 and box.Pivot then
+            p = box.Pivot + spinXZ(p - box.Pivot, -box.Omega * t)
+        end
+        local relative = box.CF:PointToObjectSpace(p)
+        return math.abs(relative.X) <= box.HX
+            and math.abs(relative.Y) <= box.HY
+            and math.abs(relative.Z) <= box.HZ
+    end
+
     -- earliest time in [0, horizon] at which `point` is inside the box
     local function hitTime(box, point, horizon)
+        -- a turning box cannot be solved with straight-line algebra, so walk the
+        -- next couple of seconds in steps and take the first step that covers us
+        if box.Omega ~= 0 and box.Pivot then
+            local radius = flatten(point - box.Pivot).Magnitude
+            if radius > (box.RMax or math.huge) then
+                return nil          -- the beam cannot reach this far out
+            end
+            -- The step has to be short enough that the point cannot cross the
+            -- bar between two samples, or a thin fast beam is stepped straight
+            -- over and reported as safe.
+            local sweep = math.abs(box.Omega) * math.max(radius, 1)   -- studs per second
+            local span = math.min(horizon, CONFIG.FieldSpinHorizon)
+            local step = math.min(span / CONFIG.FieldSpinSteps, math.max(box.HX, 0.5) / math.max(sweep, 0.01))
+            local steps = math.clamp(math.ceil(span / step), CONFIG.FieldSpinSteps, CONFIG.FieldSpinMaxSteps)
+            step = span / steps
+            for index = 0, steps do
+                if coveredAt(box, point, index * step) then
+                    return math.max((index - 1) * step, 0)
+                end
+            end
+            return nil
+        end
+
         local relative = box.CF:PointToObjectSpace(point)
         if math.abs(relative.Y) > box.HY then
             return nil
@@ -180,7 +304,7 @@ do
             end
         end
 
-        local result = { HereSafe = hereSafe, Best = best, Boxes = #boxes }
+        local result = { HereSafe = hereSafe, Best = best, Boxes = #boxes, List = boxes }
         solver.FieldCache = { At = now, Result = result }
         return result
     end
@@ -197,6 +321,22 @@ do
         end
         local root = self.CharacterService.Root
         if not root or not self.CharacterService:IsAlive() then
+            return direction, yaw, emergency, dodging
+        end
+
+        -- Do not argue with a boss-specific solver that already answered this
+        -- frame. The Crystal Golem's sweeper planner knows the rotating gap and
+        -- deliberately stands still inside a crystal shelter; the field would
+        -- read that same stillness as "about to be hit" and walk us out of it.
+        -- (a hold inside the shelter also comes through as this reason, so the
+        -- one check covers both cases and cannot go stale after the fight)
+        if self.LastDodgeReason == "golem-sweeper-spin" then
+            return direction, yaw, emergency, dodging
+        end
+
+        -- Same for any mechanic that pins us to a region (cleanse bubble, built
+        -- wall): staying inside it is the point.
+        if self.ForcedRegionPart and self:IsPointInsideForcedRegion(root.Position) then
             return direction, yaw, emergency, dodging
         end
 
@@ -220,7 +360,8 @@ do
         if direction and direction.Magnitude > 0.05 then
             local step = math.min(CONFIG.DodgeDistance, best.Radius)
             local point = root.Position + unit(flatten(direction)) * step
-            oldSafe = Field.SafeUntil(Field.Collect(self), point, CONFIG.FieldHorizon) - step / math.max(self.CharacterService.Humanoid.WalkSpeed, 8)
+            oldSafe = Field.SafeUntil(result.List, point, CONFIG.FieldHorizon)
+                - step / math.max(self.CharacterService.Humanoid.WalkSpeed, 8)
         end
 
         if best.Margin > oldSafe + CONFIG.FieldBetterBy then
