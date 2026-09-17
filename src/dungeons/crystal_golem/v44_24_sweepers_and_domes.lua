@@ -124,14 +124,26 @@ do
     ---------------------------------------------------------------------------
     local GOLEM_STAND_IN = { Model = { Name = "Crystal Golem" } }
 
+    -- The bar is 50 studs across, so it reaches 25 from the geode. Anything
+    -- further out than this is not our problem yet - and hijacking movement for
+    -- a geode 150 studs away is pure lost damage time.
+    CONFIG.GolemSweeperEngage = 55
+
     local oldSpinnerMove = DodgeSolver.GetCrystalGolemSpinnerMove
     function DodgeSolver:GetCrystalGolemSpinnerMove(routeDirection, enemy, targetYaw)
         local targeted = enemy and enemy.Model
             and normalizeEnemyName(enemy.Model.Name) == "crystal golem"
         if not targeted then
+            local root = self.CharacterService.Root
             local ok, list = pcall(self.Hazards.GetCrystalGolemSweepers, self.Hazards)
-            if ok and type(list) == "table" and #list > 0 then
-                enemy = GOLEM_STAND_IN
+            if ok and root and type(list) == "table" then
+                for _, laser in ipairs(list) do
+                    local pivot = laser.Pivot or laser.Center
+                    if pivot and flatten(root.Position - pivot).Magnitude <= CONFIG.GolemSweeperEngage then
+                        enemy = GOLEM_STAND_IN
+                        break
+                    end
+                end
             end
         end
         return oldSpinnerMove(self, routeDirection, enemy, targetYaw)

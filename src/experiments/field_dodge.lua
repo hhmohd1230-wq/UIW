@@ -21,8 +21,15 @@ do
     CONFIG.FieldBearings = 16
     CONFIG.FieldPadXZ = 2.0              -- body half width added to every box
     CONFIG.FieldPadY = 7
-    CONFIG.FieldRescueUnder = 0.8        -- take over when our spot dies within this
-    CONFIG.FieldBetterBy = 0.4           -- ...and only if we find something this much better
+    -- The field is a rescue, not the driver. It used to take over 87-133 times
+    -- in one boss fight, which is the script repositioning instead of standing
+    -- and killing things - runs got slower even though deaths went down. These
+    -- thresholds only let it speak up when the spot we are on is genuinely
+    -- about to be hit and it has something clearly better.
+    CONFIG.FieldRescueUnder = 0.45       -- our spot dies this soon
+    CONFIG.FieldBetterBy = 0.8           -- ...and the new one is this much better
+    CONFIG.FieldCommitTime = 0.35        -- keep a chosen escape instead of re-steering
+    CONFIG.FieldPanicUnder = 0.18        -- about to land: re-steer anyway
     CONFIG.FieldCacheTime = 0.05
     CONFIG.FieldBusyBoxes = 40           -- past this many attacks we ease off
     CONFIG.FieldBusyCacheTime = 0.12
@@ -384,6 +391,23 @@ do
     local oldSolve = DodgeSolver.Solve
     function DodgeSolver:Solve(routeDirection, enemy, targetYaw)
         local direction, yaw, emergency, dodging = oldSolve(self, routeDirection, enemy, targetYaw)
+
+        -- how much of the fight we spend being pushed around, so "is it slower?"
+        -- can be answered with a number instead of a feeling
+        local clock = os.clock()
+        local since = clock - (self.DodgeClock or clock)
+        self.DodgeClock = clock
+        if since < 0.5 then
+            self.SecondsAlive = (self.SecondsAlive or 0) + since
+            if dodging then
+                self.SecondsDodging = (self.SecondsDodging or 0) + since
+            end
+        end
+
+        local owner = self.Owner
+        if owner and owner.FieldDodge == false then
+            return direction, yaw, emergency, dodging
+        end
         if not CONFIG.FieldDodge or self.ForceRouteMovement then
             return direction, yaw, emergency, dodging
         end
@@ -421,6 +445,20 @@ do
             return direction, yaw, emergency, dodging   -- we are fine where we are
         end
 
+        -- Stick with an escape we already committed to instead of picking a new
+        -- direction every frame; the constant re-steering is what ate the clock.
+        local now = os.clock()
+        if self.FieldCommitDir
+            and now < (self.FieldCommitUntil or 0)
+            and result.HereSafe > CONFIG.FieldPanicUnder
+        then
+            self.LastDodgeReason = "field"
+            self.CachedDirection = self.FieldCommitDir
+            self.CachedDodging = true
+            self.IsDodging = true
+            return self.FieldCommitDir, targetYaw, false, true
+        end
+
         local best = result.Best
         if not best then
             return direction, yaw, emergency, dodging
@@ -437,6 +475,8 @@ do
 
         if best.Margin > oldSafe + CONFIG.FieldBetterBy then
             self.FieldTakeovers = (self.FieldTakeovers or 0) + 1
+            self.FieldCommitDir = best.Direction
+            self.FieldCommitUntil = now + CONFIG.FieldCommitTime
             self.LastDodgeReason = "field"
             self.CachedDirection = best.Direction
             self.CachedDodging = true
@@ -452,7 +492,32 @@ do
     function UIWController.new()
         local self = oldNew()
         self.Version = "45-flat+field"
+        if self.FieldDodge == nil then
+            self.FieldDodge = true
+        end
+        local hud = self.HUD
+        if hud and hud.AddToggleRow and hud.Pages and hud.Pages.Automation then
+            hud.AddToggleRow(hud.Pages.Automation, 11, "Field Dodge (test)",
+                "Escapes by how long a spot stays safe; turn off for the older dodge",
+                function() return self.FieldDodge ~= false end,
+                function(value) self.FieldDodge = value end)
+        end
         return self
+    end
+
+    local oldApplyField = UIWController.ApplySettings
+    function UIWController:ApplySettings(settings)
+        if type(settings) == "table" and type(settings.FieldDodge) == "boolean" then
+            self.FieldDodge = settings.FieldDodge
+        end
+        return oldApplyField(self, settings)
+    end
+
+    local oldGetField = UIWController.GetSettings
+    function UIWController:GetSettings()
+        local settings = oldGetField(self)
+        settings.FieldDodge = self.FieldDodge ~= false
+        return settings
     end
 end
 
