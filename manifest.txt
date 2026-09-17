@@ -38,5 +38,6 @@ src/patches/v44_20_shelter_and_sources.lua
 src/patches/v44_21_player_style.lua
 src/patches/v44_22_low_effects.lua
 src/patches/v44_23_cast_facing.lua
+src/experiments/flat_arena.lua
 src/99_start.lua
 src/99_telemetry.lua
