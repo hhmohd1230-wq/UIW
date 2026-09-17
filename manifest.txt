@@ -42,5 +42,6 @@ src/dungeons/crystal_golem/v44_24_sweepers_and_domes.lua
 src/patches/v44_25_smoothness.lua
 src/experiments/flat_arena.lua
 src/experiments/field_dodge.lua
+src/patches/v44_26_no_ping_pong.lua
 src/99_start.lua
 src/99_telemetry.lua
