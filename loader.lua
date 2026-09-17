@@ -1,6 +1,6 @@
 -- UIW loader: loadstring(readfile("UIW/loader.lua"))()
 -- UIW_BUILD: "main" (default), "flat", or "stable".
--- UIW_LOCAL: nil = saved build first; true = saved only; false = download first.
+-- UIW_LOCAL: nil/false = GitHub first, saved copy as fallback; true = saved only.
 -- UIW_BRANCH: optional Git branch override, with its own separate cache.
 local env = getgenv()
 local builds = {
@@ -40,7 +40,9 @@ local function download()
     local encoded = branch:gsub("[^%w%-_%.~]", function(c)
         return string.format("%%%02X", string.byte(c))
     end)
+    -- the ?cb= is only there to get past the raw.githubusercontent cache
     local url = "https://raw.githubusercontent.com/hhmohd1230-wq/UIW/" .. encoded .. "/" .. build.file
+        .. "?cb=" .. tostring(math.floor(os.time() / 60))
     local ok, source = pcall(function() return game:HttpGet(url, true) end)
     if not ok then return nil, "Download failed for " .. url .. ": " .. tostring(source) end
     local chunk, err = compile(source)
@@ -60,20 +62,19 @@ local function download()
 end
 local chunk, firstError, secondError, persisted
 local origin
-if env.UIW_LOCAL == false then
+if env.UIW_LOCAL == true then
+    -- offline / pinned: run only what is already on disk
+    chunk, firstError = readSaved()
+    origin, persisted = saved, chunk ~= nil
+else
+    -- normal: always take the current build from GitHub, fall back to the
+    -- saved copy only when GitHub cannot be reached
     chunk, firstError, persisted = download()
     origin = "GitHub"
     if not chunk then
         warn("[UIW loader] " .. tostring(firstError) .. "; trying " .. saved)
         chunk, secondError = readSaved()
         origin, persisted = saved, chunk ~= nil
-    end
-else
-    chunk, firstError = readSaved()
-    origin, persisted = saved, chunk ~= nil
-    if not chunk and env.UIW_LOCAL ~= true then
-        chunk, secondError, persisted = download()
-        origin = "GitHub"
     end
 end
 if not chunk then

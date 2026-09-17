@@ -6,6 +6,39 @@ split by area; `dist/UIW.lua` is the joined, ready-to-run file.
 Base version: **v44.20** (from `UIW_v44.17.lua`). The split is lossless: building
 reproduces that file byte for byte.
 
+## Load it in Volt
+
+```lua
+loadstring(game:HttpGet("https://raw.githubusercontent.com/hhmohd1230-wq/UIW/main/loader.lua"))()
+```
+
+The loader always takes the current build from GitHub, saves it next to the
+executor (`UIW/UIW_main.lua`, `UIW_flat.lua`, `UIW_stable.lua` — so Auto
+Execute still works after a teleport) and falls back to that saved copy only
+when GitHub cannot be reached. To pick another build, set one of these before
+the line above:
+
+```lua
+getgenv().UIW_BUILD = "flat"    -- the flat-arena experiment
+getgenv().UIW_BUILD = "stable"  -- the v44.22 build
+getgenv().UIW_LOCAL = true      -- run the saved copy, no download
+```
+
+Note: the raw file is served from a cache, so a push can take a few minutes
+to reach the loader.
+
+## Share it with someone else
+
+The one line above is all anyone needs — no key, no account, nothing to
+install. It works for other people only while this repository is **public**
+(Settings → General → Danger Zone → Change visibility). Making it private
+again breaks the link for everyone, including you; `getgenv().UIW_LOCAL = true`
+keeps working from the saved copy.
+
+Every push rebuilds `dist/UIW.lua` from `src/` automatically (GitHub Actions,
+`.github/workflows/build.yml`), so whoever runs the loader always gets the
+current source.
+
 ## Build
 
 Double-click `build.cmd`, or from a terminal in this folder:
