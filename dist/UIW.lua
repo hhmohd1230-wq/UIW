@@ -17125,14 +17125,15 @@ do
             return direction, yaw, emergency, dodging
         end
 
-        -- Do not argue with a boss-specific solver that already answered this
-        -- frame. The Crystal Golem's sweeper planner knows the rotating gap and
-        -- deliberately stands still inside a crystal shelter; the field would
-        -- read that same stillness as "about to be hit" and walk us out of it.
-        -- (a hold inside the shelter also comes through as this reason, so the
-        -- one check covers both cases and cannot go stale after the fight)
-        if self.LastDodgeReason == "golem-sweeper-spin"
-            or self.LastDodgeReason == "golem-dome"
+        -- The Crystal Golem's sweeper planner deliberately stands still inside a
+        -- crystal shelter, and the field would read that stillness as "about to
+        -- be hit" and walk us out of it. That hold is worth protecting.
+        -- Its *moving* answers are not: measured live, we took four ticks of
+        -- 40% while standing 11 studs inside a turning bar with that planner in
+        -- control. On those frames the field is allowed to argue, now that it
+        -- can predict a turning attack.
+        if self.LastDodgeReason == "golem-dome"
+            or (self.LastDodgeReason == "golem-sweeper-spin" and self.GolemSafeSpotHolding)
         then
             return direction, yaw, emergency, dodging
         end
