@@ -142,6 +142,13 @@ do
     ---------------------------------------------------------------------------
     function HazardTracker:GetGrowingDomes()
         local now = os.clock()
+        -- the dodge solver asks every frame; one look per 10th of a second is
+        -- plenty for something that takes 1.6 s to grow, and keeps this off the
+        -- frame budget when a boss arena is full of parts
+        local cached = self.DomeCache
+        if cached and now - cached.At < 0.1 then
+            return cached.List
+        end
         local states = self.DomeStates or setmetatable({}, { __mode = "k" })
         self.DomeStates = states
         local list = {}
@@ -173,6 +180,7 @@ do
             end
         end
 
+        self.DomeCache = { At = now, List = list }
         return list
     end
 
