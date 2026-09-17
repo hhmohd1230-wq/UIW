@@ -17516,12 +17516,19 @@ do
         if held and now - (self.FlipGuardAt or 0) <= CONFIG.FlipGuardWindow
             and moving:Dot(held) < CONFIG.FlipGuardDot
         then
-            -- a genuine emergency is allowed to turn us straight round
-            if emergency then
+            -- A genuine emergency is allowed to turn us straight round - but
+            -- only once. Measured at the Ancient Tree, its sweeper planner
+            -- flagged an emergency and reversed three times inside 0.3 s, which
+            -- is rocking on the spot, not escaping. After the second reversal in
+            -- half a second we stop honouring it and step sideways instead.
+            local recent = (now - (self.FlipBurstAt or 0) <= 0.6) and (self.FlipBurst or 0) or 0
+            if emergency and recent < 2 then
+                self.FlipBurst, self.FlipBurstAt = recent + 1, now
                 self.FlipGuardDir, self.FlipGuardAt = moving, now
                 self.FlipsAllowed = (self.FlipsAllowed or 0) + 1
                 return direction, yaw, emergency, dodging
             end
+            self.FlipBurst, self.FlipBurstAt = recent + 1, now
 
             local sideways = sideStep(self, held, moving, targetYaw)
             local kept = sideways or held
