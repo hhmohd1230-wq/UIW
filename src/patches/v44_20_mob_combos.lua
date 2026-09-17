@@ -9,6 +9,7 @@ do
     CONFIG.MobComboWindow = 6.0
     CONFIG.MobBuffCarryWindow = 3.2
     CONFIG.MobStageDistance = 90
+    CONFIG.MobBurstDirectRange = 70   -- beyond this the route decides the way
     CONFIG.ForestMobCastRange = CONFIG.MobBurstRange
 
     local function getMobSpellState(combat)
@@ -86,10 +87,22 @@ do
 
             if burstArmed then
                 local root = self.CharacterService.Root
-                local toward = unit(flatten(enemy.Root.Position - root.Position))
-                local distance = flatten(enemy.Root.Position - root.Position).Magnitude
-                if distance > CONFIG.MobBurstRange - 2 and toward.Magnitude > 0 then
-                    return unit(toward * 1.35 + unit(flatten(routeDirection)) * 0.25)
+                local offset = enemy.Root.Position - root.Position
+                local toward = unit(flatten(offset))
+                local distance = flatten(offset).Magnitude
+                -- Only walk straight at the mob when it is close, on our level
+                -- and nothing is in between; otherwise keep following the path
+                -- (a straight line through walls got the character stuck).
+                if distance > CONFIG.MobBurstRange - 2
+                    and distance <= CONFIG.MobBurstDirectRange
+                    and toward.Magnitude > 0
+                    and math.abs(offset.Y) <= CONFIG.EngageMaxHeightDiff
+                    and combat and combat:HasLineOfSight(enemy)
+                then
+                    local step = math.min(distance - CONFIG.MobBurstRange + 2, 16)
+                    if self.Geometry:IsWideSegmentClear(root.Position, root.Position + toward * step, CONFIG.PathPreferredRadius) then
+                        return unit(toward * 1.35 + unit(flatten(routeDirection)) * 0.25)
+                    end
                 end
             end
         end
