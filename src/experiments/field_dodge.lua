@@ -24,6 +24,10 @@ do
     CONFIG.FieldRescueUnder = 0.8        -- take over when our spot dies within this
     CONFIG.FieldBetterBy = 0.4           -- ...and only if we find something this much better
     CONFIG.FieldCacheTime = 0.05
+    CONFIG.FieldBusyBoxes = 40           -- past this many attacks we ease off
+    CONFIG.FieldBusyCacheTime = 0.12
+    CONFIG.FieldBusyBearings = 10
+    CONFIG.FieldMaxBoxes = 48            -- hard ceiling, nearest kept
     CONFIG.FieldSpinMinRate = math.rad(6)  -- slower than this counts as not turning
     CONFIG.FieldSpinMaxRate = math.rad(400)
     CONFIG.FieldSpinHorizon = 1.6          -- how far ahead a turning box is followed
@@ -86,11 +90,27 @@ do
         return part.Position
     end
 
+    -- How far a box could possibly matter: we only ever ask about points on the
+    -- rings around us, so anything that cannot reach the outermost ring inside
+    -- the horizon is dropped before any maths is done on it. At the Ancient
+    -- Tree this takes the list from ~138 boxes to a handful, which is the
+    -- difference between 28 and 60 fps.
+    local function ringReach()
+        local most = 0
+        for _, radius in ipairs(CONFIG.FieldRings) do
+            most = math.max(most, radius)
+        end
+        return most
+    end
+
     -- every live attack as { CF, HalfX, HalfZ, HalfY, V, Omega, Pivot }
     function Field.Collect(solver)
         local hazards = solver.Hazards
         local now = os.clock()
         local list = {}
+        local root = solver.CharacterService and solver.CharacterService.Root
+        local origin = root and root.Position or nil
+        local rings = ringReach() + CONFIG.FieldPadXZ + 2
         for _, data in ipairs(hazards.CachedActive or {}) do
             local part = data.Part
             if part and part.Parent then
@@ -125,6 +145,18 @@ do
                         reach = math.max(reach, corner.Magnitude)
                     end
                 end
+                if origin then
+                    local far
+                    if pivot then
+                        far = flatten(origin - pivot).Magnitude > (reach or 0) + rings
+                    else
+                        local span = half.Magnitude + velocity.Magnitude * CONFIG.FieldHorizon
+                        far = flatten(origin - cf.Position).Magnitude > span + rings
+                    end
+                    if far then
+                        continue
+                    end
+                end
                 table.insert(list, {
                     CF = cf,
                     RMax = reach,
@@ -138,6 +170,16 @@ do
                 })
             end
         end
+        if origin and #list > CONFIG.FieldMaxBoxes then
+            table.sort(list, function(a, b)
+                return flatten(a.CF.Position - origin).Magnitude
+                    < flatten(b.CF.Position - origin).Magnitude
+            end)
+            for index = #list, CONFIG.FieldMaxBoxes + 1, -1 do
+                list[index] = nil
+            end
+        end
+
         return list
     end
 
@@ -261,7 +303,9 @@ do
         end
         local now = os.clock()
         local cached = solver.FieldCache
-        if cached and now - cached.At < CONFIG.FieldCacheTime then
+        local busy = cached and cached.Result and (cached.Result.Boxes or 0) > CONFIG.FieldBusyBoxes
+        local interval = busy and CONFIG.FieldBusyCacheTime or CONFIG.FieldCacheTime
+        if cached and now - cached.At < interval then
             return cached.Result
         end
 
@@ -273,9 +317,12 @@ do
         local spot = preferredSpot(solver, origin)
 
         local best, bestScore
+        local bearings = (#boxes > CONFIG.FieldBusyBoxes)
+            and CONFIG.FieldBusyBearings
+            or CONFIG.FieldBearings
         for _, radius in ipairs(CONFIG.FieldRings) do
-            for i = 0, CONFIG.FieldBearings - 1 do
-                local direction = unit(rotateXZ(Vector3.new(1, 0, 0), i * 360 / CONFIG.FieldBearings))
+            for i = 0, bearings - 1 do
+                local direction = unit(rotateXZ(Vector3.new(1, 0, 0), i * 360 / bearings))
                 local point = origin + direction * radius
                 local safe = Field.SafeUntil(boxes, point, horizon)
                 local arrival = radius / speed
