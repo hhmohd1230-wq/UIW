@@ -16782,6 +16782,7 @@ do
     CONFIG.FieldBusyCacheTime = 0.12
     CONFIG.FieldBusyBearings = 10
     CONFIG.FieldMaxBoxes = 48            -- hard ceiling, nearest kept
+    CONFIG.FieldTimeBudget = 0.0015      -- seconds per solve, never more
     CONFIG.FieldSpinMinRate = math.rad(6)  -- slower than this counts as not turning
     CONFIG.FieldSpinMaxRate = math.rad(400)
     CONFIG.FieldSpinHorizon = 1.6          -- how far ahead a turning box is followed
@@ -16924,6 +16925,12 @@ do
                 })
             end
         end
+        if #list > CONFIG.FieldBusyBoxes then
+            for _, box in ipairs(list) do
+                box.Busy = true
+            end
+        end
+
         if origin and #list > CONFIG.FieldMaxBoxes then
             table.sort(list, function(a, b)
                 return flatten(a.CF.Position - origin).Magnitude
@@ -16966,7 +16973,8 @@ do
             local sweep = math.abs(box.Omega) * math.max(radius, 1)   -- studs per second
             local span = math.min(horizon, CONFIG.FieldSpinHorizon)
             local step = math.min(span / CONFIG.FieldSpinSteps, math.max(box.HX, 0.5) / math.max(sweep, 0.01))
-            local steps = math.clamp(math.ceil(span / step), CONFIG.FieldSpinSteps, CONFIG.FieldSpinMaxSteps)
+            local ceiling = box.Busy and 12 or CONFIG.FieldSpinMaxSteps
+            local steps = math.clamp(math.ceil(span / step), CONFIG.FieldSpinSteps, ceiling)
             step = span / steps
             for index = 0, steps do
                 if coveredAt(box, point, index * step) then
@@ -17074,8 +17082,21 @@ do
         local bearings = (#boxes > CONFIG.FieldBusyBoxes)
             and CONFIG.FieldBusyBearings
             or CONFIG.FieldBearings
+        -- A solve must never be allowed to eat a frame. At the Forest Dragon,
+        -- 48 turning attacks x 40 candidate spots took the game to 6 fps, and a
+        -- dodge computed too late is worth nothing anyway. When the budget runs
+        -- out we keep the best spot found so far and move on.
+        local startedAt = os.clock()
+        local outOfTime = false
         for _, radius in ipairs(CONFIG.FieldRings) do
+            if outOfTime then
+                break
+            end
             for i = 0, bearings - 1 do
+                if os.clock() - startedAt > CONFIG.FieldTimeBudget then
+                    outOfTime = true
+                    break
+                end
                 local direction = unit(rotateXZ(Vector3.new(1, 0, 0), i * 360 / bearings))
                 local point = origin + direction * radius
                 local safe = Field.SafeUntil(boxes, point, horizon)
