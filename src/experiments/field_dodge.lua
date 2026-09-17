@@ -330,7 +330,9 @@ do
         -- read that same stillness as "about to be hit" and walk us out of it.
         -- (a hold inside the shelter also comes through as this reason, so the
         -- one check covers both cases and cannot go stale after the fight)
-        if self.LastDodgeReason == "golem-sweeper-spin" then
+        if self.LastDodgeReason == "golem-sweeper-spin"
+            or self.LastDodgeReason == "golem-dome"
+        then
             return direction, yaw, emergency, dodging
         end
 
