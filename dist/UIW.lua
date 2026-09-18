@@ -17798,7 +17798,13 @@ do
     local timed = {firstBossPassiveBeam=true, firstBossJumpSlam=true, spearmanStrikeHitbox=true,
         northernMageShot=true, northernWarriorCircleStrike=true}
     local windup = {firstBossPassiveBeam=1.0, firstBossJumpSlam=2.0}
+    -- Found by logging everything that appears during the fight: the whirlwinds
+    -- and the shurikens are bare MeshParts sitting straight in the workspace
+    -- with no hitBox and no precast child, so the hazard tracker never saw them
+    -- at all. firstBossCrissCross crosses the arena at 30 studs/s - that is the
+    -- one that kept killing us "out of nowhere".
     local moving = {northernMageShot=true, firstBossSeekingSpikes=true,
+        firstBossCrissCross=true, firstBossBigSpike=true,
         firstBossWhirlwind=true, firstBossWhirlWind=true, spearmanStrike=true}
     local tracks = setmetatable({}, {__mode="k"})
     local function live(container, now)
@@ -17872,7 +17878,10 @@ do
             seen[part] = true
             local cf, half = part.CFrame, part.Size*0.5
             if (part.Position-root.Position).Magnitude > half.Magnitude+130 then return end
-            local pad=name=="firstBossJumpSlam" and 16 or 5
+            local pad=name=="firstBossJumpSlam" and 16
+                or ((name=="firstBossCrissCross" or name=="firstBossBigSpike"
+                    or name=="firstBossSeekingSpikes") and 8)
+                or 5
             list[#list+1] = {CF=cf, Half=half+Vector3.new(pad,3,pad), V=velocity, Omega=omega or 0,
                 Starts=0,
                 Ends=info and windup[name] and math.max(0.3,windup[name]+0.5-(now-info.Seen)) or math.huge,
@@ -18072,6 +18081,125 @@ do
         if self.NLDodging then self.LastMovement=best end
         self.NLLiveBoxes,self.NLLiveBeams=#list,#beams
         return best,yaw,self.NLEmergency,self.NLDodging
+    end
+end
+-- v44.29: Northern Lands - spend the speed buff on escapes, not just travel.
+--
+-- The travel buff only fires while walking between rooms with nothing near us.
+-- The two attacks that actually need speed are the Champion's stomp, where a
+-- 67 stud circle lands on your head and you have to clear ~45 studs, and the
+-- whirlwinds, which cross the arena in a straight line and are only survivable
+-- if you get out of the lane in time. At 16 walk speed the stomp circle is a
+-- 2.8 second walk; at the buffed 24 it is 1.9, which is the difference between
+-- leaving and not.
+do
+    CONFIG.NLEscapeBuff = true
+    CONFIG.NLEscapeBuffInterval = 0.4     -- how often we are allowed to consider it
+    CONFIG.NLSlamBuffPad = 6              -- inside circle + this, spend the buff
+    CONFIG.NLRushSpeed = 22               -- studs/s that counts as a charging attack
+    CONFIG.NLRushWindow = 1.6             -- seconds ahead we care about it
+    CONFIG.NLRushMiss = 12                -- how close its path comes before it matters
+
+    local function inNorthernLands()
+        local value = Workspace:FindFirstChild("dungeonName")
+        return value and value.Value == "Northern Lands"
+    end
+
+    -- are we standing in a stomp circle?
+    local function slamPush(root)
+        local worst = 0
+        for _, model in ipairs(Workspace:GetChildren()) do
+            if model.Name == "firstBossJumpSlam" then
+                local box = model:FindFirstChild("hitBox", true)
+                if box and box:IsA("BasePart") then
+                    local keepOut = math.max(box.Size.X, box.Size.Z) * 0.5 + CONFIG.NLSlamBuffPad
+                    local away = flatten(root.Position - box.Position).Magnitude
+                    worst = math.max(worst, keepOut - away)
+                end
+            end
+        end
+        return worst
+    end
+
+    -- is something fast on a line that passes close to us soon?
+    local function rushIncoming(self, root)
+        local hazards = self.Hazards
+        for _, data in ipairs(hazards.CachedActive or {}) do
+            local part = data.Part
+            if part and part.Parent then
+                local velocity = flatten(hazards:GetProjectileVelocity(data))
+                local speed = velocity.Magnitude
+                if speed >= CONFIG.NLRushSpeed then
+                    local offset = flatten(root.Position - part.Position)
+                    local closing = -offset:Dot(velocity.Unit)
+                    if closing > 0 then
+                        local when = closing / speed
+                        if when <= CONFIG.NLRushWindow then
+                            -- how far off our position its path passes
+                            local miss = (offset + velocity.Unit * closing).Magnitude
+                            local reach = math.max(part.Size.X, part.Size.Z) * 0.5
+                            if miss <= CONFIG.NLRushMiss + reach then
+                                return true
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        return false
+    end
+
+    function UIWController:TryNorthernEscapeBuff()
+        if not CONFIG.NLEscapeBuff or not self.AutoCombat or not inNorthernLands() then
+            return false
+        end
+        local now = os.clock()
+        if now - (self.NLBuffAt or 0) < CONFIG.NLEscapeBuffInterval then
+            return false
+        end
+        self.NLBuffAt = now
+
+        local character = self.Character
+        local root = character and character.Root
+        if not root or not character:IsAlive() then
+            return false
+        end
+        local humanoid = character.Humanoid
+        if humanoid and humanoid.WalkSpeed > CONFIG.WalkSpeed + 1 then
+            return false      -- already running fast
+        end
+
+        local need = slamPush(root) > 0
+        if not need then
+            local ok, rushing = pcall(rushIncoming, self, root)
+            need = ok and rushing
+        end
+        if not need then
+            return false
+        end
+
+        local combat = self.Combat
+        if not combat or not combat:CanSendInput() or combat:IsBusyCasting() then
+            return false
+        end
+        for _, slot in ipairs({ "q", "e" }) do
+            local tool = combat:GetTool(slot)
+            if tool and combat:IsBuffTool(tool) and combat:IsReady(slot) then
+                combat:Press(slot)
+                self.NLEscapeBuffs = (self.NLEscapeBuffs or 0) + 1
+                return true
+            end
+        end
+        return false
+    end
+
+    local oldStep = UIWController.Step
+    function UIWController:Step()
+        oldStep(self)
+        if self.Destroyed or not self.Enabled then
+            return
+        end
+        pcall(self.TryNorthernEscapeBuff, self)
     end
 end
 

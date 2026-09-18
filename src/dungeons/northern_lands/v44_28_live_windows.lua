@@ -28,7 +28,13 @@ do
     local timed = {firstBossPassiveBeam=true, firstBossJumpSlam=true, spearmanStrikeHitbox=true,
         northernMageShot=true, northernWarriorCircleStrike=true}
     local windup = {firstBossPassiveBeam=1.0, firstBossJumpSlam=2.0}
+    -- Found by logging everything that appears during the fight: the whirlwinds
+    -- and the shurikens are bare MeshParts sitting straight in the workspace
+    -- with no hitBox and no precast child, so the hazard tracker never saw them
+    -- at all. firstBossCrissCross crosses the arena at 30 studs/s - that is the
+    -- one that kept killing us "out of nowhere".
     local moving = {northernMageShot=true, firstBossSeekingSpikes=true,
+        firstBossCrissCross=true, firstBossBigSpike=true,
         firstBossWhirlwind=true, firstBossWhirlWind=true, spearmanStrike=true}
     local tracks = setmetatable({}, {__mode="k"})
     local function live(container, now)
@@ -102,7 +108,10 @@ do
             seen[part] = true
             local cf, half = part.CFrame, part.Size*0.5
             if (part.Position-root.Position).Magnitude > half.Magnitude+130 then return end
-            local pad=name=="firstBossJumpSlam" and 16 or 5
+            local pad=name=="firstBossJumpSlam" and 16
+                or ((name=="firstBossCrissCross" or name=="firstBossBigSpike"
+                    or name=="firstBossSeekingSpikes") and 8)
+                or 5
             list[#list+1] = {CF=cf, Half=half+Vector3.new(pad,3,pad), V=velocity, Omega=omega or 0,
                 Starts=0,
                 Ends=info and windup[name] and math.max(0.3,windup[name]+0.5-(now-info.Seen)) or math.huge,
