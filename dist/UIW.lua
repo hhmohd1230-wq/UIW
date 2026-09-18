@@ -17774,6 +17774,9 @@ do
     CONFIG.NLGapClearance = 9      -- beam half width plus a body
     CONFIG.NLMinRadius = 28        -- closest we stand to the pillar
     CONFIG.NLMaxRadius = 135       -- and the furthest, for Sun-Burst
+    CONFIG.NLCastRadius = 60       -- inside this we can still hit the boss (range 64)
+    CONFIG.NLWalkCost = 0.06       -- studs of walking traded against studs of closeness
+    CONFIG.NLBurstLead = 1.4       -- seconds of beam spawning we look ahead
 
     local function northern()
         local d = Workspace:FindFirstChild("dungeonName")
@@ -17946,25 +17949,61 @@ do
                         ends[#ends + 1] = (yaw + math.pi) % (2 * math.pi)
                     end
                 end
-                local angle, span = mine, math.pi * 2
+                -- Sun-Burst is a spawn-rate spike, so react to how fast beams
+                -- are appearing rather than waiting until we are surrounded.
+                -- Walking from 40 studs out to 130 takes about four seconds; by
+                -- the time the count alone says "run", it is already too late.
+                self.NLSeen = self.NLSeen or {}
+                local fresh = 0
+                for _, part in ipairs(beams) do
+                    if not self.NLSeen[part] then
+                        self.NLSeen[part] = now
+                        fresh += 1
+                    end
+                end
+                for part, at in pairs(self.NLSeen) do
+                    if now - at > 1 then self.NLSeen[part] = nil end
+                end
+                self.NLRate = (self.NLRate or 0) * 0.6 + fresh * 0.4
+                local lead = math.floor(self.NLRate * CONFIG.NLBurstLead * 2)
+
+                -- Every gap is a candidate. The one we stand in is not
+                -- automatically the best: a wider gap elsewhere may let us
+                -- stand close enough to keep casting, and the path scoring
+                -- below decides whether we can safely get there.
+                local angle, span, radius = mine, math.pi * 2, CONFIG.NLMinRadius
                 if #ends > 0 then
                     table.sort(ends)
-                    -- the gap we are already standing in, so walking to the
-                    -- middle of it never crosses a live beam
+                    local bestCost = math.huge
                     for i = 1, #ends do
                         local from = ends[i]
                         local width = (ends[(i % #ends) + 1] - from) % (2 * math.pi)
                         if width <= 0.0001 then width = 2 * math.pi end
-                        if ((mine - from) % (2 * math.pi)) <= width then
-                            angle, span = (from + width * 0.5) % (2 * math.pi), width
-                            break
+                        local middle = (from + width * 0.5) % (2 * math.pi)
+                        local need = CONFIG.NLGapClearance / math.max(math.sin(width * 0.5), 0.02)
+                        local r = math.clamp(math.max(need, CONFIG.NLMinRadius),
+                            CONFIG.NLMinRadius, CONFIG.NLMaxRadius)
+                        -- how far round the circle we would have to walk
+                        local turn = math.abs((middle - mine + math.pi) % (2 * math.pi) - math.pi)
+                        local walk = turn * math.max(offset.Magnitude, r) + math.abs(offset.Magnitude - r)
+                        local cost = r + walk * CONFIG.NLWalkCost
+                        if r <= CONFIG.NLCastRadius then
+                            cost -= 25        -- worth real effort: we can shoot from here
+                        end
+                        if cost < bestCost then
+                            bestCost, angle, span, radius = cost, middle, width, r
                         end
                     end
                 end
-                local needed = CONFIG.NLGapClearance / math.max(math.sin(span * 0.5), 0.02)
-                local radius = math.clamp(math.max(needed, CONFIG.NLMinRadius),
-                    CONFIG.NLMinRadius, CONFIG.NLMaxRadius)
+
+                -- and if beams are pouring in, stand where the count is heading
+                if lead > 0 then
+                    local ahead = #ends + lead
+                    local packed = CONFIG.NLGapClearance / math.max(math.sin(math.pi / ahead), 0.02)
+                    radius = math.clamp(math.max(radius, packed), CONFIG.NLMinRadius, CONFIG.NLMaxRadius)
+                end
                 self.NLWantRadius, self.NLGapDegrees = radius, math.deg(span)
+                self.NLLead = lead
                 goal = flatPivot + Vector3.new(math.cos(angle), 0, math.sin(angle)) * radius
                 preferred = unit(flatten(goal - root.Position))
             end
