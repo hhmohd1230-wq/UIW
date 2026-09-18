@@ -18057,7 +18057,7 @@ do
                 -- the teleport there is time to arrive: beams reach 125 studs,
                 -- so past that nothing can touch us.
                 if now < (self.NLSunburstUntil or 0) then
-                    radius = CONFIG.NLMaxRadius
+                    radius = math.max(radius, CONFIG.NLSunburstRadius or 75)
                     self.NLBursting = true
                 else
                     self.NLBursting = false
@@ -18135,16 +18135,14 @@ do
     CONFIG.NLRushWindow = 1.6             -- seconds ahead we care about it
     CONFIG.NLRushMiss = 12                -- how close its path comes before it matters
 
-    -- Retreating to the rim when he returns to the pillar is the right idea for
-    -- a human and wrong for this script, measured twice:
-    --   stay close          41-52s, 1 death,  50-61% of the fight in cast range
-    --   run out on beams    93-114s, 5-6 deaths, 13-18% in range
-    --   run out on his return 93-106s, 5 deaths, 13-15% in range
-    -- The run costs ~4.4s each way and the script does not come back quickly,
-    -- so the fight doubles in length - which means more Sun-Bursts survived,
-    -- not fewer. Killing him before the next cycle is the better defence.
-    -- Set this above zero to turn the retreat back on.
-    CONFIG.NLSunburstRun = 0       -- seconds we stay out after he returns to the pillar
+    -- When he returns to the pillar, back off - but only a little. Running to
+    -- the rim was measured twice and was clearly worse (5-6 deaths, 0.7-0.9%/s
+    -- against 1 death and ~2%/s staying close), because the trip out and back
+    -- costs ~9 seconds and doubles the fight. Stepping out to about 75 studs
+    -- takes under two seconds, puts real distance between us and the densest
+    -- part of the sunburst, and we keep dodging beams normally the whole time.
+    CONFIG.NLSunburstRun = 6        -- seconds of holding back after he returns
+    CONFIG.NLSunburstRadius = 75    -- how far back, not the rim
     CONFIG.NLPillarNear = 28       -- horizontally this close to the pillar counts as on it
     CONFIG.NLPillarHigh = 12       -- and this far above us
 

@@ -283,7 +283,7 @@ do
                 -- the teleport there is time to arrive: beams reach 125 studs,
                 -- so past that nothing can touch us.
                 if now < (self.NLSunburstUntil or 0) then
-                    radius = CONFIG.NLMaxRadius
+                    radius = math.max(radius, CONFIG.NLSunburstRadius or 75)
                     self.NLBursting = true
                 else
                     self.NLBursting = false
