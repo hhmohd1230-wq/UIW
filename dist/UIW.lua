@@ -17781,6 +17781,18 @@ do
     -- bubble only meets them once they are already on top of us. Seeing them
     -- form gives room to walk to a spot they are not going to reach.
     CONFIG.NLBobAware = 320
+
+    -- Not every attack costs the same. Measured: secondBossHorizontalBeam took
+    -- us from full to dead in one hit, while a passive beam is about 40%. The
+    -- planner was weighing them the same, so it would happily trade a brush
+    -- with the killer to avoid two cheap ones. These are multipliers on being
+    -- inside the box.
+    local DEADLY = {
+        secondBossHorizontalBeam = 6,
+        secondBossSpreadBeam = 3,
+        secondBossMovingBeam = 3,
+        firstBossJumpSlam = 4,
+    }
     CONFIG.NLGapClearance = 9      -- beam half width plus a body
     CONFIG.NLMinRadius = 28        -- closest we stand to the pillar
     CONFIG.NLMaxRadius = 135       -- and the furthest, for Sun-Burst
@@ -17946,7 +17958,7 @@ do
             local half=box.Half
             if math.abs(p.Y)<=half.Y then
                 local dx,dz=math.abs(p.X)-half.X,math.abs(p.Z)-half.Z
-                if dx<=0 and dz<=0 then score += (100+math.min(-dx,-dz)*2)*(box.Name=="firstBossJumpSlam" and 4 or 1)
+                if dx<=0 and dz<=0 then score += (100+math.min(-dx,-dz)*2)*(DEADLY[box.Name] or 1)
                 else score += math.max(0,4-math.max(dx,dz))*0.4 end
             end
         end
