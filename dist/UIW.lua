@@ -14643,6 +14643,10 @@ end
 do
     local OWN_ABILITY_NAMES = {
         lightningbursthitbox = true,
+        -- Seen in the Champion census: our own 50x50x2 Flame Shuriken was being
+        -- collected as something to dodge, so the script kept stepping away
+        -- from its own damage.
+        ["flame shuriken"] = true,
     }
     getgenv().UIW_OwnAbilities = OWN_ABILITY_NAMES
 
