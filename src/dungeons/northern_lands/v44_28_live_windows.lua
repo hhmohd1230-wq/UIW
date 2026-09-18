@@ -310,6 +310,14 @@ do
             preferred = unit(flatten(goal - root.Position))
         end
 
+        -- Leading a colour orb into its crystal beats any standing position:
+        -- the orb homes at walking speed, so it is never outrun, and the only
+        -- way it ends is at the crystal.
+        if self.NLOrbGoal and now < (self.NLOrbUntil or 0) then
+            goal = self.NLOrbGoal
+            preferred = unit(flatten(goal - root.Position))
+        end
+
         local standing=risk(list,root.Position,0)+risk(list,root.Position,0.3)+risk(list,root.Position,0.65)
             +risk(list,root.Position,1.0)+risk(list,root.Position,1.5)
         if not goal and standing<1 then

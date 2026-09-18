@@ -46,5 +46,6 @@ src/experiments/field_dodge.lua
 src/patches/v44_26_no_ping_pong.lua
 src/dungeons/northern_lands/v44_28_live_windows.lua
 src/dungeons/northern_lands/v44_29_escape_buff.lua
+src/dungeons/northern_lands/v44_30_color_orbs.lua
 src/99_start.lua
 src/99_telemetry.lua
