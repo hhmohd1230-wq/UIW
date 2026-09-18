@@ -18320,8 +18320,14 @@ end
 -- and secondBossYellowOrb, so the colour is in the name at both ends.
 do
     CONFIG.NLOrbLead = true
-    CONFIG.NLOrbAimCos = 0.82        -- how directly it has to be coming at us
-    CONFIG.NLOrbWatch = 220          -- studs: far enough to notice it early
+    -- Six orbs are in the air at once, one per player. A loose test matched
+    -- somebody else's orb that happened to be pointing our way, and the errand
+    -- then ran continuously - measured 277 triggers while Bob sat untouched at
+    -- 123 studs. Ours is the one that keeps pointing at us as we move, so it
+    -- has to be both sharply aimed and aimed for a while.
+    CONFIG.NLOrbAimCos = 0.95        -- within about 18 degrees of straight at us
+    CONFIG.NLOrbLockTime = 0.5       -- and holding that for this long
+    CONFIG.NLOrbWatch = 150          -- studs: close enough to be ours
     CONFIG.NLOrbHold = 1.5           -- seconds a spotted orb keeps the errand alive
     CONFIG.NLOrbStandOff = 9         -- how far past the crystal we stand
     CONFIG.NLOrbDone = 14            -- orb this close to its crystal: job done
@@ -18369,6 +18375,7 @@ do
                         info.Velocity = (part.Position - info.Position) / dt
                         info.Position, info.At = part.Position, now
                     end
+                    info.Thing = thing
                     table.insert(list, { Colour = colour, Part = part, Info = info })
                 end
             end
@@ -18387,11 +18394,17 @@ do
                 if velocity.Magnitude > 1 then
                     local aim = velocity.Unit:Dot(toUs.Unit)
                     if aim >= CONFIG.NLOrbAimCos then
-                        -- the closest one that is genuinely aimed at us
-                        local score = aim * 100 - range
-                        if score > bestScore then
-                            best, bestScore = orb, score
+                        -- a homing orb keeps its aim on us while we move; a
+                        -- stranger's orb only lines up for a moment in passing
+                        orb.Info.LockedSince = orb.Info.LockedSince or now
+                        if now - orb.Info.LockedSince >= CONFIG.NLOrbLockTime then
+                            local score = aim * 100 - range
+                            if score > bestScore then
+                                best, bestScore = orb, score
+                            end
                         end
+                    else
+                        orb.Info.LockedSince = nil
                     end
                 end
             end
