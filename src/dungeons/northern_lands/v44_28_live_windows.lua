@@ -8,6 +8,8 @@ do
     CONFIG.NLWalkCost = 0.06       -- studs of walking traded against studs of closeness
     CONFIG.NLSafety = 1.2          -- stand this much past the bare minimum radius
     CONFIG.NLBurstLead = 1.4       -- seconds of beam spawning we look ahead
+    CONFIG.NLBurstAlarmEnds = 10   -- this many blocked angles means Sun-Burst is starting
+    CONFIG.NLBurstHold = 7         -- once it starts, commit to the run for this long
 
     local function northern()
         local d = Workspace:FindFirstChild("dungeonName")
@@ -236,6 +238,23 @@ do
                     local ahead = #ends + lead
                     local packed = CONFIG.NLGapClearance / math.max(math.sin(math.pi / ahead), 0.02)
                     radius = math.clamp(math.max(radius, packed), CONFIG.NLMinRadius, CONFIG.NLMaxRadius)
+                end
+
+                -- Sun-Burst is a four second walk, not a dodge. Every hit we
+                -- took in it was while still moving, 49 to 70 studs short of
+                -- where we were heading: the run was starting too late and,
+                -- worse, kept being called off whenever a couple of beams
+                -- expired and the count briefly looked survivable again.
+                -- So the moment the count crosses the alarm we commit and keep
+                -- going, and the beams themselves only reach 125 studs out.
+                if #ends >= CONFIG.NLBurstAlarmEnds or lead >= 4 then
+                    self.NLBurstUntil = now + CONFIG.NLBurstHold
+                end
+                if now < (self.NLBurstUntil or 0) then
+                    radius = CONFIG.NLMaxRadius
+                    self.NLBursting = true
+                else
+                    self.NLBursting = false
                 end
                 self.NLWantRadius, self.NLGapDegrees = radius, math.deg(span)
                 self.NLLead = lead
