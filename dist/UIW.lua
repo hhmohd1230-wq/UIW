@@ -17771,6 +17771,10 @@ end
 -- Northern Lands only. Warning lifetime, not model lifetime, defines a beam.
 -- Keep this layer after the general field and anti-reversal planners.
 do
+    CONFIG.NLGapClearance = 9      -- beam half width plus a body
+    CONFIG.NLMinRadius = 28        -- closest we stand to the pillar
+    CONFIG.NLMaxRadius = 135       -- and the furthest, for Sun-Burst
+
     local function northern()
         local d = Workspace:FindFirstChild("dungeonName")
         return d and d.Value == "Northern Lands"
@@ -17862,7 +17866,7 @@ do
             seen[part] = true
             local cf, half = part.CFrame, part.Size*0.5
             if (part.Position-root.Position).Magnitude > half.Magnitude+130 then return end
-            local pad=name=="firstBossJumpSlam" and 12 or 5
+            local pad=name=="firstBossJumpSlam" and 16 or 5
             list[#list+1] = {CF=cf, Half=half+Vector3.new(pad,3,pad), V=velocity, Omega=omega or 0,
                 Starts=0,
                 Ends=info and windup[name] and math.max(0.3,windup[name]+0.5-(now-info.Seen)) or math.huge,
@@ -17917,14 +17921,53 @@ do
         local champion=enemy and enemy.Model and normalizeEnemyName(enemy.Model.Name)=="midgardian champion"
         local preferred=unit(flatten(routeDirection or Vector3.zero))
         local goal
-        if champion and #beams>0 then
-            local pivot=beams[1].Position
-            local offset=flatten(root.Position-pivot)
-            -- Stay near the pillar, but score each actual path against all live
-            -- hitboxes instead of declaring a geometric gap automatically safe.
-            local radial=offset.Magnitude>1 and offset.Unit or Vector3.new(1,0,0)
-            goal=Vector3.new(pivot.X,root.Position.Y,pivot.Z)+radial*46
-            preferred=unit(flatten(goal-root.Position))
+        if champion then
+            -- Every beam is a diameter through the pillar, so it blocks the
+            -- angle it points at and the opposite one. How far out we have to
+            -- stand is set by how many are lit at once: half the gap we sit in
+            -- has to subtend the beam's half width plus our body.
+            --   3 lit beams  -> 18 studs is enough, stay close and keep casting
+            --   12 lit beams -> 69 studs
+            --   23 lit beams (Sun-Burst) -> 132 studs, get out
+            -- A fixed 46 was only ever right for about 7, which is why we died
+            -- at 57-74 studs during Sun-Burst with 22 beams up.
+            self.NLPivot = (#beams > 0) and beams[1].Position or self.NLPivot
+            local pivot = self.NLPivot
+            if pivot then
+                local flatPivot = Vector3.new(pivot.X, root.Position.Y, pivot.Z)
+                local offset = flatten(root.Position - flatPivot)
+                local mine = math.atan2(offset.Z, offset.X) % (2 * math.pi)
+                local ends = {}
+                for _, part in ipairs(beams) do
+                    local look = flatten(part.CFrame.LookVector)
+                    if look.Magnitude > 0.01 then
+                        local yaw = math.atan2(look.Z, look.X)
+                        ends[#ends + 1] = yaw % (2 * math.pi)
+                        ends[#ends + 1] = (yaw + math.pi) % (2 * math.pi)
+                    end
+                end
+                local angle, span = mine, math.pi * 2
+                if #ends > 0 then
+                    table.sort(ends)
+                    -- the gap we are already standing in, so walking to the
+                    -- middle of it never crosses a live beam
+                    for i = 1, #ends do
+                        local from = ends[i]
+                        local width = (ends[(i % #ends) + 1] - from) % (2 * math.pi)
+                        if width <= 0.0001 then width = 2 * math.pi end
+                        if ((mine - from) % (2 * math.pi)) <= width then
+                            angle, span = (from + width * 0.5) % (2 * math.pi), width
+                            break
+                        end
+                    end
+                end
+                local needed = CONFIG.NLGapClearance / math.max(math.sin(span * 0.5), 0.02)
+                local radius = math.clamp(math.max(needed, CONFIG.NLMinRadius),
+                    CONFIG.NLMinRadius, CONFIG.NLMaxRadius)
+                self.NLWantRadius, self.NLGapDegrees = radius, math.deg(span)
+                goal = flatPivot + Vector3.new(math.cos(angle), 0, math.sin(angle)) * radius
+                preferred = unit(flatten(goal - root.Position))
+            end
         end
         local standing=risk(list,root.Position,0)+risk(list,root.Position,0.3)+risk(list,root.Position,0.65)
             +risk(list,root.Position,1.0)+risk(list,root.Position,1.5)
