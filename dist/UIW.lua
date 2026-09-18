@@ -17776,6 +17776,7 @@ do
     CONFIG.NLMaxRadius = 135       -- and the furthest, for Sun-Burst
     CONFIG.NLCastRadius = 60       -- inside this we can still hit the boss (range 64)
     CONFIG.NLWalkCost = 0.06       -- studs of walking traded against studs of closeness
+    CONFIG.NLSafety = 1.2          -- stand this much past the bare minimum radius
     CONFIG.NLBurstLead = 1.4       -- seconds of beam spawning we look ahead
 
     local function northern()
@@ -17980,15 +17981,19 @@ do
                         local width = (ends[(i % #ends) + 1] - from) % (2 * math.pi)
                         if width <= 0.0001 then width = 2 * math.pi end
                         local middle = (from + width * 0.5) % (2 * math.pi)
+                        -- the bare minimum radius puts us exactly on the edge of
+                        -- the beam, so stand a fifth further out than that
                         local need = CONFIG.NLGapClearance / math.max(math.sin(width * 0.5), 0.02)
-                        local r = math.clamp(math.max(need, CONFIG.NLMinRadius),
+                        local r = math.clamp(math.max(need * CONFIG.NLSafety, CONFIG.NLMinRadius),
                             CONFIG.NLMinRadius, CONFIG.NLMaxRadius)
                         -- how far round the circle we would have to walk
                         local turn = math.abs((middle - mine + math.pi) % (2 * math.pi) - math.pi)
                         local walk = turn * math.max(offset.Magnitude, r) + math.abs(offset.Magnitude - r)
                         local cost = r + walk * CONFIG.NLWalkCost
+                        -- only chase a shooting position that still has room in
+                        -- it, not one we only just fit into
                         if r <= CONFIG.NLCastRadius then
-                            cost -= 25        -- worth real effort: we can shoot from here
+                            cost -= 25
                         end
                         if cost < bestCost then
                             bestCost, angle, span, radius = cost, middle, width, r
