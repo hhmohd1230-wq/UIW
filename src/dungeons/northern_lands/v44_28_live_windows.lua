@@ -1,6 +1,7 @@
 -- Northern Lands only. Warning lifetime, not model lifetime, defines a beam.
 -- Keep this layer after the general field and anti-reversal planners.
 do
+    CONFIG.NLAwareRadius = 150     -- only what can reach this close to us matters
     CONFIG.NLGapClearance = 9      -- beam half width plus a body
     CONFIG.NLMinRadius = 28        -- closest we stand to the pillar
     CONFIG.NLMaxRadius = 135       -- and the furthest, for Sun-Burst
@@ -107,7 +108,16 @@ do
             if seen[part] then return end
             seen[part] = true
             local cf, half = part.CFrame, part.Size*0.5
-            if (part.Position-root.Position).Magnitude > half.Magnitude+130 then return end
+            -- Distance to the box itself, not to its centre. A 250 stud beam
+            -- through the pillar has its centre 130 studs away while passing
+            -- straight through us, and a small orb 140 studs off is irrelevant;
+            -- centre distance gets both of those backwards. This keeps the work
+            -- to what is actually near us, which is cheaper and sharper.
+            local here = cf:PointToObjectSpace(root.Position)
+            local dx = math.max(math.abs(here.X) - half.X, 0)
+            local dy = math.max(math.abs(here.Y) - half.Y, 0)
+            local dz = math.max(math.abs(here.Z) - half.Z, 0)
+            if math.sqrt(dx * dx + dy * dy + dz * dz) > CONFIG.NLAwareRadius then return end
             local pad=name=="firstBossJumpSlam" and 16
                 or ((name=="firstBossCrissCross" or name=="firstBossBigSpike"
                     or name=="firstBossSeekingSpikes") and 8)
@@ -115,7 +125,7 @@ do
             list[#list+1] = {CF=cf, Half=half+Vector3.new(pad,3,pad), V=velocity, Omega=omega or 0,
                 Starts=0,
                 Ends=info and windup[name] and math.max(0.3,windup[name]+0.5-(now-info.Seen)) or math.huge,
-                Name=name, Distance=(part.Position-root.Position).Magnitude-half.Magnitude}
+                Name=name, Distance=math.sqrt(dx * dx + dy * dy + dz * dz)}
         end
         for _,container in ipairs(Workspace:GetChildren()) do
             if timed[container.Name] or moving[container.Name] then
