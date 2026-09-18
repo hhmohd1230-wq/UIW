@@ -2,6 +2,7 @@
 -- Keep this layer after the general field and anti-reversal planners.
 do
     CONFIG.NLAwareRadius = 150     -- only what can reach this close to us matters
+    CONFIG.NLBobRadius = 40        -- how close we hold to Bob The Frost Giant
     CONFIG.NLGapClearance = 9      -- beam half width plus a body
     CONFIG.NLMinRadius = 28        -- closest we stand to the pillar
     CONFIG.NLMaxRadius = 135       -- and the furthest, for Sun-Burst
@@ -183,6 +184,7 @@ do
         local root=self.CharacterService.Root
         local list,beams=collect(self,now)
         local champion=enemy and enemy.Model and normalizeEnemyName(enemy.Model.Name)=="midgardian champion"
+        local bob=enemy and enemy.Model and normalizeEnemyName(enemy.Model.Name)=="bob the frost giant"
         local preferred=unit(flatten(routeDirection or Vector3.zero))
         local goal
         if champion then
@@ -294,6 +296,20 @@ do
                 preferred = unit(flatten(goal - root.Position))
             end
         end
+        -- Bob: measured 122 studs away with "closing for close-range mob combo"
+        -- blocking 91% of casts - it was permanently on its way in and never
+        -- arriving, which is why he barely lost health. His opening wave also
+        -- grows as it travels, so the circle is smallest next to him: close is
+        -- both where the damage happens and where the wave is easiest to step
+        -- around.
+        if bob and enemy.Root and enemy.Root.Parent then
+            local offset = flatten(root.Position - enemy.Root.Position)
+            local out = offset.Magnitude > 1 and offset.Unit or Vector3.new(1, 0, 0)
+            local stand = enemy.Root.Position + out * CONFIG.NLBobRadius
+            goal = Vector3.new(stand.X, root.Position.Y, stand.Z)
+            preferred = unit(flatten(goal - root.Position))
+        end
+
         local standing=risk(list,root.Position,0)+risk(list,root.Position,0.3)+risk(list,root.Position,0.65)
             +risk(list,root.Position,1.0)+risk(list,root.Position,1.5)
         if not goal and standing<1 then
