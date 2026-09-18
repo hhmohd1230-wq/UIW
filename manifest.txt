@@ -40,6 +40,7 @@ src/patches/v44_22_low_effects.lua
 src/patches/v44_23_cast_facing.lua
 src/dungeons/crystal_golem/v44_24_sweepers_and_domes.lua
 src/patches/v44_25_smoothness.lua
+src/dungeons/northern_lands/v44_27_midgardian_champion.lua
 src/experiments/flat_arena.lua
 src/experiments/field_dodge.lua
 src/patches/v44_26_no_ping_pong.lua

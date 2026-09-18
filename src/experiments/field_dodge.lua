@@ -423,7 +423,12 @@ do
         -- 40% while standing 11 studs inside a turning bar with that planner in
         -- control. On those frames the field is allowed to argue, now that it
         -- can predict a turning attack.
+        -- champion-slam is an escape from a circle we are standing in, and
+        -- champion-station only moves a few studs inside a beam gap: both are
+        -- already the right answer, but the station is still allowed to be
+        -- overruled below if the field finds it is about to be hit.
         if self.LastDodgeReason == "golem-dome"
+            or self.LastDodgeReason == "champion-slam"
             or (self.LastDodgeReason == "golem-sweeper-spin" and self.GolemSafeSpotHolding)
         then
             return direction, yaw, emergency, dodging
