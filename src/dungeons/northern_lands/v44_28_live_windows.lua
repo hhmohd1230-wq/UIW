@@ -3,6 +3,10 @@
 do
     CONFIG.NLAwareRadius = 150     -- only what can reach this close to us matters
     CONFIG.NLBobRadius = 40        -- how close we hold to Bob The Frost Giant
+    -- Bob's beams are 400 studs long and sweep in from the edges, so a 150 stud
+    -- bubble only meets them once they are already on top of us. Seeing them
+    -- form gives room to walk to a spot they are not going to reach.
+    CONFIG.NLBobAware = 320
     CONFIG.NLGapClearance = 9      -- beam half width plus a body
     CONFIG.NLMinRadius = 28        -- closest we stand to the pillar
     CONFIG.NLMaxRadius = 135       -- and the furthest, for Sun-Burst
@@ -118,7 +122,7 @@ do
             local dx = math.max(math.abs(here.X) - half.X, 0)
             local dy = math.max(math.abs(here.Y) - half.Y, 0)
             local dz = math.max(math.abs(here.Z) - half.Z, 0)
-            if math.sqrt(dx * dx + dy * dy + dz * dz) > CONFIG.NLAwareRadius then return end
+            if math.sqrt(dx * dx + dy * dy + dz * dz) > (self.NLAwareNow or CONFIG.NLAwareRadius) then return end
             local pad=name=="firstBossJumpSlam" and 16
                 or ((name=="firstBossCrissCross" or name=="firstBossBigSpike"
                     or name=="firstBossSeekingSpikes") and 8)
@@ -153,7 +157,7 @@ do
         for _, box in ipairs(list) do names[box.Name] = (names[box.Name] or 0) + 1 end
         self.NLNames = names
         table.sort(list, function(a,b) return a.Distance < b.Distance end)
-        while #list > 32 do table.remove(list) end
+        while #list > (self.NLAwareNow and self.NLAwareNow > 200 and 48 or 32) do table.remove(list) end
         return list, beams
     end
     local function risk(list, position, time)
@@ -182,9 +186,10 @@ do
             return self.NLDirection,yaw,self.NLEmergency,self.NLDodging
         end
         local root=self.CharacterService.Root
-        local list,beams=collect(self,now)
         local champion=enemy and enemy.Model and normalizeEnemyName(enemy.Model.Name)=="midgardian champion"
         local bob=enemy and enemy.Model and normalizeEnemyName(enemy.Model.Name)=="bob the frost giant"
+        self.NLAwareNow = bob and CONFIG.NLBobAware or CONFIG.NLAwareRadius
+        local list,beams=collect(self,now)
         local preferred=unit(flatten(routeDirection or Vector3.zero))
         local goal
         if champion then
