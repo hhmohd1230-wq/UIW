@@ -1,0 +1,208 @@
+-- Northern Lands only. Warning lifetime, not model lifetime, defines a beam.
+-- Keep this layer after the general field and anti-reversal planners.
+do
+    local function northern()
+        local d = Workspace:FindFirstChild("dungeonName")
+        return d and d.Value == "Northern Lands"
+    end
+    -- Room 2 is not the final boss room, so the generic classifier missed the
+    -- Champion. This also prevented the elevated-boss line-of-sight exception.
+    local boss = isBossEnemy
+    isBossEnemy = function(enemy)
+        if northern() and enemy and enemy.Model
+            and normalizeEnemyName(enemy.Model.Name) == "midgardian champion" then
+            return true
+        end
+        return boss(enemy)
+    end
+    local timed = {firstBossPassiveBeam=true, firstBossJumpSlam=true, spearmanStrikeHitbox=true,
+        northernMageShot=true, northernWarriorCircleStrike=true}
+    local windup = {firstBossPassiveBeam=1.0, firstBossJumpSlam=2.0}
+    local moving = {northernMageShot=true, firstBossSeekingSpikes=true,
+        firstBossWhirlwind=true, firstBossWhirlWind=true, spearmanStrike=true}
+    local tracks = setmetatable({}, {__mode="k"})
+    local function live(container, now)
+        local box = container:FindFirstChild("hitBox", true)
+        if not box and container:IsA("BasePart") then box = container end
+        if not box or not box:IsA("BasePart") then return nil end
+        local info = tracks[container]
+        if not info then
+            local look=flatten(box.CFrame.LookVector)
+            info = {At=now, Position=box.Position, Velocity=Vector3.zero, Seen=now, Visible=now,
+                Angle=math.atan2(look.Z,look.X),Omega=0}
+            tracks[container] = info
+        end
+        local dt = now - info.At
+        if dt >= 0.025 then
+            local velocity = (box.Position-info.Position)/dt
+            if velocity.Magnitude < 450 then info.Velocity = velocity else info.Velocity=Vector3.zero end
+            local look=flatten(box.CFrame.LookVector)
+            local angle=math.atan2(look.Z,look.X)
+            local omega=((angle-info.Angle+math.pi)%(2*math.pi)-math.pi)/dt
+            info.Omega=math.abs(omega)<7 and omega or 0
+            info.Angle=angle
+            info.At, info.Position = now, box.Position
+        end
+        local pre = container:FindFirstChild("precast", true)
+        if pre and pre:IsA("BasePart") and pre.Transparency < 0.98 then
+            info.Visible = now
+            info.HadWarning = true
+        end
+        if timed[container.Name] and info.HadWarning and now-info.Visible > 0.30 then return nil end
+        if timed[container.Name] and not info.HadWarning and now-info.Seen > 0.30 then return nil end
+        return box, info
+    end
+
+    -- These attacks can outlive a nearby mob. Nearest-enemy inference had
+    -- attributed mage shots to warriors and deleted them when the warrior died.
+    local register = HazardTracker.Register
+    function HazardTracker:Register(part)
+        register(self, part)
+        if not northern() then return end
+        local data = (self.FullHazards or self.Hazards)[part]
+        if data and data.Container and (moving[data.Container.Name] or timed[data.Container.Name]) then
+            data.SourceEnemyModel, data.SourceEnemyHumanoid = nil, nil
+        end
+    end
+    local active = HazardTracker.IsContainerActive
+    function HazardTracker:IsContainerActive(container, now)
+        if northern() and container and container.Parent and timed[container.Name] then
+            return live(container, now or os.clock()) ~= nil
+        end
+        return active(self, container, now)
+    end
+
+    -- The old Champion station scanned every lingering beam, including spent
+    -- warnings. Its unvalidated slam direction could also cross a live beam.
+    local oldStation, oldSlam = DodgeSolver.GetChampionStation, DodgeSolver.GetChampionSlamEscape
+    function DodgeSolver:GetChampionStation(...)
+        if northern() then return nil end
+        return oldStation(self, ...)
+    end
+    function DodgeSolver:GetChampionSlamEscape(...)
+        if northern() then return nil end
+        return oldSlam(self, ...)
+    end
+
+    local function collect(self, now)
+        local root = self.CharacterService.Root
+        local list, seen, beams = {}, {}, {}
+        local function add(part, velocity, name, omega, info)
+            if seen[part] then return end
+            seen[part] = true
+            local cf, half = part.CFrame, part.Size*0.5
+            if (part.Position-root.Position).Magnitude > half.Magnitude+130 then return end
+            local pad=name=="firstBossJumpSlam" and 12 or 5
+            list[#list+1] = {CF=cf, Half=half+Vector3.new(pad,3,pad), V=velocity, Omega=omega or 0,
+                Starts=0,
+                Ends=info and windup[name] and math.max(0.3,windup[name]+0.5-(now-info.Seen)) or math.huge,
+                Name=name, Distance=(part.Position-root.Position).Magnitude-half.Magnitude}
+        end
+        for _,container in ipairs(Workspace:GetChildren()) do
+            if timed[container.Name] or moving[container.Name] then
+                local part, info = live(container, now)
+                if part then
+                    add(part, timed[container.Name] and Vector3.zero or info.Velocity, container.Name, info.Omega, info)
+                    if container.Name == "firstBossPassiveBeam" then beams[#beams+1]=part end
+                end
+            end
+        end
+        for _,data in ipairs(self.Hazards:GetActive()) do
+            local part, container = data.Part, data.Container
+            if part and part.Parent and not data.IsPrecast and not (container and timed[container.Name]) then
+                add(part, self.Hazards:GetProjectileVelocity(data), container and container.Name or part.Name)
+            end
+        end
+        table.sort(list, function(a,b) return a.Distance < b.Distance end)
+        while #list > 32 do table.remove(list) end
+        return list, beams
+    end
+    local function risk(list, position, time)
+        local score = 0
+        for _,box in ipairs(list) do
+            if time<box.Starts or time>box.Ends then continue end
+            local cf=box.CF
+            if math.abs(box.Omega)>0.02 then
+                cf=CFrame.new(cf.Position)*CFrame.Angles(0,-box.Omega*time,0)*(cf-cf.Position)
+            end
+            local p=cf:PointToObjectSpace(position-box.V*time)
+            local half=box.Half
+            if math.abs(p.Y)<=half.Y then
+                local dx,dz=math.abs(p.X)-half.X,math.abs(p.Z)-half.Z
+                if dx<=0 and dz<=0 then score += (100+math.min(-dx,-dz)*2)*(box.Name=="firstBossJumpSlam" and 4 or 1)
+                else score += math.max(0,4-math.max(dx,dz))*0.4 end
+            end
+        end
+        return score
+    end
+    local solve = DodgeSolver.Solve
+    function DodgeSolver:Solve(routeDirection, enemy, yaw)
+        if not northern() or not self.CharacterService:IsAlive() then return solve(self,routeDirection,enemy,yaw) end
+        local now=os.clock()
+        if now-(self.NLAt or 0)<0.045 and self.NLDirection then
+            return self.NLDirection,yaw,self.NLEmergency,self.NLDodging
+        end
+        local root=self.CharacterService.Root
+        local list,beams=collect(self,now)
+        local champion=enemy and enemy.Model and normalizeEnemyName(enemy.Model.Name)=="midgardian champion"
+        local preferred=unit(flatten(routeDirection or Vector3.zero))
+        local goal
+        if champion and #beams>0 then
+            local pivot=beams[1].Position
+            local offset=flatten(root.Position-pivot)
+            -- Stay near the pillar, but score each actual path against all live
+            -- hitboxes instead of declaring a geometric gap automatically safe.
+            local radial=offset.Magnitude>1 and offset.Unit or Vector3.new(1,0,0)
+            goal=Vector3.new(pivot.X,root.Position.Y,pivot.Z)+radial*46
+            preferred=unit(flatten(goal-root.Position))
+        end
+        local standing=risk(list,root.Position,0)+risk(list,root.Position,0.3)+risk(list,root.Position,0.65)
+            +risk(list,root.Position,1.0)+risk(list,root.Position,1.5)
+        if not goal and standing<1 then
+            self.NLDirection=nil
+            return solve(self,routeDirection,enemy,yaw)
+        end
+        local speed=math.max(self.CharacterService.Humanoid.WalkSpeed,8)
+        local horizon=champion and 1.5 or 0.65
+        local times=champion and {0.15,0.4,0.7,1.0,1.25,1.5} or {0.12,0.3,0.5,0.65}
+        local melee={}
+        if not champion then
+            for _,e in ipairs(self.Dungeon and self.Dungeon:GetAliveEnemies() or {}) do
+                if e.Root and e.Root.Parent and getEnemyThreatClass(e)=="Melee" then
+                    melee[#melee+1]=e.Root.Position
+                end
+            end
+        end
+        local best,bestScore=nil,math.huge
+        for i=0,16 do
+            local angle=i*math.pi/8
+            local dir=i==16 and Vector3.zero or Vector3.new(math.cos(angle),0,math.sin(angle))
+            local distance=speed*horizon
+            if dir.Magnitude==0 or (self.Geometry:IsDirectionClear(dir,distance,yaw)
+                and self.Geometry:IsGroundPadded(root.Position+dir*distance,CONFIG.EdgeHardPadding)) then
+                local score=0
+                for _,t in ipairs(times) do
+                    local position=root.Position+dir*speed*t
+                    score+=risk(list,position,t)
+                    for _,mob in ipairs(melee) do
+                        score+=math.max(0,34-flatten(position-mob).Magnitude)*8
+                    end
+                end
+                if goal then score+=flatten(root.Position+dir*distance-goal).Magnitude*0.3
+                else score-=dir:Dot(preferred)*4 end
+                if self.NLDirection then score+=(1-dir:Dot(self.NLDirection))*1.5 end
+                if score<bestScore then best,bestScore=dir,score end
+            end
+        end
+        if not best then self.NLDirection=nil return solve(self,routeDirection,enemy,yaw) end
+        self.NLAt,self.NLDirection=now,best
+        self.NLEmergency,self.NLDodging=standing>=100,best.Magnitude>0.05
+        self.LastDodgeReason=champion and "nl-champion-live" or "nl-mob-live"
+        self.LastSolve=now
+        self.CachedDirection,self.CachedYaw,self.CachedDodging=best,yaw,self.NLDodging
+        self.IsDodging=self.NLDodging
+        if self.NLDodging then self.LastMovement=best end
+        self.NLLiveBoxes,self.NLLiveBeams=#list,#beams
+        return best,yaw,self.NLEmergency,self.NLDodging
+    end
+end

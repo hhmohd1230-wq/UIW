@@ -44,5 +44,6 @@ src/dungeons/northern_lands/v44_27_midgardian_champion.lua
 src/experiments/flat_arena.lua
 src/experiments/field_dodge.lua
 src/patches/v44_26_no_ping_pong.lua
+src/dungeons/northern_lands/v44_28_live_windows.lua
 src/99_start.lua
 src/99_telemetry.lua
