@@ -18027,6 +18027,18 @@ do
                 -- with 69-85% time in cast range are the ones with no deaths:
                 -- killing the boss quickly is what removes Sun-Bursts, not
                 -- outrunning them.
+                -- Sun-Burst: the Champion teleports back onto the pillar and
+                -- only then spawns beams, so the return is the warning. Running
+                -- on the beam count instead was measured far worse - the run out
+                -- takes 4.4 s and we were caught halfway every time. Started on
+                -- the teleport there is time to arrive: beams reach 125 studs,
+                -- so past that nothing can touch us.
+                if now < (self.NLSunburstUntil or 0) then
+                    radius = CONFIG.NLMaxRadius
+                    self.NLBursting = true
+                else
+                    self.NLBursting = false
+                end
                 self.NLWantRadius, self.NLGapDegrees = radius, math.deg(span)
                 self.NLLead = lead
                 goal = flatPivot + Vector3.new(math.cos(angle), 0, math.sin(angle)) * radius
@@ -18099,6 +18111,10 @@ do
     CONFIG.NLRushSpeed = 22               -- studs/s that counts as a charging attack
     CONFIG.NLRushWindow = 1.6             -- seconds ahead we care about it
     CONFIG.NLRushMiss = 12                -- how close its path comes before it matters
+
+    CONFIG.NLSunburstRun = 9       -- seconds we stay out after he returns to the pillar
+    CONFIG.NLPillarNear = 28       -- horizontally this close to the pillar counts as on it
+    CONFIG.NLPillarHigh = 12       -- and this far above us
 
     local function inNorthernLands()
         local value = Workspace:FindFirstChild("dungeonName")
@@ -18193,12 +18209,43 @@ do
         return false
     end
 
+    -- He leaves the pillar for the stomp and comes back for Sun-Burst. The
+    -- coming back is the part worth watching: dodging that one near the middle
+    -- is not realistic, so it is the cue to leave.
+    function UIWController:WatchChampionReturn()
+        if not inNorthernLands() then
+            return
+        end
+        local enemy = self.CurrentEnemy
+        if not enemy or not enemy.Model
+            or normalizeEnemyName(enemy.Model.Name) ~= "midgardian champion"
+            or not enemy.Root or not enemy.Root.Parent
+        then
+            self.NLOnPillar = false
+            return
+        end
+        local root = self.Character and self.Character.Root
+        local pivot = self.Dodger and self.Dodger.NLPivot
+        if not root or not pivot then
+            return
+        end
+        local across = flatten(enemy.Root.Position - Vector3.new(pivot.X, enemy.Root.Position.Y, pivot.Z)).Magnitude
+        local above = enemy.Root.Position.Y - root.Position.Y
+        local onPillar = across <= CONFIG.NLPillarNear and above >= CONFIG.NLPillarHigh
+        if onPillar and not self.NLOnPillar then
+            self.Dodger.NLSunburstUntil = os.clock() + CONFIG.NLSunburstRun
+            self.NLSunbursts = (self.NLSunbursts or 0) + 1
+        end
+        self.NLOnPillar = onPillar
+    end
+
     local oldStep = UIWController.Step
     function UIWController:Step()
         oldStep(self)
         if self.Destroyed or not self.Enabled then
             return
         end
+        pcall(self.WatchChampionReturn, self)
         pcall(self.TryNorthernEscapeBuff, self)
     end
 end

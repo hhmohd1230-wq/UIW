@@ -257,6 +257,18 @@ do
                 -- with 69-85% time in cast range are the ones with no deaths:
                 -- killing the boss quickly is what removes Sun-Bursts, not
                 -- outrunning them.
+                -- Sun-Burst: the Champion teleports back onto the pillar and
+                -- only then spawns beams, so the return is the warning. Running
+                -- on the beam count instead was measured far worse - the run out
+                -- takes 4.4 s and we were caught halfway every time. Started on
+                -- the teleport there is time to arrive: beams reach 125 studs,
+                -- so past that nothing can touch us.
+                if now < (self.NLSunburstUntil or 0) then
+                    radius = CONFIG.NLMaxRadius
+                    self.NLBursting = true
+                else
+                    self.NLBursting = false
+                end
                 self.NLWantRadius, self.NLGapDegrees = radius, math.deg(span)
                 self.NLLead = lead
                 goal = flatPivot + Vector3.new(math.cos(angle), 0, math.sin(angle)) * radius
