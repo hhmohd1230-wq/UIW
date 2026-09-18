@@ -17892,7 +17892,13 @@ do
                 or ((name=="firstBossCrissCross" or name=="firstBossBigSpike"
                     or name=="firstBossSeekingSpikes") and 8)
                 or 5
-            list[#list+1] = {CF=cf, Half=half+Vector3.new(pad,3,pad), V=velocity, Omega=omega or 0,
+            -- The shurikens are flat discs: firstBossSeekingSpikes is 20x0x20
+            -- and firstBossBigSpike 40x0x40, zero studs tall. With the usual 3
+            -- stud vertical allowance a disc lying on the floor can sit
+            -- entirely below the height test while we walk through it, so a
+            -- flat hazard gets a body's worth of height instead.
+            local tall = half.Y < 4 and 9 or 3
+            list[#list+1] = {CF=cf, Half=half+Vector3.new(pad,tall,pad), V=velocity, Omega=omega or 0,
                 Starts=0,
                 Ends=info and windup[name] and math.max(0.3,windup[name]+0.5-(now-info.Seen)) or math.huge,
                 Name=name, Distance=math.sqrt(dx * dx + dy * dy + dz * dz)}
@@ -17912,6 +17918,9 @@ do
                 add(part, self.Hazards:GetProjectileVelocity(data), container and container.Name or part.Name)
             end
         end
+        local names = {}
+        for _, box in ipairs(list) do names[box.Name] = (names[box.Name] or 0) + 1 end
+        self.NLNames = names
         table.sort(list, function(a,b) return a.Distance < b.Distance end)
         while #list > 32 do table.remove(list) end
         return list, beams
