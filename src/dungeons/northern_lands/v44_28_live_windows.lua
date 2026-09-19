@@ -50,11 +50,15 @@ do
         largeIceSpikes = 3,           -- Bob, an 80 stud circle
         mediumIceSpikes = 2,
         smallIceSpikes = 2,
-        -- Bob's wave, and it is a killer, not a graze. Measured end to end:
-        -- one disc spawned 2 studs from us, we stayed 2-3 studs from its centre
-        -- for the whole 1.7 seconds it was logged, and health went 63% to 0%.
-        -- Two of these is a death, and they arrive every 27 seconds.
-        secondBossCricleHitbox = 6,
+        -- Bob's wave. Now that the sparkle is out of the way and attribution
+        -- means something, this is not merely one of the dangerous attacks -
+        -- it is the fight. A clean 54 second kill, measured: four hits in the
+        -- whole fight, three of them the wave, 73%, 74% and 77%. It did 224 of
+        -- the 330 percent we lost. The horizontal beam, weighted the same as
+        -- this one, did nothing at all. So it goes above the rest rather than
+        -- level with them: two of these is a death and nothing else comes
+        -- close.
+        secondBossCricleHitbox = 9,
     }
     CONFIG.NLGapClearance = 9      -- beam half width plus a body
     CONFIG.NLMinRadius = 28        -- closest we stand to the pillar
@@ -404,7 +408,18 @@ do
             -- attack that has done us the most damage of anything in the
             -- dungeon - 15 of all recorded hits - and we were modelling it
             -- three times thicker than it is.
-            local pad=name=="northernMageShot" and 3
+            -- All three wave hits in the clean fight were recorded with the
+            -- disc surface 2 studs away, not with us inside it. We are not
+            -- standing in the wave any more; we are grazing it and losing
+            -- three quarters of our health for the couple of studs. Whether
+            -- the real hitbox is slightly larger than the part we can see or
+            -- the health event simply lands a frame after we leave, the answer
+            -- is the same and it is cheap: clear it by a body's width instead
+            -- of by nothing. 5 was the default for anything unlisted, which is
+            -- how the one attack that decides the fight ended up with the same
+            -- margin as a stray mob projectile.
+            local pad=name=="secondBossCricleHitbox" and 12
+                or name=="northernMageShot" and 3
                 or name=="firstBossJumpSlam" and 16
                 or (name=="firstBossCrissCross" and 12)
                 or ((name=="firstBossBigSpike" or name=="firstBossSeekingSpikes") and 9)
@@ -837,7 +852,7 @@ do
     local newController = UIWController.new
     function UIWController.new()
         local self = newController()
-        self.Version = "48.0-nocosmetics"
+        self.Version = "48.1-wave"
         return self
     end
 end

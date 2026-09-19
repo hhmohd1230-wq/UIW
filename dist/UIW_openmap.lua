@@ -28736,11 +28736,15 @@ do
         largeIceSpikes = 3,           -- Bob, an 80 stud circle
         mediumIceSpikes = 2,
         smallIceSpikes = 2,
-        -- Bob's wave, and it is a killer, not a graze. Measured end to end:
-        -- one disc spawned 2 studs from us, we stayed 2-3 studs from its centre
-        -- for the whole 1.7 seconds it was logged, and health went 63% to 0%.
-        -- Two of these is a death, and they arrive every 27 seconds.
-        secondBossCricleHitbox = 6,
+        -- Bob's wave. Now that the sparkle is out of the way and attribution
+        -- means something, this is not merely one of the dangerous attacks -
+        -- it is the fight. A clean 54 second kill, measured: four hits in the
+        -- whole fight, three of them the wave, 73%, 74% and 77%. It did 224 of
+        -- the 330 percent we lost. The horizontal beam, weighted the same as
+        -- this one, did nothing at all. So it goes above the rest rather than
+        -- level with them: two of these is a death and nothing else comes
+        -- close.
+        secondBossCricleHitbox = 9,
     }
     CONFIG.NLGapClearance = 9      -- beam half width plus a body
     CONFIG.NLMinRadius = 28        -- closest we stand to the pillar
@@ -29090,7 +29094,18 @@ do
             -- attack that has done us the most damage of anything in the
             -- dungeon - 15 of all recorded hits - and we were modelling it
             -- three times thicker than it is.
-            local pad=name=="northernMageShot" and 3
+            -- All three wave hits in the clean fight were recorded with the
+            -- disc surface 2 studs away, not with us inside it. We are not
+            -- standing in the wave any more; we are grazing it and losing
+            -- three quarters of our health for the couple of studs. Whether
+            -- the real hitbox is slightly larger than the part we can see or
+            -- the health event simply lands a frame after we leave, the answer
+            -- is the same and it is cheap: clear it by a body's width instead
+            -- of by nothing. 5 was the default for anything unlisted, which is
+            -- how the one attack that decides the fight ended up with the same
+            -- margin as a stray mob projectile.
+            local pad=name=="secondBossCricleHitbox" and 12
+                or name=="northernMageShot" and 3
                 or name=="firstBossJumpSlam" and 16
                 or (name=="firstBossCrissCross" and 12)
                 or ((name=="firstBossBigSpike" or name=="firstBossSeekingSpikes") and 9)
@@ -29523,7 +29538,7 @@ do
     local newController = UIWController.new
     function UIWController.new()
         local self = newController()
-        self.Version = "48.0-nocosmetics"
+        self.Version = "48.1-wave"
         return self
     end
 end
@@ -30372,9 +30387,24 @@ do
                 elseif p.Anchored then
                     self.Changed[p] = {Collide=p.CanCollide, Query=p.CanQuery, Alpha=p.Transparency, LocalAlpha=p.LocalTransparencyModifier}
                     if p.CanCollide and floor(p) then self.Supports[p] = true end
-                    -- Keep floor geometry only as invisible height references.
-                    -- A single level surface carries the player in each fight.
-                    p.CanCollide = false
+                    -- The real walk surfaces stay SOLID. Only the scenery loses
+                    -- its collision.
+                    --
+                    -- Making them invisible height references and letting one
+                    -- flat plane carry us instead is what produced every
+                    -- movement bug in this file: falling out from under our own
+                    -- floor when it sat too high, the plane refusing to follow
+                    -- us into the pit, and worst of all the stand-off - we turn
+                    -- collision off on our side only, the server still has the
+                    -- floor solid, and a character with no ground on our side
+                    -- and ground on theirs hangs in freefall going nowhere.
+                    -- Measured: floor at 18, character at -58.5, Freefall at
+                    -- zero velocity, indefinitely.
+                    --
+                    -- The file already said this and then did the opposite: the
+                    -- real floor is what carries the mobs and it is what should
+                    -- carry us. Its slopes and steps are the arena, not clutter.
+                    p.CanCollide = self.Supports[p] == true
                     p.CanQuery = self.Supports[p] == true
                     p.Transparency = 1
                     p.LocalTransparencyModifier = 1
@@ -30524,11 +30554,26 @@ do
                     -- the one above it. A cliff is the pit logic's business,
                     -- because only it knows whether we are meant to be down
                     -- there yet and where it is safe to land.
-                    if self.Height - target > 25 then
-                        -- A cliff, not a step. Do not follow it at all, in
-                        -- chunks or otherwise; hold the floor where it is and
-                        -- let the pit logic decide.
+                    -- A cliff is only a cliff while we are still standing on
+                    -- top of it. Once we are already below our own floor this
+                    -- is not a decision to jump off anything, it is a recovery,
+                    -- and refusing it is what leaves us floating: we switch the
+                    -- map's collision off locally but the server still thinks
+                    -- that floor is solid, so a character with nothing under it
+                    -- on our side and ground under it on theirs hangs in
+                    -- permanent freefall. Measured exactly that - floor at 18,
+                    -- character at -58.5, Freefall with no velocity, forever.
+                    local fallen = root.Position.Y < self.Height - 10
+                    if self.Height - target > 25 and not fallen then
+                        -- Hold the floor where it is and let the pit logic
+                        -- decide; it is the only thing that knows whether we
+                        -- belong down there and where it is safe to land.
                         self.DropSince = nil
+                    elseif fallen then
+                        -- No confirmation delay here. Every frame we spend
+                        -- without a floor is a frame of that stand-off, so take
+                        -- the ground the moment we can see it.
+                        self.Height, self.DropSince = target, nil
                     else
                         self.DropSince = self.DropSince or os.clock()
                         if os.clock() - self.DropSince > 0.15 then
@@ -30561,7 +30606,19 @@ do
         end
         self.Lowest = math.min(self.Lowest or self.Height, self.Height)
 
-        self.Platform.CFrame = CFrame.new(root.Position.X, self.Height-1, root.Position.Z)
+        -- ...which demotes this to a gap filler. It parks three studs under
+        -- the surface we just measured, so wherever the map has real floor the
+        -- real floor is what we stand on and this only ever catches us over a
+        -- hole.
+        --
+        -- Bob's arena was asked for flat and had this plane carrying us there.
+        -- That is off, and not casually: it has now been tried twice and both
+        -- times it did the same thing, lifting and dropping the character as
+        -- its height estimate drifted. Trading the arena's real slopes for a
+        -- flat one is not worth another movement bug. Worth revisiting once
+        -- this is stable, with the flatness done by measuring the arena once on
+        -- arrival rather than by following us around.
+        self.Platform.CFrame = CFrame.new(root.Position.X, self.Height-4, root.Position.Z)
         self.Platform.Parent = workspace
 
         -- Normally it just sits out of the way, thirty studs under the deepest
@@ -30641,6 +30698,18 @@ do
             if not self.PitSeen then self.PitWaitingSince = os.clock() end
             self.PitSeen = true
             self.PitClearAt = nil
+            -- However we got here, if we are already down among them then we
+            -- are in the pit and there is nothing left to plan. Without this
+            -- the status line still reads "moving above clear landing" while we
+            -- stand on the pit floor, and the search goes on looking for a
+            -- landing below a floor that is already under our feet.
+            if root.Position.Y < lower.Root.Position.Y + 20 then
+                self.PitEntered = true
+                self.PitDropping = false
+                self.PitTargetY = nil
+                c.Dodger.NLPitLandingGoal = nil
+                self.PitStatus = "already in the pit"
+            end
             -- Give up ground on the clearance the longer we stand up here doing
             -- nothing: forty-eight studs to start with, then down to twenty
             -- over half a minute. Hovering costs the whole fight; landing close

@@ -169,9 +169,24 @@ do
                 elseif p.Anchored then
                     self.Changed[p] = {Collide=p.CanCollide, Query=p.CanQuery, Alpha=p.Transparency, LocalAlpha=p.LocalTransparencyModifier}
                     if p.CanCollide and floor(p) then self.Supports[p] = true end
-                    -- Keep floor geometry only as invisible height references.
-                    -- A single level surface carries the player in each fight.
-                    p.CanCollide = false
+                    -- The real walk surfaces stay SOLID. Only the scenery loses
+                    -- its collision.
+                    --
+                    -- Making them invisible height references and letting one
+                    -- flat plane carry us instead is what produced every
+                    -- movement bug in this file: falling out from under our own
+                    -- floor when it sat too high, the plane refusing to follow
+                    -- us into the pit, and worst of all the stand-off - we turn
+                    -- collision off on our side only, the server still has the
+                    -- floor solid, and a character with no ground on our side
+                    -- and ground on theirs hangs in freefall going nowhere.
+                    -- Measured: floor at 18, character at -58.5, Freefall at
+                    -- zero velocity, indefinitely.
+                    --
+                    -- The file already said this and then did the opposite: the
+                    -- real floor is what carries the mobs and it is what should
+                    -- carry us. Its slopes and steps are the arena, not clutter.
+                    p.CanCollide = self.Supports[p] == true
                     p.CanQuery = self.Supports[p] == true
                     p.Transparency = 1
                     p.LocalTransparencyModifier = 1
@@ -321,11 +336,26 @@ do
                     -- the one above it. A cliff is the pit logic's business,
                     -- because only it knows whether we are meant to be down
                     -- there yet and where it is safe to land.
-                    if self.Height - target > 25 then
-                        -- A cliff, not a step. Do not follow it at all, in
-                        -- chunks or otherwise; hold the floor where it is and
-                        -- let the pit logic decide.
+                    -- A cliff is only a cliff while we are still standing on
+                    -- top of it. Once we are already below our own floor this
+                    -- is not a decision to jump off anything, it is a recovery,
+                    -- and refusing it is what leaves us floating: we switch the
+                    -- map's collision off locally but the server still thinks
+                    -- that floor is solid, so a character with nothing under it
+                    -- on our side and ground under it on theirs hangs in
+                    -- permanent freefall. Measured exactly that - floor at 18,
+                    -- character at -58.5, Freefall with no velocity, forever.
+                    local fallen = root.Position.Y < self.Height - 10
+                    if self.Height - target > 25 and not fallen then
+                        -- Hold the floor where it is and let the pit logic
+                        -- decide; it is the only thing that knows whether we
+                        -- belong down there and where it is safe to land.
                         self.DropSince = nil
+                    elseif fallen then
+                        -- No confirmation delay here. Every frame we spend
+                        -- without a floor is a frame of that stand-off, so take
+                        -- the ground the moment we can see it.
+                        self.Height, self.DropSince = target, nil
                     else
                         self.DropSince = self.DropSince or os.clock()
                         if os.clock() - self.DropSince > 0.15 then
@@ -358,7 +388,19 @@ do
         end
         self.Lowest = math.min(self.Lowest or self.Height, self.Height)
 
-        self.Platform.CFrame = CFrame.new(root.Position.X, self.Height-1, root.Position.Z)
+        -- ...which demotes this to a gap filler. It parks three studs under
+        -- the surface we just measured, so wherever the map has real floor the
+        -- real floor is what we stand on and this only ever catches us over a
+        -- hole.
+        --
+        -- Bob's arena was asked for flat and had this plane carrying us there.
+        -- That is off, and not casually: it has now been tried twice and both
+        -- times it did the same thing, lifting and dropping the character as
+        -- its height estimate drifted. Trading the arena's real slopes for a
+        -- flat one is not worth another movement bug. Worth revisiting once
+        -- this is stable, with the flatness done by measuring the arena once on
+        -- arrival rather than by following us around.
+        self.Platform.CFrame = CFrame.new(root.Position.X, self.Height-4, root.Position.Z)
         self.Platform.Parent = workspace
 
         -- Normally it just sits out of the way, thirty studs under the deepest
@@ -438,6 +480,18 @@ do
             if not self.PitSeen then self.PitWaitingSince = os.clock() end
             self.PitSeen = true
             self.PitClearAt = nil
+            -- However we got here, if we are already down among them then we
+            -- are in the pit and there is nothing left to plan. Without this
+            -- the status line still reads "moving above clear landing" while we
+            -- stand on the pit floor, and the search goes on looking for a
+            -- landing below a floor that is already under our feet.
+            if root.Position.Y < lower.Root.Position.Y + 20 then
+                self.PitEntered = true
+                self.PitDropping = false
+                self.PitTargetY = nil
+                c.Dodger.NLPitLandingGoal = nil
+                self.PitStatus = "already in the pit"
+            end
             -- Give up ground on the clearance the longer we stand up here doing
             -- nothing: forty-eight studs to start with, then down to twenty
             -- over half a minute. Hovering costs the whole fight; landing close
