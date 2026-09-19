@@ -18361,6 +18361,11 @@ do
     CONFIG.NLOrbAimCos = 0.95        -- within about 18 degrees of straight at us
     CONFIG.NLOrbLockTime = 0.5       -- and holding that for this long
     CONFIG.NLOrbWatch = 150          -- studs: close enough to be ours
+    -- An orb 100 studs out is not urgent - it travels at walking pace, so there
+    -- is time to keep fighting and deal with it when it is actually close.
+    -- Running the errand from the moment it spawns meant the fight was spent
+    -- walking to crystals: measured 1564 errand frames in one fight.
+    CONFIG.NLOrbAct = 55             -- only start the errand inside this
     CONFIG.NLOrbHold = 1.5           -- seconds a spotted orb keeps the errand alive
     CONFIG.NLOrbStandOff = 9         -- how far past the crystal we stand
     CONFIG.NLOrbDone = 14            -- orb this close to its crystal: job done
@@ -18459,6 +18464,9 @@ do
         local ok, orb = pcall(mine, self, root, now)
         if not ok or not orb then
             return
+        end
+        if flatten(root.Position - orb.Part.Position).Magnitude > CONFIG.NLOrbAct then
+            return    -- still far: keep fighting, it is coming at walking pace
         end
         local where = crystals()
         local crystal = where and where[orb.Colour]
