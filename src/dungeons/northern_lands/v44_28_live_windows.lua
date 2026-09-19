@@ -657,7 +657,7 @@ do
     local newController = UIWController.new
     function UIWController.new()
         local self = newController()
-        self.Version = "46.2-widecircle"
+        self.Version = "46.3-clearscenery"
         return self
     end
 end

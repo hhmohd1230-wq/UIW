@@ -16932,6 +16932,39 @@ do
     CONFIG.FlatArenaBossRange = 300
     CONFIG.FlatArenaMobRange = 130
 
+    -- Northern Lands is built out of ice spikes and mountains that are rooted
+    -- well below the floor, so the "sits on the floor" test skipped every one of
+    -- them and the rooms stayed full of the clutter that squeezes the circle.
+    -- Here the test is only whether a part stands above the floor - which
+    -- catches them - with the floor itself, and anything that carries us or
+    -- holds us in, protected by name.
+    CONFIG.FlatArenaDeep = true
+    CONFIG.FlatArenaDeepSize = 3000
+
+    -- Never touched. The barriers in particular are deliberate: they hold us in
+    -- a room until the game opens them, and that is behaviour to keep, not to
+    -- defeat. Removing them would be crossing into a room early, which is a
+    -- different thing entirely from clearing scenery.
+    local PROTECTED = {
+        "barrier", "wall", "invisible", "platform", "ramp", "stair", "bridge",
+        "floor", "ground", "arena", "border", "spawn", "door", "gate", "block",
+    }
+    local function protectedName(part)
+        local name = string.lower(part.Name)
+        local parent = part.Parent and string.lower(part.Parent.Name) or ""
+        for _, word in ipairs(PROTECTED) do
+            if string.find(name, word, 1, true) or string.find(parent, word, 1, true) then
+                return true
+            end
+        end
+        return false
+    end
+
+    local function deepMode()
+        local value = Workspace:FindFirstChild("dungeonName")
+        return CONFIG.FlatArenaDeep and value and value.Value == "Northern Lands"
+    end
+
     -- sharper reactions while the arena is flat
     CONFIG.FlatDodgeSolveInterval = 1 / 30
     CONFIG.FlatHazardCacheInterval = 1 / 30
@@ -16996,18 +17029,25 @@ do
         if not ok or type(parts) ~= "table" then
             return
         end
+        local deep = deepMode()
+        local maxSize = deep and CONFIG.FlatArenaDeepSize or CONFIG.FlatArenaMaxSize
         for _, part in ipairs(parts) do
             if part:IsA("BasePart")
                 and not self.Changed[part]
                 and part.CanCollide
                 and part.Anchored                  -- moving parts are left alone
-                and part.Size.Magnitude <= CONFIG.FlatArenaMaxSize
+                and part.Size.Magnitude <= maxSize
+                and not (deep and protectedName(part))
             then
                 local half = part.Size.Y * 0.5
                 local top = part.Position.Y + half
                 local bottom = part.Position.Y - half
-                -- clutter = stands above the floor and does not form the floor
-                if top > floorY + CONFIG.FlatArenaFloorBand and bottom > floorY - 1 then
+                -- clutter = stands above the floor and does not form the floor.
+                -- In deep mode where it is rooted does not matter, only that it
+                -- rises above the floor we are walking on.
+                if top > floorY + CONFIG.FlatArenaFloorBand
+                    and (deep or bottom > floorY - 1)
+                then
                     self.Changed[part] = {
                         CanCollide = part.CanCollide,
                         Transparency = part.Transparency,
@@ -18641,7 +18681,7 @@ do
     local newController = UIWController.new
     function UIWController.new()
         local self = newController()
-        self.Version = "46.2-widecircle"
+        self.Version = "46.3-clearscenery"
         return self
     end
 end
