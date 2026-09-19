@@ -16,6 +16,8 @@ do
     local DEADLY = {
         secondBossHorizontalBeam = 6,
         genericNeonBall = 5,          -- measured 80-86% in one hit
+        firstBossBigSpike = 5,        -- measured 89% in one hit
+        firstBossCrissCross = 3,      -- 35-43% each and they arrive in threes
         secondBossSpreadBeam = 3,
         secondBossMovingBeam = 3,
         firstBossJumpSlam = 4,
@@ -145,8 +147,8 @@ do
             local dz = math.max(math.abs(here.Z) - half.Z, 0)
             if math.sqrt(dx * dx + dy * dy + dz * dz) > (self.NLAwareNow or CONFIG.NLAwareRadius) then return end
             local pad=name=="firstBossJumpSlam" and 16
-                or ((name=="firstBossCrissCross" or name=="firstBossBigSpike"
-                    or name=="firstBossSeekingSpikes") and 8)
+                or (name=="firstBossCrissCross" and 12)
+                or ((name=="firstBossBigSpike" or name=="firstBossSeekingSpikes") and 9)
                 or 5
             -- The shurikens are flat discs: firstBossSeekingSpikes is 20x0x20
             -- and firstBossBigSpike 40x0x40, zero studs tall. With the usual 3

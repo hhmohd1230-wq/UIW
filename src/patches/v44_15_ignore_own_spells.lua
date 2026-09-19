@@ -8,6 +8,11 @@ do
         -- collected as something to dodge, so the script kept stepping away
         -- from its own damage.
         ["flame shuriken"] = true,
+        -- Inner Rage drops a 19x6x19 ring at our feet. It shows up as the
+        -- nearest object whenever we take a hit, which made it look like an
+        -- attack in the logs; treating it as one would have had the script
+        -- running away from its own buff.
+        groundaura = true,
     }
     getgenv().UIW_OwnAbilities = OWN_ABILITY_NAMES
 
