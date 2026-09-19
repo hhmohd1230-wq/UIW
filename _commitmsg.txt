@@ -1,0 +1,16 @@
+Northern Lands: dodge the attacks the census found we were blind to
+
+Catalogued every effect the dungeon spawns across four runs. Several were
+invisible to the planner because their only part is a precast, so collect()
+skipped them as warnings: Bob's three ice spike circles (up to 80 studs), the
+Northern Warrior's 114 stud line strike, and Odin's warned attacks. live() now
+falls back to the precast when there is no hitBox, and a per-attack linger keeps
+us clear after the warning goes dark, because a spike field erupts once the
+warning has already cleared.
+
+Odin's bouncing orb, missile and orb beam are bare parts with neither hitBox nor
+precast - the same blind spot the whirlwinds had. He took 42-78% off us in single
+hits the tracker recorded as "nothing nearby".
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_019ecLRBjLhSDo9uh1hRsYtX

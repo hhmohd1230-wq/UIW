@@ -17948,6 +17948,14 @@ do
         secondBossSpreadBeam = 6,     -- also measured as a one-shot: 100%
         secondBossMovingBeam = 3,
         firstBossJumpSlam = 4,
+        -- Odin. Measured single hits of 42% and 78% with nothing the tracker
+        -- could name, so these are first estimates from hitbox size rather than
+        -- from attributed damage; the next runs will attribute them properly.
+        thirdBossLineShot = 5,        -- 13 x 138 x 219, the arena-crossing one
+        thirdBossMissile = 4,
+        thirdBossMultiRings = 3,
+        thirdBossBouncingOrb = 3,
+        largeIceSpikes = 3,           -- Bob, an 80 stud circle
     }
     CONFIG.NLGapClearance = 9      -- beam half width plus a body
     CONFIG.NLMinRadius = 28        -- closest we stand to the pillar
@@ -17973,9 +17981,27 @@ do
         end
         return boss(enemy)
     end
+    -- Everything the dungeon spawns was catalogued by name and hitbox size over
+    -- four full runs. Several of these were invisible to the planner: they are
+    -- models whose only part is a precast, so the hazard tracker filed them as
+    -- warnings and collect() skipped them, and they were never dodged at all.
+    -- The ice spikes are the clearest case - a 80 x 80 circle on the floor.
     local timed = {firstBossPassiveBeam=true, firstBossJumpSlam=true, spearmanStrikeHitbox=true,
-        northernMageShot=true, northernWarriorCircleStrike=true}
+        northernMageShot=true, northernWarriorCircleStrike=true,
+        -- Bob: three sizes of ground circle, warned by a precast and nothing else
+        largeIceSpikes=true, mediumIceSpikes=true, smallIceSpikes=true,
+        -- mobs: a long melee lane, 114 studs of it
+        northernWarriorLineStrike=true,
+        -- Odin: the two warned attacks
+        thirdBossLineShot=true, thirdBossMultiRings=true}
     local windup = {firstBossPassiveBeam=1.0, firstBossJumpSlam=2.0}
+    -- How long after the warning goes dark the ground is still dangerous. The
+    -- default 0.30s suits a beam, where the warning and the hit are the same
+    -- moment; a spike field warns, the warning clears, and then the spikes come
+    -- up, so leaving on the warning is only safe if we stay away a little
+    -- longer than that.
+    local linger = {largeIceSpikes=1.2, mediumIceSpikes=1.2, smallIceSpikes=1.2,
+        thirdBossMultiRings=0.8, thirdBossLineShot=0.6, northernWarriorLineStrike=0.6}
     -- Found by logging everything that appears during the fight: the whirlwinds
     -- and the shurikens are bare MeshParts sitting straight in the workspace
     -- with no hitBox and no precast child, so the hazard tracker never saw them
@@ -17991,11 +18017,23 @@ do
         -- dangerous while we do it, so the planner keeps a step ahead of it.
         secondBossRedOrb=true, secondBossGreenOrb=true, secondBossYellowOrb=true,
         -- and the explosion itself, for whoever is still standing there
-        genericNeonBall=true}
+        genericNeonBall=true,
+        -- Odin. Both are bare parts sitting in the workspace with no hitBox and
+        -- no precast, the same shape of blind spot the whirlwinds were: he took
+        -- 42-78% off us in single hits that the tracker recorded as "nothing
+        -- nearby". thirdBossBouncingOrb is 12 cubed, thirdBossMissile 10x10x30.
+        thirdBossBouncingOrb=true, thirdBossMissile=true, thirdBossBouncingOrbBeam=true}
     local tracks = setmetatable({}, {__mode="k"})
     local function live(container, now)
         local box = container:FindFirstChild("hitBox", true)
         if not box and container:IsA("BasePart") then box = container end
+        -- Some attacks never grow a hitBox on our side - the precast circle is
+        -- the whole thing we can see. Use it as the box rather than ignoring
+        -- the attack, which is what happened before.
+        if not box then
+            local pre = container:FindFirstChild("precast", true)
+            if pre and pre:IsA("BasePart") then box = pre end
+        end
         if not box or not box:IsA("BasePart") then return nil end
         local info = tracks[container]
         if not info then
@@ -18020,7 +18058,8 @@ do
             info.Visible = now
             info.HadWarning = true
         end
-        if timed[container.Name] and info.HadWarning and now-info.Visible > 0.30 then return nil end
+        local hold = linger[container.Name] or 0.30
+        if timed[container.Name] and info.HadWarning and now-info.Visible > hold then return nil end
         if timed[container.Name] and not info.HadWarning and now-info.Seen > 0.30 then return nil end
         return box, info
     end
