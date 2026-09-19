@@ -67,7 +67,14 @@ do
 
     local function floorShape(p)
         local n = p.Name:lower()
-        for _, word in ipairs({"floor", "ground", "platform", "ramp", "stair", "step", "arena", "plank", "ice3", "ice plates"}) do
+        -- "plank", "ice3" and "ice plates" came out of this list. Measured
+        -- within 400 studs: 52 parts were still solid, and 10 of them were held
+        -- up by nothing but those three words - nine planks and an ice plate
+        -- that do not look like floors at all. The genuine surfaces among them,
+        -- three ice3 slabs and one ice plate, pass the shape test on their own
+        -- (the big one is 246 x 11 x 251), so they stay either way. Dropping the
+        -- names loses the clutter and keeps every real floor.
+        for _, word in ipairs({"floor", "ground", "platform", "ramp", "stair", "step", "arena"}) do
             if n:find(word, 1, true) then return true end
         end
         -- Use the local thin axis and its WORLD normal, not a world-Y box.
