@@ -18035,6 +18035,20 @@ do
     -- outside cast range is priced high enough to outweigh a cheap hazard and
     -- still lose to a one-shot, whose weight is several times this.
     CONFIG.NLRangePull = 4         -- score per stud we would still be out of cast range
+    -- What a melee mob is actually worth standing away from. This was 34 studs
+    -- at a weight of 8, which made it the strongest single term in the whole
+    -- scorer: standing 15 studs from one warrior scored 152 per time sample, so
+    -- over four samples it beat most hazards outright. The result was that any
+    -- pack of warriors pushed us backwards out of our own casting range and we
+    -- waited for them to walk to us one at a time.
+    --
+    -- The real danger is measured, not guessed: northernWarriorCircleStrike is
+    -- 25 studs across and grows to 34, so its radius is 12 to 17 studs. A 34
+    -- stud keep-out was double the grown attack's radius - the same mistake as
+    -- the mage padding, a safety margin twice the size of the thing it guards
+    -- against, and the direct reason circling a pack was impossible.
+    CONFIG.NLMeleeKeepOut = 20     -- circle strike radius 17, plus a body
+    CONFIG.NLMeleeWeight = 4
     -- DamageCastRange = 64 is our own rule, not the game's. Our damage spell is
     -- Flame Shuriken, a 45 stud disc that flies - there is no 64 stud leash on
     -- it. The evidence that it lands much further out is Ethos: it damaged Bob
@@ -18552,7 +18566,8 @@ do
                     local position=root.Position+dir*speed*t
                     score+=risk(list,position,t)
                     for _,mob in ipairs(melee) do
-                        score+=math.max(0,34-flatten(position-mob).Magnitude)*8
+                        score+=math.max(0,CONFIG.NLMeleeKeepOut-flatten(position-mob).Magnitude)
+                            *CONFIG.NLMeleeWeight
                     end
                 end
                 if goal then
@@ -18604,7 +18619,7 @@ do
     local newController = UIWController.new
     function UIWController.new()
         local self = newController()
-        self.Version = "46.0-packorbit"
+        self.Version = "46.1-meleekeepout"
         return self
     end
 end
