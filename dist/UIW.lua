@@ -18374,6 +18374,17 @@ do
         self.NLLiveBoxes,self.NLLiveBeams=#list,#beams
         return best,yaw,self.NLEmergency,self.NLDodging
     end
+
+    -- This file loads last of the planners, so its version string is the one
+    -- that survives. A measurement is worthless if we cannot say which build
+    -- produced it, and we have already once scored a fight against a build that
+    -- turned out to be the previous one, served from a stale cache.
+    local newController = UIWController.new
+    function UIWController.new()
+        local self = newController()
+        self.Version = "45.2-nl-census"
+        return self
+    end
 end
 -- v44.29: Northern Lands - spend the speed buff on escapes, not just travel.
 --
