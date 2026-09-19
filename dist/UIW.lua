@@ -18329,7 +18329,14 @@ do
     -- costs ~9 seconds and doubles the fight. Stepping out to about 75 studs
     -- takes under two seconds, puts real distance between us and the densest
     -- part of the sunburst, and we keep dodging beams normally the whole time.
-    CONFIG.NLSunburstRun = 6        -- seconds of holding back after he returns
+    -- Off. Three measurements now agree: backing off when he returns to the
+    -- pillar costs more than it saves.
+    --   stay close        26-34s, 0 deaths, 53-85% of the fight in cast range
+    --   back off to 75     45-102s, 1-4 deaths
+    --   run to the rim     93-114s, 5-6 deaths
+    -- The dodge improvements stay; only the retreat is switched off. Raise this
+    -- above zero to try it again.
+    CONFIG.NLSunburstRun = 0        -- seconds of holding back after he returns
     CONFIG.NLSunburstRadius = 75    -- how far back, not the rim
     CONFIG.NLPillarNear = 28       -- horizontally this close to the pillar counts as on it
     CONFIG.NLPillarHigh = 12       -- and this far above us
