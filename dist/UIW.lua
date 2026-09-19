@@ -18471,7 +18471,13 @@ do
         local root=self.CharacterService.Root
         local champion=enemy and enemy.Model and normalizeEnemyName(enemy.Model.Name)=="midgardian champion"
         local bob=enemy and enemy.Model and normalizeEnemyName(enemy.Model.Name)=="bob the frost giant"
-        self.NLAwareNow = bob and CONFIG.NLBobAware or CONFIG.NLAwareRadius
+        -- Odin needs the same treatment as Bob and for the same reason: his
+        -- line shot is 13 x 138 x 219 and his ring is 75 across, so a 150 stud
+        -- bubble is smaller than his attacks are long. Every Odin fight we have
+        -- recorded took 42-78% off us in single hits the tracker could not name,
+        -- which is what being blind to an attack looks like from the inside.
+        local odin=enemy and enemy.Model and normalizeEnemyName(enemy.Model.Name)=="odin"
+        self.NLAwareNow = (bob or odin) and CONFIG.NLBobAware or CONFIG.NLAwareRadius
         local list,beams=collect(self,now)
         local preferred=unit(flatten(routeDirection or Vector3.zero))
         local goal
@@ -18769,7 +18775,7 @@ do
     local newController = UIWController.new
     function UIWController.new()
         local self = newController()
-        self.Version = "46.8-bobarena"
+        self.Version = "46.9-odin"
         return self
     end
 end
@@ -19145,6 +19151,9 @@ do
     CONFIG.NLHighStuck = 9           -- seconds of being unable to hurt them first
     CONFIG.NLResetCooldown = 30      -- never more often than this
     CONFIG.NLResetMax = 3            -- per room, then stop trying
+    -- Reaching Odin at all has been the hard part, not fighting him.
+    CONFIG.NLResetForOdin = true
+    CONFIG.NLOdinStuck = 20          -- his health must not have moved for this long
 
     local function northern()
         local d = Workspace:FindFirstChild("dungeonName")
@@ -19192,6 +19201,22 @@ do
                 end
             end
         end
+
+        -- Odin is the same problem wearing a boss nameplate: if we cannot get to
+        -- him the fight does not start, and a run that cannot start is worth
+        -- less than a death. So he gets the same treatment - but only when his
+        -- health has not moved at all, because a slow fight is still a fight and
+        -- killing ourselves in the middle of one would be idiotic.
+        if not target and CONFIG.NLResetForOdin then
+            for _, enemy in ipairs(self.Dungeon and self.Dungeon:GetAliveEnemies() or {}) do
+                if enemy.Root and enemy.Root.Parent and enemy.Model
+                    and normalizeEnemyName(enemy.Model.Name) == "odin"
+                then
+                    target = enemy
+                end
+            end
+        end
+
         if not target then
             self.NLHighSince, self.NLHighHealth = nil, nil
             return
@@ -19207,7 +19232,9 @@ do
 
         local now = os.clock()
         self.NLHighSince = self.NLHighSince or now
-        if now - self.NLHighSince < CONFIG.NLHighStuck then
+        local isBoss = target.Model and normalizeEnemyName(target.Model.Name) == "odin"
+        local patience = isBoss and CONFIG.NLOdinStuck or CONFIG.NLHighStuck
+        if now - self.NLHighSince < patience then
             return
         end
         if now - (self.NLResetAt or 0) < CONFIG.NLResetCooldown then

@@ -447,7 +447,13 @@ do
         local root=self.CharacterService.Root
         local champion=enemy and enemy.Model and normalizeEnemyName(enemy.Model.Name)=="midgardian champion"
         local bob=enemy and enemy.Model and normalizeEnemyName(enemy.Model.Name)=="bob the frost giant"
-        self.NLAwareNow = bob and CONFIG.NLBobAware or CONFIG.NLAwareRadius
+        -- Odin needs the same treatment as Bob and for the same reason: his
+        -- line shot is 13 x 138 x 219 and his ring is 75 across, so a 150 stud
+        -- bubble is smaller than his attacks are long. Every Odin fight we have
+        -- recorded took 42-78% off us in single hits the tracker could not name,
+        -- which is what being blind to an attack looks like from the inside.
+        local odin=enemy and enemy.Model and normalizeEnemyName(enemy.Model.Name)=="odin"
+        self.NLAwareNow = (bob or odin) and CONFIG.NLBobAware or CONFIG.NLAwareRadius
         local list,beams=collect(self,now)
         local preferred=unit(flatten(routeDirection or Vector3.zero))
         local goal
@@ -745,7 +751,7 @@ do
     local newController = UIWController.new
     function UIWController.new()
         local self = newController()
-        self.Version = "46.8-bobarena"
+        self.Version = "46.9-odin"
         return self
     end
 end
