@@ -39,8 +39,23 @@ do
     -- the arena - by then the errand is a panic, not a plan.
     CONFIG.NLOrbAct = 120            -- only start the errand inside this
     CONFIG.NLOrbHold = 1.5           -- seconds a spotted orb keeps the errand alive
-    CONFIG.NLOrbStandOff = 9         -- how far past the crystal we stand
-    CONFIG.NLOrbDone = 14            -- orb this close to its crystal: job done
+    -- How far past the crystal we stand. This was 9, and 9 is suicide: the orb
+    -- explodes on contact as a genericNeonBall, which is 120 studs across - a
+    -- 60 stud radius. Standing 9 studs behind the crystal is standing inside the
+    -- blast and waiting for it. Measured after the errand started working at
+    -- all: genericNeonBall became the single biggest source of damage in the
+    -- fight, 12 hits, more than the wave.
+    --
+    -- Distance costs nothing here. The orb homes on US, so wherever we stand,
+    -- it flies towards us - and if the crystal is on that line it dies on the
+    -- crystal on the way. Being further back keeps the crystal between us and
+    -- it for longer, not less.
+    CONFIG.NLOrbStandOff = 46
+    CONFIG.NLOrbDone = 18            -- orb this close to its crystal: job done
+    -- ...and once it is that close, leave. The crystal is about to become the
+    -- centre of a 120 stud explosion and we know exactly where and when.
+    CONFIG.NLOrbBlastRadius = 66
+    CONFIG.NLOrbBlastHold = 1.6      -- seconds we keep clearing away from it
 
     local function inNorthernLands()
         local value = Workspace:FindFirstChild("dungeonName")
@@ -171,7 +186,15 @@ do
         goal = Vector3.new(goal.X, root.Position.Y, goal.Z)
 
         if flatten(orb.Part.Position - crystal).Magnitude <= CONFIG.NLOrbDone then
-            return    -- it is about to hit the crystal, stop dragging it around
+            -- About to detonate. Do not merely stop leading it - get clear, in a
+            -- straight line away from where the blast is going to be.
+            local away = flatten(root.Position - crystal)
+            local out = away.Magnitude > 1 and away.Unit or Vector3.new(1, 0, 0)
+            local flee = crystal + out * CONFIG.NLOrbBlastRadius
+            solver.NLOrbGoal = Vector3.new(flee.X, root.Position.Y, flee.Z)
+            solver.NLOrbUntil = now + CONFIG.NLOrbBlastHold
+            self.OrbBlastRuns = (self.OrbBlastRuns or 0) + 1
+            return
         end
 
         solver.NLOrbGoal = goal

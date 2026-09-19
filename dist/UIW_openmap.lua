@@ -18179,6 +18179,8 @@ do
     CONFIG.NLBobWaveAxisCost = 120
     CONFIG.NLBobWaveRange = 110
     CONFIG.NLOrbGoalPull = 7       -- score per stud off the spot behind the crystal
+    CONFIG.NLBossHorizon = 2.6     -- seconds of travel we compare against, for Bob and Odin
+    CONFIG.NLProbeDistance = 22    -- ...but only this much is checked for being walkable
     -- DamageCastRange = 64 is our own rule, not the game's. Our damage spell is
     -- Flame Shuriken, a 45 stud disc that flies - there is no 64 stud leash on
     -- it. The evidence that it lands much further out is Ethos: it damaged Bob
@@ -18250,7 +18252,16 @@ do
         -- Odin: the two warned attacks
         thirdBossLineShot=true, thirdBossMultiRings=true,
         -- Bob's expanding wave, which nothing was tracking at all
-        secondBossCricleHitbox=true}
+        secondBossCricleHitbox=true,
+        -- His two big beams. They were in no list, so they reached the planner
+        -- only through the generic tracker - which skips anything still flagged
+        -- as a warning. That means we never saw them forming, only once they
+        -- were already live, and a 400 stud beam that is already live is a beam
+        -- that has already arrived. Both carry a precast and a hitBox, so
+        -- routing them through here gives us the whole geometry while it is
+        -- still only a warning. They are the top damage source in the fight now
+        -- that the wave and the orbs are handled.
+        secondBossHorizontalBeam=true, secondBossSpreadBeam=true}
     local windup = {firstBossPassiveBeam=1.0, firstBossJumpSlam=2.0}
     -- How long after the warning goes dark the ground is still dangerous. The
     -- default 0.30s suits a beam, where the warning and the hit are the same
@@ -18258,7 +18269,9 @@ do
     -- up, so leaving on the warning is only safe if we stay away a little
     -- longer than that.
     local linger = {largeIceSpikes=1.2, mediumIceSpikes=1.2, smallIceSpikes=1.2,
-        thirdBossMultiRings=0.8, thirdBossLineShot=0.6, northernWarriorLineStrike=0.6}
+        thirdBossMultiRings=0.8, thirdBossLineShot=0.6, northernWarriorLineStrike=0.6,
+        -- these fire as the warning ends, so they have to outlive it
+        secondBossHorizontalBeam=1.0, secondBossSpreadBeam=1.0}
 
     -- Attacks whose precast IS the damage area, not a flashing warning that
     -- precedes one. Measured in Bob's arena: every one of these precasts sits at
@@ -18679,8 +18692,25 @@ do
             return solve(self,routeDirection,enemy,yaw)
         end
         local speed=math.max(self.CharacterService.Humanoid.WalkSpeed,8)
-        local horizon=champion and 1.5 or 0.65
-        local times=champion and {0.15,0.4,0.7,1.0,1.25,1.5} or {0.12,0.3,0.5,0.65}
+        -- How far ahead we look before choosing a direction, and this is the
+        -- single most important number in the whole fight.
+        --
+        -- Bob was on the mob horizon of 0.65 seconds. At 24 studs a second that
+        -- is 15 studs of travel - and his wave discs have radii of 11 to 38. So
+        -- standing near the middle of one, EVERY candidate direction still ends
+        -- inside the box after 15 studs. Every option scores the same, nothing
+        -- looks like an escape, and the planner shuffles on the spot. That is
+        -- exactly what the frame log showed: 2 studs from the centre at the
+        -- start, 3 studs after 1.7 seconds, dead.
+        --
+        -- When the hazard is wider than the distance we look, there is no
+        -- escape to find. His attacks are arena-scale, so the lookahead has to
+        -- be too: 2.6 seconds is 62 studs, which crosses out of a 76 stud
+        -- corridor from near its middle.
+        local wide = bob or odin
+        local horizon = wide and CONFIG.NLBossHorizon or (champion and 1.5 or 0.65)
+        local times = wide and {0.3,0.8,1.4,2.0,2.6}
+            or (champion and {0.15,0.4,0.7,1.0,1.25,1.5} or {0.12,0.3,0.5,0.65})
         local melee={}
         if not champion then
             for _,e in ipairs(self.Dungeon and self.Dungeon:GetAliveEnemies() or {}) do
@@ -18751,8 +18781,13 @@ do
             local angle=i*math.pi/8
             local dir=i==16 and Vector3.zero or Vector3.new(math.cos(angle),0,math.sin(angle))
             local distance=speed*horizon
-            if dir.Magnitude==0 or (self.Geometry:IsDirectionClear(dir,distance,yaw)
-                and self.Geometry:IsGroundPadded(root.Position+dir*distance,CONFIG.EdgeHardPadding)) then
+            -- Walkability is checked over a short step, not the whole horizon.
+            -- Asking "is 62 studs of ground clear" would reject almost every
+            -- direction in a room with anything in it, which would undo the
+            -- long lookahead the moment it started to matter.
+            local probe=math.min(distance,CONFIG.NLProbeDistance)
+            if dir.Magnitude==0 or (self.Geometry:IsDirectionClear(dir,probe,yaw)
+                and self.Geometry:IsGroundPadded(root.Position+dir*probe,CONFIG.EdgeHardPadding)) then
                 local score=0
                 for _,t in ipairs(times) do
                     local position=root.Position+dir*speed*t
@@ -18832,7 +18867,7 @@ do
     local newController = UIWController.new
     function UIWController.new()
         local self = newController()
-        self.Version = "47.1-orbpillar"
+        self.Version = "47.4-beamwarn"
         return self
     end
 end
@@ -19061,8 +19096,23 @@ do
     -- the arena - by then the errand is a panic, not a plan.
     CONFIG.NLOrbAct = 120            -- only start the errand inside this
     CONFIG.NLOrbHold = 1.5           -- seconds a spotted orb keeps the errand alive
-    CONFIG.NLOrbStandOff = 9         -- how far past the crystal we stand
-    CONFIG.NLOrbDone = 14            -- orb this close to its crystal: job done
+    -- How far past the crystal we stand. This was 9, and 9 is suicide: the orb
+    -- explodes on contact as a genericNeonBall, which is 120 studs across - a
+    -- 60 stud radius. Standing 9 studs behind the crystal is standing inside the
+    -- blast and waiting for it. Measured after the errand started working at
+    -- all: genericNeonBall became the single biggest source of damage in the
+    -- fight, 12 hits, more than the wave.
+    --
+    -- Distance costs nothing here. The orb homes on US, so wherever we stand,
+    -- it flies towards us - and if the crystal is on that line it dies on the
+    -- crystal on the way. Being further back keeps the crystal between us and
+    -- it for longer, not less.
+    CONFIG.NLOrbStandOff = 46
+    CONFIG.NLOrbDone = 18            -- orb this close to its crystal: job done
+    -- ...and once it is that close, leave. The crystal is about to become the
+    -- centre of a 120 stud explosion and we know exactly where and when.
+    CONFIG.NLOrbBlastRadius = 66
+    CONFIG.NLOrbBlastHold = 1.6      -- seconds we keep clearing away from it
 
     local function inNorthernLands()
         local value = Workspace:FindFirstChild("dungeonName")
@@ -19193,7 +19243,15 @@ do
         goal = Vector3.new(goal.X, root.Position.Y, goal.Z)
 
         if flatten(orb.Part.Position - crystal).Magnitude <= CONFIG.NLOrbDone then
-            return    -- it is about to hit the crystal, stop dragging it around
+            -- About to detonate. Do not merely stop leading it - get clear, in a
+            -- straight line away from where the blast is going to be.
+            local away = flatten(root.Position - crystal)
+            local out = away.Magnitude > 1 and away.Unit or Vector3.new(1, 0, 0)
+            local flee = crystal + out * CONFIG.NLOrbBlastRadius
+            solver.NLOrbGoal = Vector3.new(flee.X, root.Position.Y, flee.Z)
+            solver.NLOrbUntil = now + CONFIG.NLOrbBlastHold
+            self.OrbBlastRuns = (self.OrbBlastRuns or 0) + 1
+            return
         end
 
         solver.NLOrbGoal = goal
