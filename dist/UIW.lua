@@ -18030,7 +18030,15 @@ do
     -- Bob's beams are 400 studs long and sweep in from the edges, so a 150 stud
     -- bubble only meets them once they are already on top of us. Seeing them
     -- form gives room to walk to a spot they are not going to reach.
-    CONFIG.NLBobAware = 320
+    -- His beams are 400 studs long and spawn at the rim, and his wave is a
+    -- 198 stud corridor. A bubble smaller than the attacks themselves means we
+    -- only meet them once they are already on us, so this reaches the whole
+    -- arena.
+    CONFIG.NLBobAware = 420
+    -- ...and the budget has to match, or the extra sight is spent on beams that
+    -- get trimmed anyway. Measured at 48: Bob's arena carries forty-odd beams
+    -- on its own, which is the entire budget before the wave is even counted.
+    CONFIG.NLBobBoxes = 76
 
     -- Not every attack costs the same. Measured: secondBossHorizontalBeam took
     -- us from full to dead in one hit, while a passive beam is about 40%. The
@@ -18425,7 +18433,7 @@ do
         -- beams and his wave is ten separate discs, so the wave is exactly what
         -- the cap throws away - the one attack that kills us outright. Keep
         -- every piece of it and trim the rest.
-        local cap = (self.NLAwareNow and self.NLAwareNow > 200) and 48 or 32
+        local cap = (self.NLAwareNow and self.NLAwareNow > 200) and CONFIG.NLBobBoxes or 32
         local index = #list
         while #list > cap and index > 0 do
             if list[index].Name ~= "secondBossCricleHitbox" then
@@ -18761,7 +18769,7 @@ do
     local newController = UIWController.new
     function UIWController.new()
         local self = newController()
-        self.Version = "46.7-bobwave"
+        self.Version = "46.8-bobarena"
         return self
     end
 end

@@ -36,12 +36,36 @@ do
             local n = node.Name:lower()
             if n:find("barrier", 1, true) or n:find("door", 1, true)
                 or n:find("gate", 1, true)
+                -- the red, green and yellow totems are the answer to his colour
+                -- orbs, so they are never scenery
+                or n:find("crystal", 1, true) or n:find("totem", 1, true)
                 or node:GetAttribute("UIWKeep") then return true end
             node = node.Parent
         end
         return false
     end
-    local function floor(p)
+    -- Bob's arena, asked for totally flat. In his room the original walk
+    -- surfaces are what is left making it uneven, so nothing is kept as a
+    -- support and the artificial floor carries us instead - sitting flush with
+    -- the measured height rather than three studs under it, so there is one
+    -- continuous plane to circle on and nothing to catch a foot.
+    local function inBobRoom()
+        local crystals = workspace:FindFirstChild("secondBossCrystals")
+        if not crystals then return false end
+        local root = c.Character and c.Character.Root
+        if not root then return false end
+        for _, part in ipairs(crystals:GetDescendants()) do
+            if part:IsA("BasePart")
+                and (Vector3.new(part.Position.X, 0, part.Position.Z)
+                    - Vector3.new(root.Position.X, 0, root.Position.Z)).Magnitude < 420
+            then
+                return true
+            end
+        end
+        return false
+    end
+
+    local function floorShape(p)
         local n = p.Name:lower()
         for _, word in ipairs({"floor", "ground", "platform", "ramp", "stair", "step", "arena", "plank", "ice3", "ice plates"}) do
             if n:find(word, 1, true) then return true end
@@ -54,6 +78,13 @@ do
         if s.Z < thin then thin, width, depth, normal = s.Z, s.X, s.Y, cf.LookVector end
         return math.abs(normal.Y) >= 0.65 and width >= 6 and depth >= 6
             and thin <= math.min(width, depth) * 0.4
+    end
+    -- In Bob's room a floor part still tells us how high the ground is, it just
+    -- no longer carries us. Keeping it queryable means the flat slab settles at
+    -- the real height instead of wherever we happened to be standing when we
+    -- walked in.
+    local function floor(p)
+        return floorShape(p) and not inBobRoom()
     end
     function test:Restore()
         for _, guard in pairs(self.Guards) do guard:Destroy() end
@@ -141,6 +172,16 @@ do
         for p in pairs(self.Supports) do
             if p.Parent then refs[#refs+1] = p self.Floors += 1 end
         end
+        -- Bob's room keeps no supports, so without this the height raycast has
+        -- nothing to hit and the flat slab would sit wherever we entered at.
+        if inBobRoom() then
+            for p in pairs(self.Changed) do
+                if p.Parent and floorShape(p) then
+                    p.CanQuery = true
+                    refs[#refs+1] = p
+                end
+            end
+        end
         self.Params = RaycastParams.new()
         self.Params.FilterType = Enum.RaycastFilterType.Include
         self.Params.FilterDescendantsInstances = refs
@@ -204,7 +245,10 @@ do
         end
         -- Keep the fallback below the real surface so original steps/ramps
         -- carry the character instead of being covered by a moving flat slab.
-        self.Platform.CFrame = CFrame.new(root.Position.X, self.Height-3, root.Position.Z)
+        -- In Bob's arena there are no supports left to carry us, so the slab
+        -- sits flush and becomes the floor: one continuous plane to circle on.
+        local drop = inBobRoom() and 0 or 3
+        self.Platform.CFrame = CFrame.new(root.Position.X, self.Height-drop, root.Position.Z)
         self.Platform.Parent = workspace
         -- Map-only noclip. Keep character collision for this floor and barriers.
         for p, saved in pairs(self.Changed) do
