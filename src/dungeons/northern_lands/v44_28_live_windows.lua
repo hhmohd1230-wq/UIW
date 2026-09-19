@@ -83,6 +83,13 @@ do
     -- spent the whole fight trying to reach a distance we did not need, through
     -- the beams, dying on the way, over and over.
     CONFIG.NLBossCastRange = 140
+    -- The same made-up leash exists for mobs, twice over: DamageCastRange 64 and
+    -- MobBurstRange 46, which holds fire until we have closed to 46 studs. That
+    -- is what caps the circle - there is no point riding a wide arc if we stop
+    -- shooting the moment we are on it. Measured at 46.1, the fights where the
+    -- arc opened past 200 degrees were also the fights that did 5.8-6.0%/s with
+    -- 100% of the time in range, so the wide circle is worth having.
+    CONFIG.NLMobCastRange = 100
     -- ...but NOT for the Champion. His passive beams are diameters through a
     -- pillar, so the speed a beam edge sweeps past you is turn rate times your
     -- distance from that pillar: close in, the gap asks for a few studs a
@@ -623,14 +630,22 @@ do
     ---------------------------------------------------------------------------
     local oldBossUpdate = CombatController.Update
     function CombatController:Update(enemy)
-        if northern() and enemy and enemy.Model
-            and LONG_RANGE[normalizeEnemyName(enemy.Model.Name)]
-        then
-            local saved = CONFIG.DamageCastRange
-            CONFIG.DamageCastRange = CONFIG.NLBossCastRange
-            local ok, result = pcall(oldBossUpdate, self, enemy)
-            CONFIG.DamageCastRange = saved
-            return ok and result or false
+        if northern() and enemy and enemy.Model then
+            local who = normalizeEnemyName(enemy.Model.Name)
+            if LONG_RANGE[who] then
+                local saved = CONFIG.DamageCastRange
+                CONFIG.DamageCastRange = CONFIG.NLBossCastRange
+                local ok, result = pcall(oldBossUpdate, self, enemy)
+                CONFIG.DamageCastRange = saved
+                return ok and result or false
+            elseif not NL_BOSSES[who] then
+                local savedCast, savedBurst = CONFIG.DamageCastRange, CONFIG.MobBurstRange
+                CONFIG.DamageCastRange = CONFIG.NLMobCastRange
+                CONFIG.MobBurstRange = CONFIG.NLMobCastRange
+                local ok, result = pcall(oldBossUpdate, self, enemy)
+                CONFIG.DamageCastRange, CONFIG.MobBurstRange = savedCast, savedBurst
+                return ok and result or false
+            end
         end
         return oldBossUpdate(self, enemy)
     end
@@ -642,7 +657,7 @@ do
     local newController = UIWController.new
     function UIWController.new()
         local self = newController()
-        self.Version = "46.1-meleekeepout"
+        self.Version = "46.2-widecircle"
         return self
     end
 end

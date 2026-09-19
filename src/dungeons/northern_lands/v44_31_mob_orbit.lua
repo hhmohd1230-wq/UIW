@@ -31,9 +31,16 @@ do
     CONFIG.NLMobOrbitRadii = { 58, 48, 40, 34 }
     -- A mob this far from the one we are shooting still counts as part of the
     -- same pack, so the circle is drawn around all of them.
-    CONFIG.NLPackSpan = 70
-    CONFIG.NLPackClearance = 16     -- studs beyond the outermost mob in the pack
-    CONFIG.NLPackMaxRadius = 60     -- ...but never so far that the middle is out of reach
+    -- Wide enough to take in the whole room, not just the two mobs in front of
+    -- us. A pack of two got circled while another group stood untouched further
+    -- back; including them puts the centre between the groups, which both draws
+    -- them together and keeps them all inside one circle.
+    CONFIG.NLPackSpan = 140
+    CONFIG.NLPackClearance = 20     -- studs beyond the outermost mob in the pack
+    -- The circle may now be wide, because the shuriken flies - the same thing
+    -- that proved true against Bob. It is only capped below the range at which
+    -- we can still hit the middle.
+    CONFIG.NLPackMaxRadius = 80
 
     local function inNorthernLands()
         local value = Workspace:FindFirstChild("dungeonName")
