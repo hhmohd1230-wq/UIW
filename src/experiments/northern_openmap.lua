@@ -157,8 +157,18 @@ do
                     guard.CanTouch = false
                     -- Extend the closed gate across the artificial floor so its
                     -- edges cannot become an unintended route into the next room.
-                    guard.Size = p.Size.X > p.Size.Z and Vector3.new(4096,2048,p.Size.Z+2)
-                        or Vector3.new(p.Size.X+2,2048,4096)
+                    --
+                    -- Bounded, though. At 4096 x 2048 the guard was not a wider
+                    -- gate but an infinite plane through the level: measured
+                    -- stuck against one 2 studs ahead while the barrier it
+                    -- belonged to was 151 studs away, because anywhere near that
+                    -- plane is inside a slab that size. A margin around the real
+                    -- gate stops us slipping round its edge without cutting the
+                    -- room we are standing in in half.
+                    local span = math.max(p.Size.X, p.Size.Z) + 120
+                    local tall = p.Size.Y + 80
+                    guard.Size = p.Size.X > p.Size.Z and Vector3.new(span,tall,p.Size.Z+2)
+                        or Vector3.new(p.Size.X+2,tall,span)
                     guard.CFrame = p.CFrame
                     guard.Parent = workspace
                     self.Guards[p] = guard
