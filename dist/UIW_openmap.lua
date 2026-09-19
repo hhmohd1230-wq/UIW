@@ -30642,10 +30642,14 @@ do
         end
         self.Deep.CFrame = CFrame.new(root.Position.X, want, root.Position.Z)
         self.Deep.Parent = workspace
-        -- Map-only noclip. Keep character collision for this floor and barriers.
+        -- Map-only noclip, re-applied every frame because the game puts its
+        -- own scenery back. Supports are exempt: this loop ran after the sweep
+        -- and forced CanCollide false on everything in Changed, which quietly
+        -- undid keeping the real floor solid and left the plane carrying us
+        -- again three studs lower than the map.
         for p, saved in pairs(self.Changed) do
             if p.Parent then
-                p.CanCollide = false
+                p.CanCollide = self.Supports[p] == true
                 p.Transparency = 1
                 p.LocalTransparencyModifier = 1
             end
