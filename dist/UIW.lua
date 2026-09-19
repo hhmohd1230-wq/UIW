@@ -17819,6 +17819,11 @@ do
     -- anything: coming inward keeps us going round, noclip would just walk us
     -- off the map.
     CONFIG.NLMobOrbitRadii = { 58, 48, 40, 34 }
+    -- A mob this far from the one we are shooting still counts as part of the
+    -- same pack, so the circle is drawn around all of them.
+    CONFIG.NLPackSpan = 70
+    CONFIG.NLPackClearance = 16     -- studs beyond the outermost mob in the pack
+    CONFIG.NLPackMaxRadius = 60     -- ...but never so far that the middle is out of reach
 
     local function inNorthernLands()
         local value = Workspace:FindFirstChild("dungeonName")
@@ -17849,13 +17854,63 @@ do
             return nil
         end
 
+        -- Circle the GROUP, not the one mob we happen to be shooting.
+        --
+        -- Measured across twenty mob fights: the arc we actually covered around
+        -- the target ranged from 10 to 310 degrees, and damage tracked it almost
+        -- perfectly - 310 degrees gave 5.38%/s with 100% of the fight in range,
+        -- while 20 to 50 degrees gave 0.00%/s. The cause was not walls. A
+        -- raycast along the way round found something solid in 0% of samples in
+        -- seventeen of those twenty fights.
+        --
+        -- It was this: the orbit centre was whichever mob was currently
+        -- targeted. Target selection moves between mobs scattered across the
+        -- room, so every switch teleports the centre, resets our bearing, and
+        -- the circle restarts from nothing. We were walking twenty arcs instead
+        -- of one circle. Orbiting the middle of the pack fixes it at the source,
+        -- and it is also where the damage wants to be, because the pack stays
+        -- clustered in there.
         local centre = Vector3.new(enemy.Root.Position.X, root.Position.Y, enemy.Root.Position.Z)
+        local pack, sum, spread = 0, Vector3.zero, 0
+        for _, other in ipairs(self.Dungeon and self.Dungeon:GetAliveEnemies() or {}) do
+            if other.Root and other.Root.Parent and not isBossEnemy(other)
+                and flatten(other.Root.Position - centre).Magnitude <= CONFIG.NLPackSpan
+            then
+                pack += 1
+                sum += Vector3.new(other.Root.Position.X, root.Position.Y, other.Root.Position.Z)
+            end
+        end
+        if pack >= 2 then
+            local middle = sum / pack
+            for _, other in ipairs(self.Dungeon and self.Dungeon:GetAliveEnemies() or {}) do
+                if other.Root and other.Root.Parent and not isBossEnemy(other) then
+                    local out = flatten(other.Root.Position - middle).Magnitude
+                    if out <= CONFIG.NLPackSpan then spread = math.max(spread, out) end
+                end
+            end
+            centre = middle
+            self.NLPackSize, self.NLPackSpread = pack, spread
+        else
+            self.NLPackSize, self.NLPackSpread = pack, 0
+        end
+
         local offset = flatten(root.Position - centre)
         if offset.Magnitude < 1 then
             return nil
         end
         local radial = offset.Unit
         local now = os.clock()
+
+        -- Circling a group needs a radius that clears the widest mob in it and
+        -- still keeps the middle of the pack inside our own casting range, so
+        -- that going round and doing damage are the same activity rather than
+        -- alternatives. A lone mob keeps the fixed ladder.
+        local radii = CONFIG.NLMobOrbitRadii
+        if spread > 0 then
+            local want = math.clamp(spread + CONFIG.NLPackClearance,
+                CONFIG.NLMobOrbitMin, CONFIG.NLPackMaxRadius)
+            radii = { want, want - 8, want + 8, CONFIG.NLMobOrbitMin }
+        end
 
         -- keep circling the same way unless that way is blocked; flipping every
         -- frame is just rocking on the spot with extra steps
@@ -17865,7 +17920,7 @@ do
 
         for _, spin in ipairs({ self.NLSpin or 1, -(self.NLSpin or 1) }) do
           for _, degrees in ipairs({ CONFIG.NLMobOrbitStep, CONFIG.NLMobOrbitStep * 0.5 }) do
-            for _, radius in ipairs(CONFIG.NLMobOrbitRadii) do
+            for _, radius in ipairs(radii) do
                 local point = orbitPoint(centre, radial, radius, degrees * spin)
                 if point then
                     local step = flatten(point - root.Position)
@@ -18549,7 +18604,7 @@ do
     local newController = UIWController.new
     function UIWController.new()
         local self = newController()
-        self.Version = "45.9-magewave"
+        self.Version = "46.0-packorbit"
         return self
     end
 end

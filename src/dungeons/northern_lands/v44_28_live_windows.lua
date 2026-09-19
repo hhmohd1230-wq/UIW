@@ -627,7 +627,7 @@ do
     local newController = UIWController.new
     function UIWController.new()
         local self = newController()
-        self.Version = "45.9-magewave"
+        self.Version = "46.0-packorbit"
         return self
     end
 end
