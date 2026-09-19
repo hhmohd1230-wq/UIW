@@ -117,7 +117,10 @@ do
         self.Supports = {}
         self.Count = 0
         if self.Platform then self.Platform:Destroy() self.Platform = nil end
+        if self.Deep then self.Deep:Destroy() self.Deep = nil end
         self.Height = nil
+        self.Lowest = nil
+        self.DeepRescue = nil
     end
     function test:RemoveWater()
         if self.WaterReady then return end
@@ -233,14 +236,77 @@ do
             p.CanTouch = false
             self.Platform = p
         end
+        -- The catch floor. Once the map is noclipped this platform is the only
+        -- solid thing left in the world, so any moment its height is wrong is a
+        -- moment there is nothing at all underneath us - and the dungeon has no
+        -- bottom, so "nothing underneath us" is a death. That is not a rare
+        -- edge case here: self.Height is deliberately dropped to the pit floor
+        -- when we descend after Bob, and nothing ever raises it again, so the
+        -- climb towards Odin is walked with the real floor switched off and the
+        -- artificial one sixty studs below our feet.
+        --
+        -- So there is now a second plane, well below every floor this dungeon
+        -- has shown us, that exists purely to be landed on. Falling is allowed.
+        -- Falling forever is not.
+        if not self.Deep then
+            local p = Instance.new("Part")
+            p.Name = "UIW_NorthernCatchFloor"
+            p.Anchored = true
+            p.Size = Vector3.new(1024, 8, 1024)
+            p.Material = Enum.Material.SmoothPlastic
+            p.Color = Color3.fromRGB(120, 140, 160)
+            p.Transparency = 0.6
+            p.CanTouch = false
+            self.Deep = p
+        end
+
         local hit = workspace:Raycast(root.Position + Vector3.new(0, 8, 0), Vector3.new(0, -120, 0), self.Params)
         if not self.Height or self.CharacterModel ~= c.Character.Character then
             self.CharacterModel = c.Character.Character
             local h = c.Character.Humanoid
             self.Height = hit and hit.Position.Y or (root.Position.Y - root.Size.Y/2 - (h and h.HipHeight or 2))
         end
+
+        -- Let the floor climb back. It is lowered on purpose for the pit and
+        -- then left there, which is what strands us on the way up afterwards.
+        -- Raising is safe in a way that lowering is not: a real floor above the
+        -- artificial one means we are about to fall through a surface the mobs
+        -- are standing on, and the only reason we can is that we switched its
+        -- collision off ourselves. Lowering stays where it belongs, under the
+        -- pit descent, so this cannot fight it - and it holds off entirely
+        -- while that descent is in progress.
+        if hit and not self.PitDropping and hit.Position.Y > self.Height + 4 then
+            self.Height = hit.Position.Y
+        end
+
+        -- How deep this dungeon goes, learned rather than assumed.
+        local floorY = math.min(self.Height, hit and hit.Position.Y or self.Height)
+        self.Lowest = math.min(self.Lowest or floorY, floorY)
+
         self.Platform.CFrame = CFrame.new(root.Position.X, self.Height-1, root.Position.Z)
         self.Platform.Parent = workspace
+
+        -- Normally it just sits out of the way, thirty studs under the deepest
+        -- floor we have seen, so an intended drop into the pit still happens.
+        -- If something has gone wrong enough that we are already below it, it
+        -- comes up to meet us and then carries us back at a walking pace -
+        -- catching a fall is the whole job, and stranding us at the bottom of
+        -- the world instead of killing us there is only half of it.
+        local base = self.Lowest - 30
+        local want = base
+        if root.Position.Y < base + 4 then
+            self.DeepRescue = math.min(self.DeepRescue or math.huge, root.Position.Y - 8)
+        end
+        if self.DeepRescue then
+            self.DeepRescue = self.DeepRescue + 45 * math.min(dt or 0.03, 0.1)
+            if self.DeepRescue >= base then
+                self.DeepRescue = nil
+            else
+                want = self.DeepRescue
+            end
+        end
+        self.Deep.CFrame = CFrame.new(root.Position.X, want, root.Position.Z)
+        self.Deep.Parent = workspace
         -- Map-only noclip. Keep character collision for this floor and barriers.
         for p, saved in pairs(self.Changed) do
             if p.Parent then
