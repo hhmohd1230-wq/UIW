@@ -301,14 +301,6 @@ do
         -- carries the whole ring and wins, an isolated chunk is outvoted. That
         -- is the same thing the original comment was reaching for when it said
         -- the real floor is what carries the mobs.
-        -- The deliberate descent: lower the floor and let it carry us. Slow
-        -- enough that we stay standing on it the whole way rather than falling
-        -- after it, which is the difference between arriving on the landing we
-        -- chose and arriving wherever seventy-four studs of gravity puts us.
-        if self.PitDropping and self.PitTargetY then
-            self.Height = math.max(self.PitTargetY, self.Height - 55 * math.min(dt or 0.03, 0.1))
-        end
-
         if not self.PitDropping then
             local ring = {}
             if hit then ring[#ring+1] = hit.Position.Y end
@@ -442,8 +434,32 @@ do
     -- anywhere, so a fixed requirement means no landing is ever found and we
     -- hover above the fight for as long as it lasts. Landing near a mob is a
     -- fight; never landing is not.
+    -- Terrain water is still down there. RemoveWater clears what it can reach
+    -- and 30 columns survive it, all on the east side past x=550, going from
+    -- Y 10 all the way down to -130. Landing in that means swimming, and
+    -- swimming in this game means stuck.
+    --
+    -- The floor probe cannot see it: its RaycastParams set IgnoreWater, so a
+    -- ray fired into a hundred studs of water passes straight through and
+    -- reports the seabed as a perfectly good landing. So ask separately, with
+    -- a probe that does stop at water.
+    function test:OverWater(point)
+        if not self.WaterParams then
+            local params = RaycastParams.new()
+            params.FilterType = Enum.RaycastFilterType.Include
+            params.FilterDescendantsInstances = {workspace.Terrain}
+            params.IgnoreWater = false
+            self.WaterParams = params
+        end
+        local wet = workspace:Raycast(point + Vector3.new(0, 140, 0), Vector3.new(0, -220, 0), self.WaterParams)
+        -- Anything the water probe stops on well above the landing itself is a
+        -- surface we would splash into rather than stand on.
+        return wet ~= nil and wet.Position.Y > point.Y + 3
+    end
+
     function test:LandingClear(point, enemies, clearance)
         clearance = clearance or 48
+        if self:OverWater(point) then return false end
         for _, e in ipairs(enemies) do
             if e.Room==6 and e.Root and e.Root.Parent then
                 local v=e.Root.AssemblyLinearVelocity
@@ -511,10 +527,9 @@ do
                 params.FilterDescendantsInstances = guards
                 local landing=self.PitLanding
                 if self.PitDropping then
-                    -- Done when the floor has finished travelling, not when we
-                    -- happen to be near it: riding it down we are always three
-                    -- studs above it, so the old test passed on the first frame.
-                    if self.Height <= (self.PitTargetY or self.Height) + 0.5 then
+                    -- Down is down: we have arrived when we are at their level,
+                    -- whatever route got us there.
+                    if root.Position.Y < lower.Root.Position.Y + 20 then
                         self.PitEntered=true
                         self.PitDropping=false
                         self.PitTargetY=nil
@@ -563,21 +578,30 @@ do
                 local away=Vector3.new(landing.X-root.Position.X,0,landing.Z-root.Position.Z)
                 self.PitStatus="moving above clear landing"
                 if away.Magnitude<6 and self:LandingClear(Vector3.new(root.Position.X,landing.Y,root.Position.Z),enemies,clearance) then
-                    -- Ride down, do not jump off.
+                    -- Walk off the cliff.
                     --
-                    -- The map has a seventy-four stud sheer gap between this
-                    -- tier and the pit floor - measured, there is no surface of
-                    -- any kind in between - so the old sequence jumped and then
-                    -- dropped the floor out from under us for the whole of it.
-                    -- A fall that long lands where it lands: not on the chosen
-                    -- spot, sometimes on the mobs we picked the spot to avoid.
+                    -- Lowering our own floor and riding it down was the plan
+                    -- while the map's floors were switched off and that plane
+                    -- was the only solid thing in the world. They are solid
+                    -- again, so it no longer works at all: the real floor holds
+                    -- us up no matter where the plane goes.
                     --
-                    -- We own the floor, so we can lower it instead and travel
-                    -- with it. It stays under us the entire way, it stays over
-                    -- the landing we chose, and it can be stopped.
-                    self.PitTargetY = landing.Y
+                    -- Which is fine, because the map already provides the way
+                    -- down. There is a seventy-four stud drop at the edge of
+                    -- this tier, the landing goal steers us horizontally at a
+                    -- point out past that edge, and gravity does the rest. A
+                    -- jump first so we leave the lip cleanly instead of
+                    -- scraping down it.
                     self.PitDropping = true
-                    self.PitStatus = "riding the floor down to the landing"
+                    self.PitStatus = "walking off the edge to the landing"
+                    -- Get our own plane out of the way first. It follows us in
+                    -- X and Z three studs under the map, so left where it is it
+                    -- would catch us four studs into a seventy-four stud fall
+                    -- and the descent would simply not happen. Put it under the
+                    -- pit floor, where the real floor beats it to us and it goes
+                    -- back to being the backstop it is meant to be.
+                    self.Height = landing.Y
+                    pcall(function() c.Character.Humanoid.Jump = true end)
                 end
             end
             return
