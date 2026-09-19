@@ -22,6 +22,13 @@ do
     CONFIG.NLMobOrbitMin = 34         -- never let one get closer than this
     CONFIG.NLMobOrbitProbe = 12       -- studs checked before committing to a way round
     CONFIG.NLMobOrbitHold = 1.2       -- seconds we keep spinning the same way
+    -- Measured: every single time the circle was refused, the raycast hit
+    -- nothing at all - it was the ground check, i.e. the point on the circle
+    -- was off the edge of the arena floor. Not one wall. So the answer is to
+    -- pull the circle in until it is back over floor, not to pass through
+    -- anything: coming inward keeps us going round, noclip would just walk us
+    -- off the map.
+    CONFIG.NLMobOrbitRadii = { 58, 48, 40, 34 }
 
     local function inNorthernLands()
         local value = Workspace:FindFirstChild("dungeonName")
@@ -67,8 +74,9 @@ do
         end
 
         for _, spin in ipairs({ self.NLSpin or 1, -(self.NLSpin or 1) }) do
-            for _, degrees in ipairs({ CONFIG.NLMobOrbitStep, CONFIG.NLMobOrbitStep * 0.5 }) do
-                local point = orbitPoint(centre, radial, CONFIG.NLMobOrbitRadius, degrees * spin)
+          for _, degrees in ipairs({ CONFIG.NLMobOrbitStep, CONFIG.NLMobOrbitStep * 0.5 }) do
+            for _, radius in ipairs(CONFIG.NLMobOrbitRadii) do
+                local point = orbitPoint(centre, radial, radius, degrees * spin)
                 if point then
                     local step = flatten(point - root.Position)
                     if step.Magnitude > 0.5 then
@@ -85,11 +93,13 @@ do
                             end
                             self.NLSpinUntil = now + CONFIG.NLMobOrbitHold
                             self.NLOrbiting = true
+                            self.NLOrbitRadius = radius
                             return point
                         end
                     end
                 end
             end
+          end
         end
 
         -- Boxed in both ways. Record what is in the way, so the answer can be
