@@ -336,9 +336,45 @@ local function isCrystalGolemUtilityInstance(instance)
     return false
 end
 
+-- Decoration that the game's own client scripts clone into the workspace.
+--
+-- The test is not a guess. Every name here is used the same way at every site
+-- in the game's code: :Clone() it, parent it to workspace, tween Transparency
+-- to 1 over about half a second, hand it to Debris. A client cannot deal
+-- damage, so a part a LocalScript created is a picture of an attack, never the
+-- attack. Real hazards - secondBossHorizontalBeam, firstBossPassiveBeam and
+-- the rest - appear in no client script at all, because the server makes them.
+--
+-- genericNeonBall is the one that cost us. It is the muzzle flash on gun
+-- barrels, rocket packs and spell casts, and our OWN abilities spawn one: an
+-- Amethyst Blast clones it at our HumanoidRootPart and grows it to 30 studs,
+-- with Debris keeping it in the world for five seconds. It sat in the Northern
+-- Lands hazard table with a 5x danger weight, so the dodge planner saw a large
+-- growing high-priority hazard stuck to our own body every time we cast. A
+-- hazard wider than the lookahead makes every direction score as "inside it",
+-- and the scorer's answer to that is to stand still.
+local COSMETIC_EFFECT_NAMES = {
+    genericneonball = true,
+    smokepart = true,
+    flameeffect = true,
+    magebossminionspawneffect = true,
+}
+
+local function isCosmeticEffectInstance(instance)
+    local current = instance
+    while current and current ~= Workspace do
+        if COSMETIC_EFFECT_NAMES[string.lower(current.Name or "")] then
+            return true
+        end
+        current = current.Parent
+    end
+    return false
+end
+
 local function isNonHazardMechanicInstance(instance)
     return isManagedSafeZoneMechanicInstance(instance)
         or isCrystalGolemUtilityInstance(instance)
+        or isCosmeticEffectInstance(instance)
 end
 
 local function getEntryAncestor(instance)

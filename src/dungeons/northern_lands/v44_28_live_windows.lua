@@ -21,9 +21,15 @@ do
     -- planner was weighing them the same, so it would happily trade a brush
     -- with the killer to avoid two cheap ones. These are multipliers on being
     -- inside the box.
+    -- genericNeonBall used to sit here at 5, "measured 80-86% in one hit".
+    -- That measurement was an artefact. Read the game's own scripts: every
+    -- genericNeonBall, ours and the enemies', is cloned, tweened to
+    -- Transparency 1 over 0.45s and handed to Debris. It is a muzzle flash.
+    -- The observer blames the nearest hazard part when we lose health, and a
+    -- sparkle sitting at distance 0 wins that contest against a beam 100 studs
+    -- away - so it collected the blame for everything that really hit us.
     local DEADLY = {
         secondBossHorizontalBeam = 6,
-        genericNeonBall = 5,          -- measured 80-86% in one hit
         firstBossBigSpike = 5,        -- measured 89% in one hit
         firstBossCrissCross = 3,      -- 35-43% each and they arrive in threes
         -- The single most common source of damage in two recorded human runs:
@@ -238,13 +244,27 @@ do
         firstBossCrissCross=true, firstBossBigSpike=true,
         firstBossWhirlwind=true, firstBossWhirlWind=true, spearmanStrike=true,
         -- The colour orbs were left out so we could walk them to a crystal
-        -- instead of fleeing. That went wrong: measured 74-86% hits from
-        -- genericNeonBall (the 80 stud explosion an orb makes on contact) at
-        -- 6-10 studs. Leading it is still the plan, but it has to be treated as
-        -- dangerous while we do it, so the planner keeps a step ahead of it.
+        -- instead of fleeing. Leading one is still the plan, but the orb has to
+        -- be treated as dangerous while we do it, so the planner keeps a step
+        -- ahead of it. The orb is real: it has a body and it homes on us.
         secondBossRedOrb=true, secondBossGreenOrb=true, secondBossYellowOrb=true,
-        -- and the explosion itself, for whoever is still standing there
-        genericNeonBall=true,
+        -- genericNeonBall is deliberately NOT here any more, and this is the
+        -- single worst bug the dungeon has had.
+        --
+        -- It is not an explosion. It is decoration. ReplicatedStorage has two
+        -- copies, projectiles and enemyProjectiles, and both are used the same
+        -- way everywhere in the game: clone it, parent it to workspace, tween
+        -- Transparency to 1 over 0.45s, Debris it. Gun muzzles, rocket packs,
+        -- spell casts. It has never done a point of damage.
+        --
+        -- Our own abilities spawn one. Amethyst Blast clones it at our own
+        -- HumanoidRootPart and grows it to 30 studs, and Debris keeps it around
+        -- for five seconds. So the planner saw a large, growing, 5x-weighted
+        -- hazard welded to our own body, every time we cast - and a hazard
+        -- wider than the lookahead makes every direction score as "inside the
+        -- box", which is the one condition under which the scorer gives up and
+        -- stands still. We were not failing to dodge the wave. We were rooted
+        -- to the spot by our own spell effect while the wave went through us.
         -- Odin. Both are bare parts sitting in the workspace with no hitBox and
         -- no precast, the same shape of blind spot the whirlwinds were: he took
         -- 42-78% off us in single hits that the tracker recorded as "nothing
@@ -418,6 +438,19 @@ do
         local names = {}
         for _, box in ipairs(list) do names[box.Name] = (names[box.Name] or 0) + 1 end
         self.NLNames = names
+        -- Standing inside a box is the condition that makes the scorer give up:
+        -- if a hazard is wider than the lookahead, every candidate direction is
+        -- also inside it, nothing scores better than staying put, and we stop
+        -- moving. That is how a cosmetic sparkle stuck to our own body rooted us
+        -- in the middle of Bob's wave for an entire patch cycle. Count it by
+        -- name so the next one cannot hide: getgenv().UIW.NLInside.
+        local inside = self.NLInside or {}
+        for _, box in ipairs(list) do
+            if box.Distance <= 0 then
+                inside[box.Name] = (inside[box.Name] or 0) + 1
+            end
+        end
+        self.NLInside = inside
         table.sort(list, function(a,b) return a.Distance < b.Distance end)
         -- The cap exists to bound the work, but Bob's arena carries forty-odd
         -- beams and his wave is ten separate discs, so the wave is exactly what
@@ -616,10 +649,6 @@ do
             orbErrand = true
         end
 
-        if self.NLPitLandingGoal then
-            goal=self.NLPitLandingGoal
-            preferred=unit(flatten(goal-root.Position))
-        end
         local standing=risk(list,root.Position,0)+risk(list,root.Position,0.3)+risk(list,root.Position,0.65)
             +risk(list,root.Position,1.0)+risk(list,root.Position,1.5)
         if not goal and standing<1 then
@@ -808,7 +837,7 @@ do
     local newController = UIWController.new
     function UIWController.new()
         local self = newController()
-        self.Version = "47.5-champion"
+        self.Version = "48.0-nocosmetics"
         return self
     end
 end

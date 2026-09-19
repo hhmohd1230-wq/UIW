@@ -903,9 +903,45 @@ local function isCrystalGolemUtilityInstance(instance)
     return false
 end
 
+-- Decoration that the game's own client scripts clone into the workspace.
+--
+-- The test is not a guess. Every name here is used the same way at every site
+-- in the game's code: :Clone() it, parent it to workspace, tween Transparency
+-- to 1 over about half a second, hand it to Debris. A client cannot deal
+-- damage, so a part a LocalScript created is a picture of an attack, never the
+-- attack. Real hazards - secondBossHorizontalBeam, firstBossPassiveBeam and
+-- the rest - appear in no client script at all, because the server makes them.
+--
+-- genericNeonBall is the one that cost us. It is the muzzle flash on gun
+-- barrels, rocket packs and spell casts, and our OWN abilities spawn one: an
+-- Amethyst Blast clones it at our HumanoidRootPart and grows it to 30 studs,
+-- with Debris keeping it in the world for five seconds. It sat in the Northern
+-- Lands hazard table with a 5x danger weight, so the dodge planner saw a large
+-- growing high-priority hazard stuck to our own body every time we cast. A
+-- hazard wider than the lookahead makes every direction score as "inside it",
+-- and the scorer's answer to that is to stand still.
+local COSMETIC_EFFECT_NAMES = {
+    genericneonball = true,
+    smokepart = true,
+    flameeffect = true,
+    magebossminionspawneffect = true,
+}
+
+local function isCosmeticEffectInstance(instance)
+    local current = instance
+    while current and current ~= Workspace do
+        if COSMETIC_EFFECT_NAMES[string.lower(current.Name or "")] then
+            return true
+        end
+        current = current.Parent
+    end
+    return false
+end
+
 local function isNonHazardMechanicInstance(instance)
     return isManagedSafeZoneMechanicInstance(instance)
         or isCrystalGolemUtilityInstance(instance)
+        or isCosmeticEffectInstance(instance)
 end
 
 local function getEntryAncestor(instance)
@@ -28671,9 +28707,15 @@ do
     -- planner was weighing them the same, so it would happily trade a brush
     -- with the killer to avoid two cheap ones. These are multipliers on being
     -- inside the box.
+    -- genericNeonBall used to sit here at 5, "measured 80-86% in one hit".
+    -- That measurement was an artefact. Read the game's own scripts: every
+    -- genericNeonBall, ours and the enemies', is cloned, tweened to
+    -- Transparency 1 over 0.45s and handed to Debris. It is a muzzle flash.
+    -- The observer blames the nearest hazard part when we lose health, and a
+    -- sparkle sitting at distance 0 wins that contest against a beam 100 studs
+    -- away - so it collected the blame for everything that really hit us.
     local DEADLY = {
         secondBossHorizontalBeam = 6,
-        genericNeonBall = 5,          -- measured 80-86% in one hit
         firstBossBigSpike = 5,        -- measured 89% in one hit
         firstBossCrissCross = 3,      -- 35-43% each and they arrive in threes
         -- The single most common source of damage in two recorded human runs:
@@ -28888,13 +28930,27 @@ do
         firstBossCrissCross=true, firstBossBigSpike=true,
         firstBossWhirlwind=true, firstBossWhirlWind=true, spearmanStrike=true,
         -- The colour orbs were left out so we could walk them to a crystal
-        -- instead of fleeing. That went wrong: measured 74-86% hits from
-        -- genericNeonBall (the 80 stud explosion an orb makes on contact) at
-        -- 6-10 studs. Leading it is still the plan, but it has to be treated as
-        -- dangerous while we do it, so the planner keeps a step ahead of it.
+        -- instead of fleeing. Leading one is still the plan, but the orb has to
+        -- be treated as dangerous while we do it, so the planner keeps a step
+        -- ahead of it. The orb is real: it has a body and it homes on us.
         secondBossRedOrb=true, secondBossGreenOrb=true, secondBossYellowOrb=true,
-        -- and the explosion itself, for whoever is still standing there
-        genericNeonBall=true,
+        -- genericNeonBall is deliberately NOT here any more, and this is the
+        -- single worst bug the dungeon has had.
+        --
+        -- It is not an explosion. It is decoration. ReplicatedStorage has two
+        -- copies, projectiles and enemyProjectiles, and both are used the same
+        -- way everywhere in the game: clone it, parent it to workspace, tween
+        -- Transparency to 1 over 0.45s, Debris it. Gun muzzles, rocket packs,
+        -- spell casts. It has never done a point of damage.
+        --
+        -- Our own abilities spawn one. Amethyst Blast clones it at our own
+        -- HumanoidRootPart and grows it to 30 studs, and Debris keeps it around
+        -- for five seconds. So the planner saw a large, growing, 5x-weighted
+        -- hazard welded to our own body, every time we cast - and a hazard
+        -- wider than the lookahead makes every direction score as "inside the
+        -- box", which is the one condition under which the scorer gives up and
+        -- stands still. We were not failing to dodge the wave. We were rooted
+        -- to the spot by our own spell effect while the wave went through us.
         -- Odin. Both are bare parts sitting in the workspace with no hitBox and
         -- no precast, the same shape of blind spot the whirlwinds were: he took
         -- 42-78% off us in single hits that the tracker recorded as "nothing
@@ -29068,6 +29124,19 @@ do
         local names = {}
         for _, box in ipairs(list) do names[box.Name] = (names[box.Name] or 0) + 1 end
         self.NLNames = names
+        -- Standing inside a box is the condition that makes the scorer give up:
+        -- if a hazard is wider than the lookahead, every candidate direction is
+        -- also inside it, nothing scores better than staying put, and we stop
+        -- moving. That is how a cosmetic sparkle stuck to our own body rooted us
+        -- in the middle of Bob's wave for an entire patch cycle. Count it by
+        -- name so the next one cannot hide: getgenv().UIW.NLInside.
+        local inside = self.NLInside or {}
+        for _, box in ipairs(list) do
+            if box.Distance <= 0 then
+                inside[box.Name] = (inside[box.Name] or 0) + 1
+            end
+        end
+        self.NLInside = inside
         table.sort(list, function(a,b) return a.Distance < b.Distance end)
         -- The cap exists to bound the work, but Bob's arena carries forty-odd
         -- beams and his wave is ten separate discs, so the wave is exactly what
@@ -29266,10 +29335,6 @@ do
             orbErrand = true
         end
 
-        if self.NLPitLandingGoal then
-            goal=self.NLPitLandingGoal
-            preferred=unit(flatten(goal-root.Position))
-        end
         local standing=risk(list,root.Position,0)+risk(list,root.Position,0.3)+risk(list,root.Position,0.65)
             +risk(list,root.Position,1.0)+risk(list,root.Position,1.5)
         if not goal and standing<1 then
@@ -29458,7 +29523,7 @@ do
     local newController = UIWController.new
     function UIWController.new()
         local self = newController()
-        self.Version = "47.5-champion"
+        self.Version = "48.0-nocosmetics"
         return self
     end
 end
@@ -29732,23 +29797,30 @@ do
     -- the arena - by then the errand is a panic, not a plan.
     CONFIG.NLOrbAct = 120            -- only start the errand inside this
     CONFIG.NLOrbHold = 1.5           -- seconds a spotted orb keeps the errand alive
-    -- How far past the crystal we stand. This was 9, and 9 is suicide: the orb
-    -- explodes on contact as a genericNeonBall, which is 120 studs across - a
-    -- 60 stud radius. Standing 9 studs behind the crystal is standing inside the
-    -- blast and waiting for it. Measured after the errand started working at
-    -- all: genericNeonBall became the single biggest source of damage in the
-    -- fight, 12 hits, more than the wave.
+    -- How far past the crystal we stand. This was 9, and 9 was too close: the
+    -- orb can arrive at an angle and clip us instead of the crystal.
     --
-    -- Distance costs nothing here. The orb homes on US, so wherever we stand,
-    -- it flies towards us - and if the crystal is on that line it dies on the
-    -- crystal on the way. Being further back keeps the crystal between us and
-    -- it for longer, not less.
-    CONFIG.NLOrbStandOff = 74
+    -- CORRECTION, and an honest one. The number below was raised to 46, and the
+    -- two blast settings after it were invented outright, on the strength of a
+    -- measurement that turned out to be an artefact. The claim was that the orb
+    -- detonates as a 120 stud genericNeonBall and that this had become the
+    -- biggest source of damage in the fight. It had not. genericNeonBall is
+    -- decoration - the game's client scripts clone it, fade it out over 0.45s
+    -- and bin it, and our OWN abilities spawn one on our own character, which
+    -- is why it was always sitting at distance 0 and collecting the blame for
+    -- every hit from every real attack. There is no 120 stud blast.
+    --
+    -- The rest of the reasoning still stands on its own: the orb homes on US,
+    -- so wherever we stand it flies towards us, and if the crystal is on that
+    -- line it dies on the crystal on the way. Standing further back keeps the
+    -- crystal between us and it for longer. So the values are left alone for
+    -- now rather than guessed at twice - but they are UNVALIDATED, and the
+    -- errand telemetry (OrbErrands / OrbBlastRuns / OrbWhy, now printed on
+    -- every fight line) is there to settle them with real numbers.
+    CONFIG.NLOrbStandOff = 46
     CONFIG.NLOrbDone = 18            -- orb this close to its crystal: job done
-    -- ...and once it is that close, leave. The crystal is about to become the
-    -- centre of a 120 stud explosion and we know exactly where and when.
-    CONFIG.NLOrbBlastRadius = 74
-    CONFIG.NLOrbBlastHold = 2.2      -- keep the escape through orb disappearance
+    CONFIG.NLOrbBlastRadius = 66
+    CONFIG.NLOrbBlastHold = 1.6      -- seconds we keep clearing away from it
 
     local function inNorthernLands()
         local value = Workspace:FindFirstChild("dungeonName")
@@ -29855,32 +29927,7 @@ do
         end
         local now = os.clock()
 
-        -- A disappearing orb may have detonated. Preserve an escape goal
-        -- instead of immediately pulling back toward Bob through its blast.
-        local tracked = self.NLTrackedOrb
-        if tracked and not tracked.Part.Parent then
-            local center = self.NLLastOrbPosition
-            self.NLTrackedOrb = nil
-            if center and flatten(root.Position-center).Magnitude < CONFIG.NLOrbBlastRadius then
-                local away = flatten(root.Position-center)
-                local out = away.Magnitude>1 and away.Unit or Vector3.new(1,0,0)
-                self.NLBlastGoal = center+out*CONFIG.NLOrbBlastRadius
-                self.NLBlastUntil = now+CONFIG.NLOrbBlastHold
-            end
-        end
-        if self.NLBlastGoal and now < (self.NLBlastUntil or 0) then
-            solver.NLOrbGoal = Vector3.new(self.NLBlastGoal.X,root.Position.Y,self.NLBlastGoal.Z)
-            solver.NLOrbUntil = self.NLBlastUntil
-            return
-        end
-
         local ok, orb = pcall(mine, self, root, now)
-        -- Once identified, keep following this orb when its homing direction
-        -- briefly changes during our turn around the matching crystal.
-        if self.NLTrackedOrb and self.NLTrackedOrb.Part.Parent
-            and flatten(root.Position-self.NLTrackedOrb.Part.Position).Magnitude < 210 then
-            ok, orb = true, self.NLTrackedOrb
-        end
         if not ok or not orb then
             return
         end
@@ -29894,8 +29941,6 @@ do
             note(self, "no crystal for colour " .. tostring(orb.Colour))
             return    -- unknown colour: leave it to the normal dodging
         end
-        self.NLTrackedOrb = orb
-        self.NLLastOrbPosition = orb.Part.Position
 
         -- Stand just beyond the crystal, on the far side from the orb, so the
         -- orb has to fly through the crystal to reach us. Standing on top of it
@@ -29913,8 +29958,6 @@ do
             local flee = crystal + out * CONFIG.NLOrbBlastRadius
             solver.NLOrbGoal = Vector3.new(flee.X, root.Position.Y, flee.Z)
             solver.NLOrbUntil = now + CONFIG.NLOrbBlastHold
-            self.NLBlastGoal = solver.NLOrbGoal
-            self.NLBlastUntil = solver.NLOrbUntil
             self.OrbBlastRuns = (self.OrbBlastRuns or 0) + 1
             return
         end

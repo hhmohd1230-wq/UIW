@@ -39,23 +39,30 @@ do
     -- the arena - by then the errand is a panic, not a plan.
     CONFIG.NLOrbAct = 120            -- only start the errand inside this
     CONFIG.NLOrbHold = 1.5           -- seconds a spotted orb keeps the errand alive
-    -- How far past the crystal we stand. This was 9, and 9 is suicide: the orb
-    -- explodes on contact as a genericNeonBall, which is 120 studs across - a
-    -- 60 stud radius. Standing 9 studs behind the crystal is standing inside the
-    -- blast and waiting for it. Measured after the errand started working at
-    -- all: genericNeonBall became the single biggest source of damage in the
-    -- fight, 12 hits, more than the wave.
+    -- How far past the crystal we stand. This was 9, and 9 was too close: the
+    -- orb can arrive at an angle and clip us instead of the crystal.
     --
-    -- Distance costs nothing here. The orb homes on US, so wherever we stand,
-    -- it flies towards us - and if the crystal is on that line it dies on the
-    -- crystal on the way. Being further back keeps the crystal between us and
-    -- it for longer, not less.
-    CONFIG.NLOrbStandOff = 74
+    -- CORRECTION, and an honest one. The number below was raised to 46, and the
+    -- two blast settings after it were invented outright, on the strength of a
+    -- measurement that turned out to be an artefact. The claim was that the orb
+    -- detonates as a 120 stud genericNeonBall and that this had become the
+    -- biggest source of damage in the fight. It had not. genericNeonBall is
+    -- decoration - the game's client scripts clone it, fade it out over 0.45s
+    -- and bin it, and our OWN abilities spawn one on our own character, which
+    -- is why it was always sitting at distance 0 and collecting the blame for
+    -- every hit from every real attack. There is no 120 stud blast.
+    --
+    -- The rest of the reasoning still stands on its own: the orb homes on US,
+    -- so wherever we stand it flies towards us, and if the crystal is on that
+    -- line it dies on the crystal on the way. Standing further back keeps the
+    -- crystal between us and it for longer. So the values are left alone for
+    -- now rather than guessed at twice - but they are UNVALIDATED, and the
+    -- errand telemetry (OrbErrands / OrbBlastRuns / OrbWhy, now printed on
+    -- every fight line) is there to settle them with real numbers.
+    CONFIG.NLOrbStandOff = 46
     CONFIG.NLOrbDone = 18            -- orb this close to its crystal: job done
-    -- ...and once it is that close, leave. The crystal is about to become the
-    -- centre of a 120 stud explosion and we know exactly where and when.
-    CONFIG.NLOrbBlastRadius = 74
-    CONFIG.NLOrbBlastHold = 2.2      -- keep the escape through orb disappearance
+    CONFIG.NLOrbBlastRadius = 66
+    CONFIG.NLOrbBlastHold = 1.6      -- seconds we keep clearing away from it
 
     local function inNorthernLands()
         local value = Workspace:FindFirstChild("dungeonName")
@@ -162,32 +169,7 @@ do
         end
         local now = os.clock()
 
-        -- A disappearing orb may have detonated. Preserve an escape goal
-        -- instead of immediately pulling back toward Bob through its blast.
-        local tracked = self.NLTrackedOrb
-        if tracked and not tracked.Part.Parent then
-            local center = self.NLLastOrbPosition
-            self.NLTrackedOrb = nil
-            if center and flatten(root.Position-center).Magnitude < CONFIG.NLOrbBlastRadius then
-                local away = flatten(root.Position-center)
-                local out = away.Magnitude>1 and away.Unit or Vector3.new(1,0,0)
-                self.NLBlastGoal = center+out*CONFIG.NLOrbBlastRadius
-                self.NLBlastUntil = now+CONFIG.NLOrbBlastHold
-            end
-        end
-        if self.NLBlastGoal and now < (self.NLBlastUntil or 0) then
-            solver.NLOrbGoal = Vector3.new(self.NLBlastGoal.X,root.Position.Y,self.NLBlastGoal.Z)
-            solver.NLOrbUntil = self.NLBlastUntil
-            return
-        end
-
         local ok, orb = pcall(mine, self, root, now)
-        -- Once identified, keep following this orb when its homing direction
-        -- briefly changes during our turn around the matching crystal.
-        if self.NLTrackedOrb and self.NLTrackedOrb.Part.Parent
-            and flatten(root.Position-self.NLTrackedOrb.Part.Position).Magnitude < 210 then
-            ok, orb = true, self.NLTrackedOrb
-        end
         if not ok or not orb then
             return
         end
@@ -201,8 +183,6 @@ do
             note(self, "no crystal for colour " .. tostring(orb.Colour))
             return    -- unknown colour: leave it to the normal dodging
         end
-        self.NLTrackedOrb = orb
-        self.NLLastOrbPosition = orb.Part.Position
 
         -- Stand just beyond the crystal, on the far side from the orb, so the
         -- orb has to fly through the crystal to reach us. Standing on top of it
@@ -220,8 +200,6 @@ do
             local flee = crystal + out * CONFIG.NLOrbBlastRadius
             solver.NLOrbGoal = Vector3.new(flee.X, root.Position.Y, flee.Z)
             solver.NLOrbUntil = now + CONFIG.NLOrbBlastHold
-            self.NLBlastGoal = solver.NLOrbGoal
-            self.NLBlastUntil = solver.NLOrbUntil
             self.OrbBlastRuns = (self.OrbBlastRuns or 0) + 1
             return
         end
