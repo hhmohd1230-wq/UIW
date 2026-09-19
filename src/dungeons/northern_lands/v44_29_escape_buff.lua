@@ -38,12 +38,26 @@ do
         return value and value.Value == "Northern Lands"
     end
 
-    -- are we standing in a stomp circle?
+    -- Circles we are standing in and have to leave on foot. The Champion's
+    -- stomp was the only one here; Bob's ice slams are the same problem and
+    -- bigger - 80 studs across for the large one, so 40 studs to clear from the
+    -- middle, which is 2.5 seconds at walking speed and 1.7 buffed. His wave
+    -- discs are in the list too: they killed us from 63% to 0% while we stood
+    -- in one, and speed is the difference between crossing out sideways in time
+    -- and not.
+    local CIRCLES = {
+        firstBossJumpSlam = true,
+        largeIceSpikes = true,
+        mediumIceSpikes = true,
+        smallIceSpikes = true,
+        secondBossCricleHitbox = true,
+    }
     local function slamPush(root)
         local worst = 0
         for _, model in ipairs(Workspace:GetChildren()) do
-            if model.Name == "firstBossJumpSlam" then
+            if CIRCLES[model.Name] then
                 local box = model:FindFirstChild("hitBox", true)
+                    or model:FindFirstChild("precast", true)
                 if box and box:IsA("BasePart") then
                     local keepOut = math.max(box.Size.X, box.Size.Z) * 0.5 + CONFIG.NLSlamBuffPad
                     local away = flatten(root.Position - box.Position).Magnitude

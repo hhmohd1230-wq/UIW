@@ -36,9 +36,11 @@ do
         largeIceSpikes = 3,           -- Bob, an 80 stud circle
         mediumIceSpikes = 2,
         smallIceSpikes = 2,
-        -- Bob's wave. Standing in it is the thing his whole fight is built
-        -- around, and we had never once dodged it.
-        secondBossCricleHitbox = 4,
+        -- Bob's wave, and it is a killer, not a graze. Measured end to end:
+        -- one disc spawned 2 studs from us, we stayed 2-3 studs from its centre
+        -- for the whole 1.7 seconds it was logged, and health went 63% to 0%.
+        -- Two of these is a death, and they arrive every 27 seconds.
+        secondBossCricleHitbox = 6,
     }
     CONFIG.NLGapClearance = 9      -- beam half width plus a body
     CONFIG.NLMinRadius = 28        -- closest we stand to the pillar
@@ -87,6 +89,18 @@ do
     -- staying in the lane; perpendicular is free.
     CONFIG.NLWaveLaneRange = 70    -- a wave this close is worth reacting to
     CONFIG.NLWaveLaneCost = 55
+    -- Bob's wave, measured: ten discs, diameters 22 up to 76 in steps of 6, at
+    -- 0, 22, 44 ... 198 studs from him, spawned in sequence about every third of
+    -- a second and marching outward along one bearing. It is not a ring around
+    -- him and it is not something you back away from - it is a widening corridor
+    -- pointing one way, which is why the answer is to leave it sideways and why
+    -- it is narrow next to him and wide at the rim.
+    --
+    -- So any direction along that corridor, toward Bob or away from him, is
+    -- charged; across it is free. Priced above the wave's own danger so that
+    -- leaving beats standing even while we are still inside it.
+    CONFIG.NLBobWaveAxisCost = 120
+    CONFIG.NLBobWaveRange = 110
     -- DamageCastRange = 64 is our own rule, not the game's. Our damage spell is
     -- Flame Shuriken, a 45 stud disc that flies - there is no 64 stud leash on
     -- it. The evidence that it lands much further out is Ethos: it damaged Bob
@@ -383,7 +397,18 @@ do
         for _, box in ipairs(list) do names[box.Name] = (names[box.Name] or 0) + 1 end
         self.NLNames = names
         table.sort(list, function(a,b) return a.Distance < b.Distance end)
-        while #list > (self.NLAwareNow and self.NLAwareNow > 200 and 48 or 32) do table.remove(list) end
+        -- The cap exists to bound the work, but Bob's arena carries forty-odd
+        -- beams and his wave is ten separate discs, so the wave is exactly what
+        -- the cap throws away - the one attack that kills us outright. Keep
+        -- every piece of it and trim the rest.
+        local cap = (self.NLAwareNow and self.NLAwareNow > 200) and 48 or 32
+        local index = #list
+        while #list > cap and index > 0 do
+            if list[index].Name ~= "secondBossCricleHitbox" then
+                table.remove(list, index)
+            end
+            index -= 1
+        end
         return list, beams
     end
     local function risk(list, position, time)
@@ -613,6 +638,19 @@ do
         end
         local mobFight = not champion and not bob and enemy ~= nil
 
+        -- Bob's wave corridor: the line from him through the nearest disc.
+        local waveAxis, waveAxisNear = nil, math.huge
+        if bob and enemy.Root and enemy.Root.Parent then
+            for _, box in ipairs(list) do
+                if box.Name == "secondBossCricleHitbox" and box.Distance < waveAxisNear then
+                    local along = flatten(box.CF.Position - enemy.Root.Position)
+                    if along.Magnitude > 4 then
+                        waveAxis, waveAxisNear = along.Unit, box.Distance
+                    end
+                end
+            end
+        end
+
         local best,bestScore=nil,math.huge
         for i=0,16 do
             local angle=i*math.pi/8
@@ -642,6 +680,13 @@ do
                 end
                 if waveDir and waveNear <= CONFIG.NLWaveLaneRange and dir.Magnitude > 0 then
                     score += math.abs(dir:Dot(waveDir)) * CONFIG.NLWaveLaneCost
+                end
+                if waveAxis and waveAxisNear <= CONFIG.NLBobWaveRange then
+                    if dir.Magnitude > 0 then
+                        score += math.abs(dir:Dot(waveAxis)) * CONFIG.NLBobWaveAxisCost
+                    else
+                        score += CONFIG.NLBobWaveAxisCost      -- standing in it is the worst option
+                    end
                 end
                 if score<bestScore then best,bestScore=dir,score end
             end
@@ -692,7 +737,7 @@ do
     local newController = UIWController.new
     function UIWController.new()
         local self = newController()
-        self.Version = "46.5-keepmoving"
+        self.Version = "46.7-bobwave"
         return self
     end
 end
