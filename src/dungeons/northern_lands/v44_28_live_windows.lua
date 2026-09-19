@@ -34,6 +34,11 @@ do
         thirdBossMultiRings = 3,
         thirdBossBouncingOrb = 3,
         largeIceSpikes = 3,           -- Bob, an 80 stud circle
+        mediumIceSpikes = 2,
+        smallIceSpikes = 2,
+        -- Bob's wave. Standing in it is the thing his whole fight is built
+        -- around, and we had never once dodged it.
+        secondBossCricleHitbox = 4,
     }
     CONFIG.NLGapClearance = 9      -- beam half width plus a body
     CONFIG.NLMinRadius = 28        -- closest we stand to the pillar
@@ -71,7 +76,9 @@ do
         -- mobs: a long melee lane, 114 studs of it
         northernWarriorLineStrike=true,
         -- Odin: the two warned attacks
-        thirdBossLineShot=true, thirdBossMultiRings=true}
+        thirdBossLineShot=true, thirdBossMultiRings=true,
+        -- Bob's expanding wave, which nothing was tracking at all
+        secondBossCricleHitbox=true}
     local windup = {firstBossPassiveBeam=1.0, firstBossJumpSlam=2.0}
     -- How long after the warning goes dark the ground is still dangerous. The
     -- default 0.30s suits a beam, where the warning and the hit are the same
@@ -80,6 +87,28 @@ do
     -- longer than that.
     local linger = {largeIceSpikes=1.2, mediumIceSpikes=1.2, smallIceSpikes=1.2,
         thirdBossMultiRings=0.8, thirdBossLineShot=0.6, northernWarriorLineStrike=0.6}
+
+    -- Attacks whose precast IS the damage area, not a flashing warning that
+    -- precedes one. Measured in Bob's arena: every one of these precasts sits at
+    -- Transparency 1.0, so the "is the warning lit" test said no, HadWarning was
+    -- never set, and the 0.30s no-warning rule retired the attack a third of a
+    -- second after it appeared. That is why the ice spikes never once showed up
+    -- in the planner's list while we were being hit by them. For these, the
+    -- model existing in the workspace is the whole of its lifetime.
+    local warnBox = {largeIceSpikes=true, mediumIceSpikes=true, smallIceSpikes=true,
+        northernWarriorCircleStrike=true,
+        -- Bob's opening wave. It was in no list at all: it carries a precast and
+        -- nothing else, so the tracker filed it as a warning and the collector
+        -- skipped it. Caught it growing live through 22, 28, 34 and 76 studs
+        -- across, which is exactly the expanding ring - small near him, wide by
+        -- the time it reaches the rim.
+        secondBossCricleHitbox=true}
+
+    -- Where the damage actually is, when it is not the part we would guess.
+    -- secondBossMovingBeam has no hitBox and no precast. Its PrimaryPart is a
+    -- 4x1x2 marker, which is all we were tracking - while the thing that hits
+    -- you is a 52 stud bar strung between two balls. We were dodging a dot.
+    local bodyPart = {secondBossMovingBeam = {"middleBeam", "swirlPart"}}
     -- Found by logging everything that appears during the fight: the whirlwinds
     -- and the shurikens are bare MeshParts sitting straight in the workspace
     -- with no hitBox and no precast child, so the hazard tracker never saw them
@@ -100,10 +129,20 @@ do
         -- no precast, the same shape of blind spot the whirlwinds were: he took
         -- 42-78% off us in single hits that the tracker recorded as "nothing
         -- nearby". thirdBossBouncingOrb is 12 cubed, thirdBossMissile 10x10x30.
-        thirdBossBouncingOrb=true, thirdBossMissile=true, thirdBossBouncingOrbBeam=true}
+        thirdBossBouncingOrb=true, thirdBossMissile=true, thirdBossBouncingOrbBeam=true,
+        -- and Bob's moving beam, now that we know where its body is
+        secondBossMovingBeam=true}
     local tracks = setmetatable({}, {__mode="k"})
     local function live(container, now)
-        local box = container:FindFirstChild("hitBox", true)
+        local box
+        local named = bodyPart[container.Name]
+        if named then
+            for _, want in ipairs(named) do
+                local part = container:FindFirstChild(want, true)
+                if part and part:IsA("BasePart") then box = part break end
+            end
+        end
+        box = box or container:FindFirstChild("hitBox", true)
         if not box and container:IsA("BasePart") then box = container end
         -- Some attacks never grow a hitBox on our side - the precast circle is
         -- the whole thing we can see. Use it as the box rather than ignoring
@@ -117,8 +156,19 @@ do
         if not info then
             local look=flatten(box.CFrame.LookVector)
             info = {At=now, Position=box.Position, Velocity=Vector3.zero, Seen=now, Visible=now,
-                Angle=math.atan2(look.Z,look.X),Omega=0}
+                Angle=math.atan2(look.Z,look.X),Omega=0,
+                Size=box.Size, SizeAt=now, Growth=Vector3.zero}
             tracks[container] = info
+        end
+        -- An expanding ring is a different problem from a moving one: it does
+        -- not come to you, it gets wider where it already is. Measure how fast
+        -- it is growing so the planner can be told where its edge will be, not
+        -- only where it is.
+        local sdt = now - (info.SizeAt or now)
+        if sdt >= 0.1 then
+            local change = box.Size - (info.Size or box.Size)
+            info.Growth = change / sdt
+            info.Size, info.SizeAt = box.Size, now
         end
         local dt = now - info.At
         if dt >= 0.025 then
@@ -136,6 +186,9 @@ do
             info.Visible = now
             info.HadWarning = true
         end
+        -- For these the model's presence is the attack; there is no lit warning
+        -- to expire, so neither timer applies.
+        if warnBox[container.Name] then return box, info end
         local hold = linger[container.Name] or 0.30
         if timed[container.Name] and info.HadWarning and now-info.Visible > hold then return nil end
         if timed[container.Name] and not info.HadWarning and now-info.Seen > 0.30 then return nil end
@@ -180,6 +233,15 @@ do
             if seen[part] then return end
             seen[part] = true
             local cf, half = part.CFrame, part.Size*0.5
+            -- An expanding ring will be wider by the time we get there than it
+            -- is in this frame, so plan against the edge it is heading for. A
+            -- fifth of a second of growth is enough to stop us walking into the
+            -- rim we just measured as clear; more than that and we would flee a
+            -- wave that has not arrived.
+            if info and info.Growth and info.Growth.Magnitude > 1 then
+                local ahead = info.Growth * 0.2 * 0.5
+                half = half + Vector3.new(math.max(ahead.X, 0), 0, math.max(ahead.Z, 0))
+            end
             -- Distance to the box itself, not to its centre. A 250 stud beam
             -- through the pillar has its centre 130 studs away while passing
             -- straight through us, and a small orb 140 studs off is irrelevant;
@@ -460,7 +522,7 @@ do
     local newController = UIWController.new
     function UIWController.new()
         local self = newController()
-        self.Version = "45.2-nl-census"
+        self.Version = "45.3-bob-census"
         return self
     end
 end
