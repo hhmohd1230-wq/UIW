@@ -17789,6 +17789,7 @@ do
     -- inside the box.
     local DEADLY = {
         secondBossHorizontalBeam = 6,
+        genericNeonBall = 5,          -- measured 80-86% in one hit
         secondBossSpreadBeam = 3,
         secondBossMovingBeam = 3,
         firstBossJumpSlam = 4,
@@ -17827,7 +17828,15 @@ do
     -- one that kept killing us "out of nowhere".
     local moving = {northernMageShot=true, firstBossSeekingSpikes=true,
         firstBossCrissCross=true, firstBossBigSpike=true,
-        firstBossWhirlwind=true, firstBossWhirlWind=true, spearmanStrike=true}
+        firstBossWhirlwind=true, firstBossWhirlWind=true, spearmanStrike=true,
+        -- The colour orbs were left out so we could walk them to a crystal
+        -- instead of fleeing. That went wrong: measured 74-86% hits from
+        -- genericNeonBall (the 80 stud explosion an orb makes on contact) at
+        -- 6-10 studs. Leading it is still the plan, but it has to be treated as
+        -- dangerous while we do it, so the planner keeps a step ahead of it.
+        secondBossRedOrb=true, secondBossGreenOrb=true, secondBossYellowOrb=true,
+        -- and the explosion itself, for whoever is still standing there
+        genericNeonBall=true}
     local tracks = setmetatable({}, {__mode="k"})
     local function live(container, now)
         local box = container:FindFirstChild("hitBox", true)
