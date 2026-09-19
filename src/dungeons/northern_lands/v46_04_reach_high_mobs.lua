@@ -129,7 +129,10 @@ do
     function UIWController.new()
         local self = oldHighNew()
         self.NLResets = 0
-        self.Version = "46.4-reachhigh"
+        -- Append rather than replace: this file loads last, so setting the
+        -- version outright hid the planner's own number and a build reported
+        -- itself as the previous one.
+        self.Version = tostring(self.Version) .. "+reachhigh"
         return self
     end
 end

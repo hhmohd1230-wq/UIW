@@ -72,6 +72,21 @@ do
     -- against, and the direct reason circling a pack was impossible.
     CONFIG.NLMeleeKeepOut = 20     -- circle strike radius 17, plus a body
     CONFIG.NLMeleeWeight = 4
+
+    -- Never stand still in a mob fight. Standing is sometimes the lowest-risk
+    -- square on paper, but it ends the rotation, and the rotation is what keeps
+    -- their shots landing where we just were. A flat cost means holding still
+    -- has to be clearly better than moving, not merely equal.
+    CONFIG.NLStandStillCost = 45
+    -- Mage waves: leave the lane, do not live in it. Standing in the six stud
+    -- gap between two bars does work - it is the neat answer, and it is also a
+    -- stationary answer that stops the circle and depends on us holding a gap
+    -- narrower than our own body for as long as the wave lasts. Stepping out
+    -- sideways costs about 17 studs and puts the whole thing behind us. So any
+    -- direction that runs along the wave, with it or against it, is charged for
+    -- staying in the lane; perpendicular is free.
+    CONFIG.NLWaveLaneRange = 70    -- a wave this close is worth reacting to
+    CONFIG.NLWaveLaneCost = 55
     -- DamageCastRange = 64 is our own rule, not the game's. Our damage spell is
     -- Flame Shuriken, a 45 stud disc that flies - there is no 64 stud leash on
     -- it. The evidence that it lands much further out is Ethos: it damaged Bob
@@ -584,6 +599,20 @@ do
             local away = flatten(goal - root.Position).Magnitude
             goalPull = goalPull * math.clamp(away / 25, 1, CONFIG.NLGoalPullMax)
         end
+        -- the nearest live mage wave, and which way it is travelling
+        local waveDir, waveNear = nil, math.huge
+        if not champion and not bob then
+            for _, box in ipairs(list) do
+                if box.Name == "northernMageShot" and box.Distance < waveNear then
+                    local v = flatten(box.V)
+                    if v.Magnitude > 1 then
+                        waveDir, waveNear = v.Unit, box.Distance
+                    end
+                end
+            end
+        end
+        local mobFight = not champion and not bob and enemy ~= nil
+
         local best,bestScore=nil,math.huge
         for i=0,16 do
             local angle=i*math.pi/8
@@ -608,6 +637,12 @@ do
                     score+=math.max(0,after-castRange)*CONFIG.NLRangePull
                 end
                 if self.NLDirection then score+=(1-dir:Dot(self.NLDirection))*1.5 end
+                if mobFight and dir.Magnitude == 0 then
+                    score += CONFIG.NLStandStillCost
+                end
+                if waveDir and waveNear <= CONFIG.NLWaveLaneRange and dir.Magnitude > 0 then
+                    score += math.abs(dir:Dot(waveDir)) * CONFIG.NLWaveLaneCost
+                end
                 if score<bestScore then best,bestScore=dir,score end
             end
         end
@@ -657,7 +692,7 @@ do
     local newController = UIWController.new
     function UIWController.new()
         local self = newController()
-        self.Version = "46.3-clearscenery"
+        self.Version = "46.5-keepmoving"
         return self
     end
 end
