@@ -69,6 +69,17 @@ do
     -- spent the whole fight trying to reach a distance we did not need, through
     -- the beams, dying on the way, over and over.
     CONFIG.NLBossCastRange = 140
+    -- ...but NOT for the Champion. His passive beams are diameters through a
+    -- pillar, so the speed a beam edge sweeps past you is turn rate times your
+    -- distance from that pillar: close in, the gap asks for a few studs a
+    -- second; far out, it moves faster than you can walk. Standing off and
+    -- shooting him is the exact mistake the close-range plan was built to fix.
+    -- Measured when the long range was applied to him as well: 119 seconds and
+    -- five deaths, against 48 seconds and one.
+    local LONG_RANGE = {
+        ["bob the frost giant"] = true,
+        ["odin"] = true,
+    }
 
     local function northern()
         local d = Workspace:FindFirstChild("dungeonName")
@@ -535,7 +546,7 @@ do
         local castTarget, castRange
         if enemy and enemy.Root and enemy.Root.Parent then
             castTarget = enemy.Root.Position
-            castRange = (enemy.Model and NL_BOSSES[normalizeEnemyName(enemy.Model.Name)])
+            castRange = (enemy.Model and LONG_RANGE[normalizeEnemyName(enemy.Model.Name)])
                 and CONFIG.NLBossCastRange or (CONFIG.DamageCastRange or 64)
         end
         local goalPull = CONFIG.NLGoalPull
@@ -589,7 +600,7 @@ do
     local oldBossUpdate = CombatController.Update
     function CombatController:Update(enemy)
         if northern() and enemy and enemy.Model
-            and NL_BOSSES[normalizeEnemyName(enemy.Model.Name)]
+            and LONG_RANGE[normalizeEnemyName(enemy.Model.Name)]
         then
             local saved = CONFIG.DamageCastRange
             CONFIG.DamageCastRange = CONFIG.NLBossCastRange
@@ -607,7 +618,7 @@ do
     local newController = UIWController.new
     function UIWController.new()
         local self = newController()
-        self.Version = "45.7-castrange"
+        self.Version = "45.8-longrange-bob-odin"
         return self
     end
 end
