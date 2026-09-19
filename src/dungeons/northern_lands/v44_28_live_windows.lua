@@ -616,6 +616,10 @@ do
             orbErrand = true
         end
 
+        if self.NLPitLandingGoal then
+            goal=self.NLPitLandingGoal
+            preferred=unit(flatten(goal-root.Position))
+        end
         local standing=risk(list,root.Position,0)+risk(list,root.Position,0.3)+risk(list,root.Position,0.65)
             +risk(list,root.Position,1.0)+risk(list,root.Position,1.5)
         if not goal and standing<1 then

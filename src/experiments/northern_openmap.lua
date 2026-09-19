@@ -26,6 +26,10 @@ do
     local test = { Enabled = true, Changed = {}, Supports = {}, Count = 0, Floors = 0,
         WaterBackup = {}, Guards = {}, Protected = 0, Controller = c, PreviousFlat = c.FlatArena }
     env.UIW_OpenMap = test
+    -- This build uses the explicit cleared-pit checkpoint transition below.
+    -- The older timeout reset must not kill us while lower mobs remain alive.
+    local oldReachHigh = c.ReachHighMobs
+    c.ReachHighMobs = function() end
     c.FlatArena = false
     if c.Flat then c.Flat:Disable() c.Flat:Restore() end
 
@@ -160,17 +164,12 @@ do
                 elseif p.Anchored then
                     self.Changed[p] = {Collide=p.CanCollide, Query=p.CanQuery, Alpha=p.Transparency, LocalAlpha=p.LocalTransparencyModifier}
                     if p.CanCollide and floor(p) then self.Supports[p] = true end
-                    -- Actual stairs, ramps and upper decks must stay physical:
-                    -- a height sample alone cannot lift us onto an upper floor.
-                    if self.Supports[p] then
-                        p.CanQuery = true
-                        p.LocalTransparencyModifier = 0
-                    else
-                        p.CanCollide = false
-                        p.CanQuery = false
-                        p.Transparency = 1
-                        p.LocalTransparencyModifier = 1
-                    end
+                    -- Keep floor geometry only as invisible height references.
+                    -- A single level surface carries the player in each fight.
+                    p.CanCollide = false
+                    p.CanQuery = self.Supports[p] == true
+                    p.Transparency = 1
+                    p.LocalTransparencyModifier = 1
                     self.Count += 1
                 end
             end
@@ -228,41 +227,158 @@ do
             local p = Instance.new("Part")
             p.Name = "UIW_NorthernFlatFloor"
             p.Anchored = true
-            p.Size = Vector3.new(512, 2, 512)
+            p.Size = Vector3.new(768, 2, 768)
             p.Material = Enum.Material.SmoothPlastic
             p.Color = Color3.fromRGB(180, 202, 220)
             p.CanTouch = false
             self.Platform = p
         end
         local hit = workspace:Raycast(root.Position + Vector3.new(0, 8, 0), Vector3.new(0, -120, 0), self.Params)
-        if not self.Height then
+        if not self.Height or self.CharacterModel ~= c.Character.Character then
+            self.CharacterModel = c.Character.Character
             local h = c.Character.Humanoid
             self.Height = hit and hit.Position.Y or (root.Position.Y - root.Size.Y/2 - (h and h.HipHeight or 2))
-        elseif hit then
-            self.Height += math.clamp(hit.Position.Y-self.Height, -30*dt, 30*dt)
         end
-        -- Keep the fallback below the real surface so original steps/ramps
-        -- carry the character instead of being covered by a moving flat slab.
-        -- Always below, everywhere. Flush with the surface it becomes the floor
-        -- itself, and then every wobble in its height estimate is a wobble in
-        -- where the character stands.
-        self.Platform.CFrame = CFrame.new(root.Position.X, self.Height-3, root.Position.Z)
+        self.Platform.CFrame = CFrame.new(root.Position.X, self.Height-1, root.Position.Z)
         self.Platform.Parent = workspace
         -- Map-only noclip. Keep character collision for this floor and barriers.
         for p, saved in pairs(self.Changed) do
             if p.Parent then
-                if self.Supports[p] then
-                    p.CanCollide = saved.Collide
-                    p.CanQuery = true
-                    p.Transparency = saved.Alpha
-                    p.LocalTransparencyModifier = 0
-                else
-                    p.CanCollide = false
-                    p.Transparency = 1
-                    p.LocalTransparencyModifier = 1
+                p.CanCollide = false
+                p.Transparency = 1
+                p.LocalTransparencyModifier = 1
+            end
+        end
+    end
+    function test:LandingClear(point, enemies)
+        for _, e in ipairs(enemies) do
+            if e.Room==6 and e.Root and e.Root.Parent then
+                local v=e.Root.AssemblyLinearVelocity
+                if v.Magnitude>30 then v=v.Unit*30 end
+                for _,dt in ipairs({0,1.2}) do
+                    local delta=e.Root.Position+v*dt-point
+                    if Vector3.new(delta.X,0,delta.Z).Magnitude<48 then return false end
                 end
             end
         end
+        if not c.Hazards:IsFullBodyClear(point,c.Character.DesiredYaw or 0) then return false end
+        for _, hazard in ipairs(c.Hazards:GetActive()) do
+            local p=hazard.Part
+            if p and p.Parent then
+                local velocity=c.Hazards:GetProjectileVelocity(hazard)
+                for _,dt in ipairs({0,0.6,1.2}) do
+                    local q=p.CFrame:PointToObjectSpace(point-velocity*dt)
+                    local h=p.Size/2+Vector3.new(10,8,10)
+                    if math.abs(q.X)<h.X and math.abs(q.Y)<h.Y and math.abs(q.Z)<h.Z then return false end
+                end
+            end
+        end
+        return true
+    end
+    function test:UpdatePit()
+        if not c.Enabled or not c.Character:IsAlive() then return end
+        local root = c.Character.Root
+        local enemies = c.Dungeon:GetAliveEnemies(true)
+        local lower, nextGroup, bobAlive = nil, nil, false
+        for _, e in ipairs(enemies) do
+            if e.Model.Name == "Bob The Frost Giant" then bobAlive = true end
+            -- Live spawn markers identify room6 as the pit (Y about -54);
+            -- room5 is still the upper approach after Bob.
+            if e.Room == 6 and e.Root.Position.Y < 0 then lower = e end
+            if e.Room >= 7 and e.Root.Position.Y > root.Position.Y+22 then nextGroup = e end
+        end
+        if lower and not bobAlive then
+            self.PitSeen = true
+            self.PitClearAt = nil
+            local offset = Vector3.new(lower.Root.Position.X-root.Position.X,0,lower.Root.Position.Z-root.Position.Z)
+            if offset.Magnitude < 200 and not self.PitEntered then
+                local guards = {}
+                for p,g in pairs(self.Guards) do if p.Parent and p.CanCollide then guards[#guards+1]=g end end
+                local params = RaycastParams.new()
+                params.FilterType = Enum.RaycastFilterType.Include
+                params.FilterDescendantsInstances = guards
+                local landing=self.PitLanding
+                if self.PitDropping then
+                    if root.Position.Y<=self.Height+7 then
+                        self.PitEntered=true
+                        self.PitDropping=false
+                        c.Dodger.NLPitLandingGoal=nil
+                        self.PitStatus="landed away from lower mobs"
+                    end
+                    return
+                end
+                if landing and not self:LandingClear(landing,enemies) then landing=nil self.PitJumpAt=nil end
+                if not landing then
+                    self.PitLanding=nil
+                    if os.clock()-(self.PitSearchAt or 0)<0.5 then
+                        c.Dodger.NLPitLandingGoal=nil
+                        return
+                    end
+                    self.PitSearchAt=os.clock()
+                    local bestScore=math.huge
+                    for _,radius in ipairs({70,100,130}) do
+                        for i=0,15 do
+                            local angle=i*math.pi/8
+                            local at=lower.Root.Position+Vector3.new(math.cos(angle)*radius,8,math.sin(angle)*radius)
+                            local floorHit=workspace:Raycast(at,Vector3.new(0,-100,0),self.Params)
+                            if floorHit and floorHit.Normal.Y>0.7 and floorHit.Position.Y<self.Height-20 then
+                                local candidate=floorHit.Position+Vector3.new(0,3,0)
+                                local travel=Vector3.new(candidate.X-root.Position.X,0,candidate.Z-root.Position.Z)
+                                if not workspace:Raycast(root.Position,travel,params)
+                                    and not workspace:Raycast(root.Position+Vector3.new(0,candidate.Y-root.Position.Y,0),travel,params)
+                                    and self:LandingClear(candidate,enemies) then
+                                    if travel.Magnitude<bestScore then landing=candidate bestScore=travel.Magnitude end
+                                end
+                            end
+                        end
+                    end
+                    self.PitLanding=landing
+                end
+                if not landing then
+                    c.Dodger.NLPitLandingGoal=nil
+                    self.PitStatus="waiting for clear landing"
+                    return
+                end
+                c.Dodger.NLPitLandingGoal=Vector3.new(landing.X,root.Position.Y,landing.Z)
+                local away=Vector3.new(landing.X-root.Position.X,0,landing.Z-root.Position.Z)
+                self.PitStatus="moving above clear landing"
+                if away.Magnitude<6 and self:LandingClear(Vector3.new(root.Position.X,landing.Y,root.Position.Z),enemies) then
+                    if not self.PitJumpAt then
+                        self.PitJumpAt=os.clock()
+                        c.Character.Humanoid.Jump=true
+                        self.PitStatus="jumping before descent"
+                    elseif root.AssemblyLinearVelocity.Y>1 then
+                        self.Height=landing.Y-3
+                        self.PitDropping=true
+                        self.PitStatus="descending to clear landing"
+                    elseif os.clock()-self.PitJumpAt>1 then
+                        self.PitJumpAt=nil
+                    end
+                end
+            end
+            return
+        end
+        if not self.PitEntered or not nextGroup or self.PitResetAttempted then return end
+        local hardcore = workspace:FindFirstChild("hardcore")
+        if hardcore and hardcore.Value then self.PitStatus="reset disabled in hardcore" return end
+        self.PitClearAt = self.PitClearAt or os.clock()
+        if os.clock()-self.PitClearAt < 2 then return end
+        self.PitResetAttempted = true
+        self.PitStatus = "lower mobs cleared; resetting to checkpoint"
+        local oldCharacter, oldY = c.Character.Character, root.Position.Y
+        local retryEnabled = c.AutoRetryEnabled
+        c.AutoRetryEnabled = false
+        c.Character.Humanoid.Health = 0
+        task.spawn(function()
+            local deadline = os.clock()+15
+            repeat task.wait(0.25) until c.Destroyed or os.clock()>deadline
+                or (c.Character.Character~=oldCharacter and c.Character:IsAlive())
+            if c.Destroyed then return end
+            c.AutoRetryEnabled = retryEnabled
+            local newRoot = c.Character.Root
+            self.PitResetGain = newRoot and newRoot.Position.Y-oldY or 0
+            self.PitStatus = self.PitResetGain>22 and "checkpoint reset confirmed" or "checkpoint reset did not gain height; no repeat"
+        end)
     end
     function test:SetEnabled(value)
         self.Enabled = value == true
@@ -272,6 +388,8 @@ do
         if self.Connection then self.Connection:Disconnect() end
         if self.MapConnection then self.MapConnection:Disconnect() end
         self:Restore()
+        c.ReachHighMobs = oldReachHigh
+        c.Dodger.NLPitLandingGoal=nil
         c.FlatArena = self.PreviousFlat
         if env.UIW_OpenMap == self then env.UIW_OpenMap = nil end
     end
@@ -281,7 +399,7 @@ do
         test:Destroy()
         return destroy(controller, ...)
     end
-    c.Version = tostring(c.Version) .. "-openmap6"
+    c.Version = tostring(c.Version) .. "-openmap9"
     local elapsed = 0
     test.Connection = game:GetService("RunService").PreSimulation:Connect(function(dt)
         if c.Destroyed or env.UIW ~= c or dungeon.Value ~= "Northern Lands" then
@@ -290,6 +408,11 @@ do
         end
         elapsed += dt
         if test.Enabled then test:WalkSurface(dt) end
+        if test.Enabled and os.clock()-(test.PitCheckAt or 0)>=0.1 then
+            test.PitCheckAt=os.clock()
+            local pitOK,pitErr=pcall(test.UpdatePit,test)
+            if not pitOK then test.LastError=tostring(pitErr) end
+        end
         if elapsed >= 2 or test.NeedsSweep then
             elapsed = 0
             test.NeedsSweep = false

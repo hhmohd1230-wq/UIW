@@ -16,8 +16,14 @@ do
         local root, target = c.Character.Root, enemy.Root
         if not root or not target or not target.Parent then return end
         local delta = Vector3.new(target.Position.X-root.Position.X,0,target.Position.Z-root.Position.Z)
-        local usefulRange = stats.LastDamageRange and math.clamp(stats.LastDamageRange+10,60,100) or 100
-        if delta.Magnitude > usefulRange then
+        local usefulRange = 90
+        -- The projectile leaves after its windup, by which time a retreat can
+        -- put us outside useful range even if the key press was close enough.
+        local velocity = root.AssemblyLinearVelocity-target.AssemblyLinearVelocity
+        local outward = delta.Magnitude>1 and math.max(0,-velocity:Dot(delta.Unit)) or 0
+        local launchRange = delta.Magnitude + outward*0.9
+        stats.PredictedLaunchRange = launchRange
+        if launchRange > usefulRange then
             stats.WaitingForRange = true
             return
         end
@@ -38,7 +44,9 @@ do
         stats.Samples[#stats.Samples+1] = sample
         if #stats.Samples>30 then table.remove(stats.Samples,1) end
         oldPress(self, slot)
-        task.delay(2.5, function()
+        local lock = c.Character.CastLock
+        if lock then lock.Until=math.max(lock.Until,os.clock()+1.4) end
+        task.delay(3.5, function()
             if c.Destroyed then return end
             if not h.Parent then sample.Result="target removed" return end
             sample.Drop = math.max(0,hp-h.Health)
@@ -59,7 +67,7 @@ do
         -- Repeated no-damage observations request a closer position, but keep
         -- the existing hazard scorer in control of the actual dodge direction.
         CONFIG.NLBossCastRange = stats.MissStreak>=2 and 60
-            or (stats.LastDamageRange and math.clamp(stats.LastDamageRange+10,60,100) or 100)
+            or 85
         local ok, direction, facing, emergency, dodging = pcall(oldSolve,self,route,enemy,yaw)
         CONFIG.NLBossCastRange=savedRange
         for name in pairs(self.NLNames or {}) do stats.Moves[name]=true end

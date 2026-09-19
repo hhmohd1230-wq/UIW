@@ -1,6 +1,7 @@
 # Isolated Northern Lands test; leaves normal/stable/flat outputs untouched.
 param([switch]$Volt)
 $ErrorActionPreference = 'Stop'
+& (Join-Path $PSScriptRoot 'build-inventory.ps1')
 $utf8 = New-Object System.Text.UTF8Encoding($false)
 $builder = New-Object System.Text.StringBuilder
 foreach ($line in [IO.File]::ReadAllLines((Join-Path $PSScriptRoot 'manifest.txt'))) {

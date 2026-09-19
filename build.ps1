@@ -8,6 +8,7 @@ param(
 )
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
+& (Join-Path $root 'build-inventory.ps1')
 $utf8 = New-Object System.Text.UTF8Encoding($false)
 $builder = New-Object System.Text.StringBuilder
 $count = 0

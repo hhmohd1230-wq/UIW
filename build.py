@@ -3,6 +3,11 @@ import pathlib
 import sys
 
 root = pathlib.Path(__file__).resolve().parent
+engine = (root / 'src/inventory/engine.lua').read_text(encoding='utf-8-sig')
+assert ']========]' not in engine
+(root / 'src/inventory/bundle.lua').write_bytes(
+    ('-- Generated from src/inventory/engine.lua; isolated Luau chunk.\n'
+     'local UIWInventorySource = [========[\n' + engine + '\n]========]\n').encode('utf-8'))
 parts = []
 for line in (root / "manifest.txt").read_text(encoding="utf-8").splitlines():
     line = line.strip()

@@ -16,7 +16,9 @@ src/core/combat.lua
 src/ui/target_healthbar.lua
 src/ui/path_esp.lua
 src/ui/tactical_display.lua
+src/inventory/bundle.lua
 src/ui/hud.lua
+src/ui/inventory_page.lua
 src/core/controller.lua
 src/patches/v42_combat_dodge.lua
 src/patches/v44_00_prediction_navigation.lua

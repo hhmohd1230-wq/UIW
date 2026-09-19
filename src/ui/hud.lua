@@ -679,6 +679,9 @@ function HUD.new(controller)
     tabButton("Automation", "⚔", 2)
     tabButton("Settings", "⚙", 3)
     tabButton("Configs", "▤", 4)
+    tabButton("Inventory", "▦", 5)
+    local inventoryPage = newPage("Inventory", false)
+    if UIKit.BuildInventoryPage then UIKit.BuildInventoryPage(self, inventoryPage, controller) end
 
     -----------------------------------------------------------------------
     -- Home
@@ -1456,7 +1459,7 @@ function HUD.new(controller)
         setMaster(not controller.Enabled)
     end)
 
-    selectTab("Home")
+    selectTab(Workspace:FindFirstChild("dungeonName") and "Home" or "Inventory")
     self:RefreshControls()
     self:RefreshConfigs()
     if controller.StartupNotice then
@@ -1636,10 +1639,10 @@ function HUD:SetRetryStatus(text, color)
 end
 
 function HUD:Destroy()
+    if self.InventoryCleanup then self.InventoryCleanup() end
     for _, connection in ipairs(self.Connections or {}) do
         pcall(function() connection:Disconnect() end)
     end
     self.Connections = {}
     safeDestroy(self.Gui)
 end
-
