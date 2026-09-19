@@ -17797,7 +17797,7 @@ do
         genericNeonBall = 5,          -- measured 80-86% in one hit
         firstBossBigSpike = 5,        -- measured 89% in one hit
         firstBossCrissCross = 3,      -- 35-43% each and they arrive in threes
-        secondBossSpreadBeam = 3,
+        secondBossSpreadBeam = 6,     -- also measured as a one-shot: 100%
         secondBossMovingBeam = 3,
         firstBossJumpSlam = 4,
     }
