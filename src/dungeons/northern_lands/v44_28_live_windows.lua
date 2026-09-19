@@ -51,6 +51,24 @@ do
     CONFIG.NLBurstHold = 7         -- once it starts, commit to the run for this long
     CONFIG.NLGoalPull = 0.3        -- score per stud away from where we want to stand
     CONFIG.NLGoalPullMax = 8       -- ...multiplied by up to this when far out of position
+    -- Being unable to cast is not a small cost. With the mob combo block fixed,
+    -- the probe's verdict against Bob became "outside damage range", 100% of 623
+    -- samples: we were simply never close enough to hit him. A fight we cannot
+    -- shoot in is lost for certain, while brushing a hazard is a risk - so every stud
+    -- outside cast range is priced high enough to outweigh a cheap hazard and
+    -- still lose to a one-shot, whose weight is several times this.
+    CONFIG.NLRangePull = 4         -- score per stud we would still be out of cast range
+    -- DamageCastRange = 64 is our own rule, not the game's. Our damage spell is
+    -- Flame Shuriken, a 45 stud disc that flies - there is no 64 stud leash on
+    -- it. The evidence that it lands much further out is Ethos: it damaged Bob
+    -- at 0.73-1.40%/s while inside 60 studs for only 0-18% of the fight, which
+    -- is impossible if 64 were a real limit.
+    --
+    -- Holding that made-up limit against Bob cost us the fight completely:
+    -- measured 361 seconds, 15 deaths, and his health never moved off 100%. We
+    -- spent the whole fight trying to reach a distance we did not need, through
+    -- the beams, dying on the way, over and over.
+    CONFIG.NLBossCastRange = 140
 
     local function northern()
         local d = Workspace:FindFirstChild("dungeonName")
@@ -512,6 +530,14 @@ do
         -- at 40 - not as a decision, but because the goal could not be heard.
         -- So the pull grows with how far out of position we are, and is capped
         -- so that a lethal box still wins the argument.
+        -- Where we have to be to do any damage at all, as opposed to where we
+        -- would ideally stand.
+        local castTarget, castRange
+        if enemy and enemy.Root and enemy.Root.Parent then
+            castTarget = enemy.Root.Position
+            castRange = (enemy.Model and NL_BOSSES[normalizeEnemyName(enemy.Model.Name)])
+                and CONFIG.NLBossCastRange or (CONFIG.DamageCastRange or 64)
+        end
         local goalPull = CONFIG.NLGoalPull
         if goal then
             local away = flatten(goal - root.Position).Magnitude
@@ -535,6 +561,10 @@ do
                 if goal then
                     score+=flatten(root.Position+dir*distance-goal).Magnitude*goalPull
                 else score-=dir:Dot(preferred)*4 end
+                if castTarget then
+                    local after=flatten(root.Position+dir*distance-castTarget).Magnitude
+                    score+=math.max(0,after-castRange)*CONFIG.NLRangePull
+                end
                 if self.NLDirection then score+=(1-dir:Dot(self.NLDirection))*1.5 end
                 if score<bestScore then best,bestScore=dir,score end
             end
@@ -551,6 +581,25 @@ do
         return best,yaw,self.NLEmergency,self.NLDodging
     end
 
+    ---------------------------------------------------------------------------
+    -- Let the shuriken fly at the bosses of this dungeon instead of walking it
+    -- in by hand. Contained to Northern Lands bosses and restored immediately,
+    -- so nothing else in the script sees a different range.
+    ---------------------------------------------------------------------------
+    local oldBossUpdate = CombatController.Update
+    function CombatController:Update(enemy)
+        if northern() and enemy and enemy.Model
+            and NL_BOSSES[normalizeEnemyName(enemy.Model.Name)]
+        then
+            local saved = CONFIG.DamageCastRange
+            CONFIG.DamageCastRange = CONFIG.NLBossCastRange
+            local ok, result = pcall(oldBossUpdate, self, enemy)
+            CONFIG.DamageCastRange = saved
+            return ok and result or false
+        end
+        return oldBossUpdate(self, enemy)
+    end
+
     -- This file loads last of the planners, so its version string is the one
     -- that survives. A measurement is worthless if we cannot say which build
     -- produced it, and we have already once scored a fight against a build that
@@ -558,7 +607,7 @@ do
     local newController = UIWController.new
     function UIWController.new()
         local self = newController()
-        self.Version = "45.5-bossnames"
+        self.Version = "45.7-castrange"
         return self
     end
 end
