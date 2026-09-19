@@ -303,7 +303,16 @@ do
             local dy = math.max(math.abs(here.Y) - half.Y, 0)
             local dz = math.max(math.abs(here.Z) - half.Z, 0)
             if math.sqrt(dx * dx + dy * dy + dz * dz) > (self.NLAwareNow or CONFIG.NLAwareRadius) then return end
-            local pad=name=="northernMageShot" and 8
+            -- northernMageShot measured live: each bar is 7 x 64 x 35, and
+            -- consecutive bars in a wave sit 13 studs apart centre to centre,
+            -- which leaves a 6 stud gap between them. The old 8 stud pad turned
+            -- a 7 stud thick bar into a 23 stud one and a 35 wide bar into 51,
+            -- so the gaps between bars vanished entirely and a sidestep that
+            -- really needs 17 studs looked like it needed 26. This is the
+            -- attack that has done us the most damage of anything in the
+            -- dungeon - 15 of all recorded hits - and we were modelling it
+            -- three times thicker than it is.
+            local pad=name=="northernMageShot" and 3
                 or name=="firstBossJumpSlam" and 16
                 or (name=="firstBossCrissCross" and 12)
                 or ((name=="firstBossBigSpike" or name=="firstBossSeekingSpikes") and 9)
@@ -618,7 +627,7 @@ do
     local newController = UIWController.new
     function UIWController.new()
         local self = newController()
-        self.Version = "45.8-longrange-bob-odin"
+        self.Version = "45.9-magewave"
         return self
     end
 end
