@@ -18,6 +18,11 @@ do
         genericNeonBall = 5,          -- measured 80-86% in one hit
         firstBossBigSpike = 5,        -- measured 89% in one hit
         firstBossCrissCross = 3,      -- 35-43% each and they arrive in threes
+        -- The single most common source of damage in two recorded human runs:
+        -- 14 of 34 hits, and the cause of five separate deaths. A mob attack,
+        -- not a boss one, which is why it went unnoticed while we studied
+        -- bosses. Three hits of ~33% kill.
+        northernMageShot = 3,
         secondBossSpreadBeam = 6,     -- also measured as a one-shot: 100%
         secondBossMovingBeam = 3,
         firstBossJumpSlam = 4,
@@ -146,7 +151,8 @@ do
             local dy = math.max(math.abs(here.Y) - half.Y, 0)
             local dz = math.max(math.abs(here.Z) - half.Z, 0)
             if math.sqrt(dx * dx + dy * dy + dz * dz) > (self.NLAwareNow or CONFIG.NLAwareRadius) then return end
-            local pad=name=="firstBossJumpSlam" and 16
+            local pad=name=="northernMageShot" and 8
+                or name=="firstBossJumpSlam" and 16
                 or (name=="firstBossCrissCross" and 12)
                 or ((name=="firstBossBigSpike" or name=="firstBossSeekingSpikes") and 9)
                 or 5
