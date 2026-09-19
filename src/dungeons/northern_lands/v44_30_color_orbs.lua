@@ -20,14 +20,24 @@ do
     -- then ran continuously - measured 277 triggers while Bob sat untouched at
     -- 123 studs. Ours is the one that keeps pointing at us as we move, so it
     -- has to be both sharply aimed and aimed for a while.
-    CONFIG.NLOrbAimCos = 0.95        -- within about 18 degrees of straight at us
-    CONFIG.NLOrbLockTime = 0.5       -- and holding that for this long
+    -- Loosened, with a counter behind each gate. Measured across a whole
+    -- session: the errand fired zero times. Every Bob fight, the orb was never
+    -- walked to a crystal even once - it just chased us until it caught us, and
+    -- the 120 stud explosion it makes on contact is weighted as one of the most
+    -- dangerous things in the dungeon for good reason. Gates that never open are
+    -- worse than gates that sometimes open wrongly, so these are wider and each
+    -- rejection is now counted rather than guessed at.
+    CONFIG.NLOrbAimCos = 0.88        -- within about 28 degrees of straight at us
+    CONFIG.NLOrbLockTime = 0.35      -- and holding that for this long
     CONFIG.NLOrbWatch = 150          -- studs: close enough to be ours
     -- An orb 100 studs out is not urgent - it travels at walking pace, so there
     -- is time to keep fighting and deal with it when it is actually close.
     -- Running the errand from the moment it spawns meant the fight was spent
     -- walking to crystals: measured 1564 errand frames in one fight.
-    CONFIG.NLOrbAct = 55             -- only start the errand inside this
+    -- 55 was set when we fought Bob from 40 studs. We now hold him at up to 140,
+    -- so an orb inside 55 studs of us is one that has already crossed most of
+    -- the arena - by then the errand is a panic, not a plan.
+    CONFIG.NLOrbAct = 120            -- only start the errand inside this
     CONFIG.NLOrbHold = 1.5           -- seconds a spotted orb keeps the errand alive
     CONFIG.NLOrbStandOff = 9         -- how far past the crystal we stand
     CONFIG.NLOrbDone = 14            -- orb this close to its crystal: job done
@@ -84,9 +94,16 @@ do
     end
 
     -- the one that is coming for us, out of everybody's
+    local function note(self, why)
+        self.OrbWhy = self.OrbWhy or {}
+        self.OrbWhy[why] = (self.OrbWhy[why] or 0) + 1
+    end
+
     local function mine(self, root, now)
         local best, bestScore = nil, -math.huge
+        local any = false
         for _, orb in ipairs(orbs(now)) do
+            any = true
             local toUs = flatten(root.Position - orb.Part.Position)
             local range = toUs.Magnitude
             if range <= CONFIG.NLOrbWatch and range > 1 then
@@ -105,10 +122,17 @@ do
                         end
                     else
                         orb.Info.LockedSince = nil
+                        note(self, "not aimed at us")
                     end
+                else
+                    note(self, "orb not moving yet")
                 end
+            else
+                note(self, "orb beyond watch range")
             end
         end
+        if not any then note(self, "no orbs in world") end
+        if not best and any then note(self, "no orb claimed as ours") end
         return best
     end
 
@@ -128,11 +152,13 @@ do
             return
         end
         if flatten(root.Position - orb.Part.Position).Magnitude > CONFIG.NLOrbAct then
+            note(self, "ours, but still too far to act")
             return    -- still far: keep fighting, it is coming at walking pace
         end
         local where = crystals()
         local crystal = where and where[orb.Colour]
         if not crystal then
+            note(self, "no crystal for colour " .. tostring(orb.Colour))
             return    -- unknown colour: leave it to the normal dodging
         end
 

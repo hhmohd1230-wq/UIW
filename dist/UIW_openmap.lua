@@ -18178,6 +18178,7 @@ do
     -- leaving beats standing even while we are still inside it.
     CONFIG.NLBobWaveAxisCost = 120
     CONFIG.NLBobWaveRange = 110
+    CONFIG.NLOrbGoalPull = 7       -- score per stud off the spot behind the crystal
     -- DamageCastRange = 64 is our own rule, not the game's. Our damage spell is
     -- Flame Shuriken, a 45 stud disc that flies - there is no 64 stud leash on
     -- it. The evidence that it lands much further out is Ethos: it damaged Bob
@@ -18664,9 +18665,11 @@ do
         -- Leading a colour orb into its crystal beats any standing position:
         -- the orb homes at walking speed, so it is never outrun, and the only
         -- way it ends is at the crystal.
+        local orbErrand = false
         if self.NLOrbGoal and now < (self.NLOrbUntil or 0) then
             goal = self.NLOrbGoal
             preferred = unit(flatten(goal - root.Position))
+            orbErrand = true
         end
 
         local standing=risk(list,root.Position,0)+risk(list,root.Position,0.3)+risk(list,root.Position,0.65)
@@ -18706,6 +18709,15 @@ do
         if goal then
             local away = flatten(goal - root.Position).Magnitude
             goalPull = goalPull * math.clamp(away / 25, 1, CONFIG.NLGoalPullMax)
+        end
+        -- Walking the orb to its crystal is not a preference to be outvoted. It
+        -- is the only thing that ends the orb: it homes at walking pace, so it
+        -- is never outrun, and on contact it makes a 120 stud explosion. The
+        -- standing spot is deliberately past the crystal on the far side, so the
+        -- orb has to fly through the crystal to reach us - it dies on the pillar
+        -- and the pillar is between us and it.
+        if orbErrand then
+            goalPull = math.max(goalPull, CONFIG.NLOrbGoalPull)
         end
         -- the nearest live mage wave, and which way it is travelling
         local waveDir, waveNear = nil, math.huge
@@ -18820,7 +18832,7 @@ do
     local newController = UIWController.new
     function UIWController.new()
         local self = newController()
-        self.Version = "46.9-odin"
+        self.Version = "47.1-orbpillar"
         return self
     end
 end
@@ -19030,14 +19042,24 @@ do
     -- then ran continuously - measured 277 triggers while Bob sat untouched at
     -- 123 studs. Ours is the one that keeps pointing at us as we move, so it
     -- has to be both sharply aimed and aimed for a while.
-    CONFIG.NLOrbAimCos = 0.95        -- within about 18 degrees of straight at us
-    CONFIG.NLOrbLockTime = 0.5       -- and holding that for this long
+    -- Loosened, with a counter behind each gate. Measured across a whole
+    -- session: the errand fired zero times. Every Bob fight, the orb was never
+    -- walked to a crystal even once - it just chased us until it caught us, and
+    -- the 120 stud explosion it makes on contact is weighted as one of the most
+    -- dangerous things in the dungeon for good reason. Gates that never open are
+    -- worse than gates that sometimes open wrongly, so these are wider and each
+    -- rejection is now counted rather than guessed at.
+    CONFIG.NLOrbAimCos = 0.88        -- within about 28 degrees of straight at us
+    CONFIG.NLOrbLockTime = 0.35      -- and holding that for this long
     CONFIG.NLOrbWatch = 150          -- studs: close enough to be ours
     -- An orb 100 studs out is not urgent - it travels at walking pace, so there
     -- is time to keep fighting and deal with it when it is actually close.
     -- Running the errand from the moment it spawns meant the fight was spent
     -- walking to crystals: measured 1564 errand frames in one fight.
-    CONFIG.NLOrbAct = 55             -- only start the errand inside this
+    -- 55 was set when we fought Bob from 40 studs. We now hold him at up to 140,
+    -- so an orb inside 55 studs of us is one that has already crossed most of
+    -- the arena - by then the errand is a panic, not a plan.
+    CONFIG.NLOrbAct = 120            -- only start the errand inside this
     CONFIG.NLOrbHold = 1.5           -- seconds a spotted orb keeps the errand alive
     CONFIG.NLOrbStandOff = 9         -- how far past the crystal we stand
     CONFIG.NLOrbDone = 14            -- orb this close to its crystal: job done
@@ -19094,9 +19116,16 @@ do
     end
 
     -- the one that is coming for us, out of everybody's
+    local function note(self, why)
+        self.OrbWhy = self.OrbWhy or {}
+        self.OrbWhy[why] = (self.OrbWhy[why] or 0) + 1
+    end
+
     local function mine(self, root, now)
         local best, bestScore = nil, -math.huge
+        local any = false
         for _, orb in ipairs(orbs(now)) do
+            any = true
             local toUs = flatten(root.Position - orb.Part.Position)
             local range = toUs.Magnitude
             if range <= CONFIG.NLOrbWatch and range > 1 then
@@ -19115,10 +19144,17 @@ do
                         end
                     else
                         orb.Info.LockedSince = nil
+                        note(self, "not aimed at us")
                     end
+                else
+                    note(self, "orb not moving yet")
                 end
+            else
+                note(self, "orb beyond watch range")
             end
         end
+        if not any then note(self, "no orbs in world") end
+        if not best and any then note(self, "no orb claimed as ours") end
         return best
     end
 
@@ -19138,11 +19174,13 @@ do
             return
         end
         if flatten(root.Position - orb.Part.Position).Magnitude > CONFIG.NLOrbAct then
+            note(self, "ours, but still too far to act")
             return    -- still far: keep fighting, it is coming at walking pace
         end
         local where = crystals()
         local crystal = where and where[orb.Colour]
         if not crystal then
+            note(self, "no crystal for colour " .. tostring(orb.Colour))
             return    -- unknown colour: leave it to the normal dodging
         end
 
@@ -19478,12 +19516,13 @@ do
         return math.abs(normal.Y) >= 0.65 and width >= 6 and depth >= 6
             and thin <= math.min(width, depth) * 0.4
     end
-    -- In Bob's room a floor part still tells us how high the ground is, it just
-    -- no longer carries us. Keeping it queryable means the flat slab settles at
-    -- the real height instead of wherever we happened to be standing when we
-    -- walked in.
+    -- Reverted: for one build Bob's room kept no supports, so the artificial
+    -- slab became the floor and moved the character up and down as its height
+    -- estimate drifted. The real floor is what carries the mobs and it is what
+    -- should carry us - its slopes and steps are the arena, not clutter. Only
+    -- the decoration comes out.
     local function floor(p)
-        return floorShape(p) and not inBobRoom()
+        return floorShape(p)
     end
     function test:Restore()
         for _, guard in pairs(self.Guards) do guard:Destroy() end
@@ -19571,16 +19610,6 @@ do
         for p in pairs(self.Supports) do
             if p.Parent then refs[#refs+1] = p self.Floors += 1 end
         end
-        -- Bob's room keeps no supports, so without this the height raycast has
-        -- nothing to hit and the flat slab would sit wherever we entered at.
-        if inBobRoom() then
-            for p in pairs(self.Changed) do
-                if p.Parent and floorShape(p) then
-                    p.CanQuery = true
-                    refs[#refs+1] = p
-                end
-            end
-        end
         self.Params = RaycastParams.new()
         self.Params.FilterType = Enum.RaycastFilterType.Include
         self.Params.FilterDescendantsInstances = refs
@@ -19644,10 +19673,10 @@ do
         end
         -- Keep the fallback below the real surface so original steps/ramps
         -- carry the character instead of being covered by a moving flat slab.
-        -- In Bob's arena there are no supports left to carry us, so the slab
-        -- sits flush and becomes the floor: one continuous plane to circle on.
-        local drop = inBobRoom() and 0 or 3
-        self.Platform.CFrame = CFrame.new(root.Position.X, self.Height-drop, root.Position.Z)
+        -- Always below, everywhere. Flush with the surface it becomes the floor
+        -- itself, and then every wobble in its height estimate is a wobble in
+        -- where the character stands.
+        self.Platform.CFrame = CFrame.new(root.Position.X, self.Height-3, root.Position.Z)
         self.Platform.Parent = workspace
         -- Map-only noclip. Keep character collision for this floor and barriers.
         for p, saved in pairs(self.Changed) do

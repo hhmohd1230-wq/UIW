@@ -79,12 +79,13 @@ do
         return math.abs(normal.Y) >= 0.65 and width >= 6 and depth >= 6
             and thin <= math.min(width, depth) * 0.4
     end
-    -- In Bob's room a floor part still tells us how high the ground is, it just
-    -- no longer carries us. Keeping it queryable means the flat slab settles at
-    -- the real height instead of wherever we happened to be standing when we
-    -- walked in.
+    -- Reverted: for one build Bob's room kept no supports, so the artificial
+    -- slab became the floor and moved the character up and down as its height
+    -- estimate drifted. The real floor is what carries the mobs and it is what
+    -- should carry us - its slopes and steps are the arena, not clutter. Only
+    -- the decoration comes out.
     local function floor(p)
-        return floorShape(p) and not inBobRoom()
+        return floorShape(p)
     end
     function test:Restore()
         for _, guard in pairs(self.Guards) do guard:Destroy() end
@@ -172,16 +173,6 @@ do
         for p in pairs(self.Supports) do
             if p.Parent then refs[#refs+1] = p self.Floors += 1 end
         end
-        -- Bob's room keeps no supports, so without this the height raycast has
-        -- nothing to hit and the flat slab would sit wherever we entered at.
-        if inBobRoom() then
-            for p in pairs(self.Changed) do
-                if p.Parent and floorShape(p) then
-                    p.CanQuery = true
-                    refs[#refs+1] = p
-                end
-            end
-        end
         self.Params = RaycastParams.new()
         self.Params.FilterType = Enum.RaycastFilterType.Include
         self.Params.FilterDescendantsInstances = refs
@@ -245,10 +236,10 @@ do
         end
         -- Keep the fallback below the real surface so original steps/ramps
         -- carry the character instead of being covered by a moving flat slab.
-        -- In Bob's arena there are no supports left to carry us, so the slab
-        -- sits flush and becomes the floor: one continuous plane to circle on.
-        local drop = inBobRoom() and 0 or 3
-        self.Platform.CFrame = CFrame.new(root.Position.X, self.Height-drop, root.Position.Z)
+        -- Always below, everywhere. Flush with the surface it becomes the floor
+        -- itself, and then every wobble in its height estimate is a wobble in
+        -- where the character stands.
+        self.Platform.CFrame = CFrame.new(root.Position.X, self.Height-3, root.Position.Z)
         self.Platform.Parent = workspace
         -- Map-only noclip. Keep character collision for this floor and barriers.
         for p, saved in pairs(self.Changed) do

@@ -109,6 +109,7 @@ do
     -- leaving beats standing even while we are still inside it.
     CONFIG.NLBobWaveAxisCost = 120
     CONFIG.NLBobWaveRange = 110
+    CONFIG.NLOrbGoalPull = 7       -- score per stud off the spot behind the crystal
     -- DamageCastRange = 64 is our own rule, not the game's. Our damage spell is
     -- Flame Shuriken, a 45 stud disc that flies - there is no 64 stud leash on
     -- it. The evidence that it lands much further out is Ethos: it damaged Bob
@@ -595,9 +596,11 @@ do
         -- Leading a colour orb into its crystal beats any standing position:
         -- the orb homes at walking speed, so it is never outrun, and the only
         -- way it ends is at the crystal.
+        local orbErrand = false
         if self.NLOrbGoal and now < (self.NLOrbUntil or 0) then
             goal = self.NLOrbGoal
             preferred = unit(flatten(goal - root.Position))
+            orbErrand = true
         end
 
         local standing=risk(list,root.Position,0)+risk(list,root.Position,0.3)+risk(list,root.Position,0.65)
@@ -637,6 +640,15 @@ do
         if goal then
             local away = flatten(goal - root.Position).Magnitude
             goalPull = goalPull * math.clamp(away / 25, 1, CONFIG.NLGoalPullMax)
+        end
+        -- Walking the orb to its crystal is not a preference to be outvoted. It
+        -- is the only thing that ends the orb: it homes at walking pace, so it
+        -- is never outrun, and on contact it makes a 120 stud explosion. The
+        -- standing spot is deliberately past the crystal on the far side, so the
+        -- orb has to fly through the crystal to reach us - it dies on the pillar
+        -- and the pillar is between us and it.
+        if orbErrand then
+            goalPull = math.max(goalPull, CONFIG.NLOrbGoalPull)
         end
         -- the nearest live mage wave, and which way it is travelling
         local waveDir, waveNear = nil, math.huge
@@ -751,7 +763,7 @@ do
     local newController = UIWController.new
     function UIWController.new()
         local self = newController()
-        self.Version = "46.9-odin"
+        self.Version = "47.1-orbpillar"
         return self
     end
 end
