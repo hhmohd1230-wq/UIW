@@ -17882,8 +17882,28 @@ do
             end
         end
 
-        -- boxed in on both sides: at least do not let them walk into us
+        -- Boxed in both ways. Record what is in the way, so the answer can be
+        -- "clear that specific thing" rather than "walk through everything".
         self.NLOrbiting = false
+        self.NLBlockers = self.NLBlockers or {}
+        local probe = unit(rotateXZ(radial, CONFIG.NLMobOrbitStep * (self.NLSpin or 1)))
+        if probe.Magnitude > 0 then
+            local params = RaycastParams.new()
+            params.FilterType = Enum.RaycastFilterType.Exclude
+            params.FilterDescendantsInstances = { self.CharacterService.Character }
+            params.RespectCanCollide = true
+            local hit = Workspace:Raycast(root.Position, probe * CONFIG.NLMobOrbitProbe, params)
+            if hit and hit.Instance then
+                local part = hit.Instance
+                local key = string.format("%s/%s %.0fx%.0fx%.0f anchored=%s",
+                    part.Parent and part.Parent.Name or "?", part.Name,
+                    part.Size.X, part.Size.Y, part.Size.Z, tostring(part.Anchored))
+                self.NLBlockers[key] = (self.NLBlockers[key] or 0) + 1
+            else
+                self.NLBlockers["nothing hit (ground/edge check)"] =
+                    (self.NLBlockers["nothing hit (ground/edge check)"] or 0) + 1
+            end
+        end
         if offset.Magnitude < CONFIG.NLMobOrbitMin then
             return centre + radial * CONFIG.NLMobOrbitRadius
         end
