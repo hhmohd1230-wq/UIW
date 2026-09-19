@@ -49,6 +49,8 @@ do
     CONFIG.NLBurstLead = 1.4       -- seconds of beam spawning we look ahead
     CONFIG.NLBurstAlarmEnds = 10   -- this many blocked angles means Sun-Burst is starting
     CONFIG.NLBurstHold = 7         -- once it starts, commit to the run for this long
+    CONFIG.NLGoalPull = 0.3        -- score per stud away from where we want to stand
+    CONFIG.NLGoalPullMax = 8       -- ...multiplied by up to this when far out of position
 
     local function northern()
         local d = Workspace:FindFirstChild("dungeonName")
@@ -95,8 +97,12 @@ do
     -- second after it appeared. That is why the ice spikes never once showed up
     -- in the planner's list while we were being hit by them. For these, the
     -- model existing in the workspace is the whole of its lifetime.
+    -- Bob's attacks only. northernWarriorCircleStrike was in here for one build
+    -- and cost us the Champion fight: 77s and three deaths against 45s and one.
+    -- Never-expires is right for a wave the game deletes when it ends, and wrong
+    -- for a mob attack whose model is left lying in the workspace, where it
+    -- becomes a permanent no-go zone we keep walking around.
     local warnBox = {largeIceSpikes=true, mediumIceSpikes=true, smallIceSpikes=true,
-        northernWarriorCircleStrike=true,
         -- Bob's opening wave. It was in no list at all: it carries a precast and
         -- nothing else, so the tracker filed it as a warning and the collector
         -- skipped it. Caught it growing live through 22, 28, 34 and 76 studs
@@ -240,7 +246,10 @@ do
             -- wave that has not arrived.
             if info and info.Growth and info.Growth.Magnitude > 1 then
                 local ahead = info.Growth * 0.2 * 0.5
-                half = half + Vector3.new(math.max(ahead.X, 0), 0, math.max(ahead.Z, 0))
+                -- capped: a part that jitters in size for a frame must not be
+                -- able to inflate itself into a wall
+                half = half + Vector3.new(
+                    math.clamp(ahead.X, 0, 12), 0, math.clamp(ahead.Z, 0, 12))
             end
             -- Distance to the box itself, not to its centre. A 250 stud beam
             -- through the pillar has its centre 130 studs away while passing
@@ -482,6 +491,19 @@ do
                 end
             end
         end
+        -- How hard we pull towards where we are supposed to stand. A flat 0.3
+        -- per stud was drowned by the risk term: being inside one hazard box
+        -- scores 100 and up, per time sample, while a whole step's worth of
+        -- progress towards the goal is worth a handful of points. Measured
+        -- against Bob, that left us 208 studs from a boss we are meant to hold
+        -- at 40 - not as a decision, but because the goal could not be heard.
+        -- So the pull grows with how far out of position we are, and is capped
+        -- so that a lethal box still wins the argument.
+        local goalPull = CONFIG.NLGoalPull
+        if goal then
+            local away = flatten(goal - root.Position).Magnitude
+            goalPull = goalPull * math.clamp(away / 25, 1, CONFIG.NLGoalPullMax)
+        end
         local best,bestScore=nil,math.huge
         for i=0,16 do
             local angle=i*math.pi/8
@@ -497,7 +519,8 @@ do
                         score+=math.max(0,34-flatten(position-mob).Magnitude)*8
                     end
                 end
-                if goal then score+=flatten(root.Position+dir*distance-goal).Magnitude*0.3
+                if goal then
+                    score+=flatten(root.Position+dir*distance-goal).Magnitude*goalPull
                 else score-=dir:Dot(preferred)*4 end
                 if self.NLDirection then score+=(1-dir:Dot(self.NLDirection))*1.5 end
                 if score<bestScore then best,bestScore=dir,score end
@@ -522,7 +545,7 @@ do
     local newController = UIWController.new
     function UIWController.new()
         local self = newController()
-        self.Version = "45.3-bob-census"
+        self.Version = "45.4-goalpull"
         return self
     end
 end
