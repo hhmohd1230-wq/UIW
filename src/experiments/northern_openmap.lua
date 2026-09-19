@@ -121,6 +121,8 @@ do
         self.Height = nil
         self.Lowest = nil
         self.DeepRescue = nil
+        self.PitTargetY = nil
+        self.DropSince = nil
     end
     function test:RemoveWater()
         if self.WaterReady then return end
@@ -284,6 +286,14 @@ do
         -- carries the whole ring and wins, an isolated chunk is outvoted. That
         -- is the same thing the original comment was reaching for when it said
         -- the real floor is what carries the mobs.
+        -- The deliberate descent: lower the floor and let it carry us. Slow
+        -- enough that we stay standing on it the whole way rather than falling
+        -- after it, which is the difference between arriving on the landing we
+        -- chose and arriving wherever seventy-four studs of gravity puts us.
+        if self.PitDropping and self.PitTargetY then
+            self.Height = math.max(self.PitTargetY, self.Height - 55 * math.min(dt or 0.03, 0.1))
+        end
+
         if not self.PitDropping then
             local ring = {}
             if hit then ring[#ring+1] = hit.Position.Y end
@@ -302,11 +312,25 @@ do
                     self.DropSince = nil
                 elseif target < self.Height - 0.75 then
                     -- Confirm a drop before taking it, so a flickering edge
-                    -- cannot jolt us, then take all of it. Going down when the
-                    -- map goes down is the point.
-                    self.DropSince = self.DropSince or os.clock()
-                    if os.clock() - self.DropSince > 0.15 then
-                        self.Height, self.DropSince = target, nil
+                    -- cannot jolt us, then take it - but only as far as a step
+                    -- or a slope. This map is three tiers with a seventy-four
+                    -- stud sheer gap between the middle one and the pit, and
+                    -- following that automatically is how we end up at the
+                    -- bottom of the world with no way back: it is ninety studs
+                    -- up to the tier we fell from and a hundred and seventy to
+                    -- the one above it. A cliff is the pit logic's business,
+                    -- because only it knows whether we are meant to be down
+                    -- there yet and where it is safe to land.
+                    if self.Height - target > 25 then
+                        -- A cliff, not a step. Do not follow it at all, in
+                        -- chunks or otherwise; hold the floor where it is and
+                        -- let the pit logic decide.
+                        self.DropSince = nil
+                    else
+                        self.DropSince = self.DropSince or os.clock()
+                        if os.clock() - self.DropSince > 0.15 then
+                            self.Height, self.DropSince = target, nil
+                        end
                     end
                 else
                     self.Height, self.DropSince = target, nil
@@ -429,11 +453,19 @@ do
                 params.FilterDescendantsInstances = guards
                 local landing=self.PitLanding
                 if self.PitDropping then
-                    if root.Position.Y<=self.Height+7 then
+                    -- Done when the floor has finished travelling, not when we
+                    -- happen to be near it: riding it down we are always three
+                    -- studs above it, so the old test passed on the first frame.
+                    if self.Height <= (self.PitTargetY or self.Height) + 0.5 then
                         self.PitEntered=true
                         self.PitDropping=false
+                        self.PitTargetY=nil
                         c.Dodger.NLPitLandingGoal=nil
                         self.PitStatus="landed away from lower mobs"
+                    else
+                        -- keep steering over the landing while we descend
+                        c.Dodger.NLPitLandingGoal=landing
+                            and Vector3.new(landing.X,root.Position.Y,landing.Z) or nil
                     end
                     return
                 end
@@ -473,17 +505,21 @@ do
                 local away=Vector3.new(landing.X-root.Position.X,0,landing.Z-root.Position.Z)
                 self.PitStatus="moving above clear landing"
                 if away.Magnitude<6 and self:LandingClear(Vector3.new(root.Position.X,landing.Y,root.Position.Z),enemies,clearance) then
-                    if not self.PitJumpAt then
-                        self.PitJumpAt=os.clock()
-                        c.Character.Humanoid.Jump=true
-                        self.PitStatus="jumping before descent"
-                    elseif root.AssemblyLinearVelocity.Y>1 then
-                        self.Height=landing.Y-3
-                        self.PitDropping=true
-                        self.PitStatus="descending to clear landing"
-                    elseif os.clock()-self.PitJumpAt>1 then
-                        self.PitJumpAt=nil
-                    end
+                    -- Ride down, do not jump off.
+                    --
+                    -- The map has a seventy-four stud sheer gap between this
+                    -- tier and the pit floor - measured, there is no surface of
+                    -- any kind in between - so the old sequence jumped and then
+                    -- dropped the floor out from under us for the whole of it.
+                    -- A fall that long lands where it lands: not on the chosen
+                    -- spot, sometimes on the mobs we picked the spot to avoid.
+                    --
+                    -- We own the floor, so we can lower it instead and travel
+                    -- with it. It stays under us the entire way, it stays over
+                    -- the landing we chose, and it can be stopped.
+                    self.PitTargetY = landing.Y
+                    self.PitDropping = true
+                    self.PitStatus = "riding the floor down to the landing"
                 end
             end
             return
