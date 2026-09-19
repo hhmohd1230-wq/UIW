@@ -12876,7 +12876,13 @@ end
 -- fire-then-verify purchase, the same stop-on-mismatch that protects the gold.
 -- Nothing about buying is reimplemented here; only the choice of what to buy
 -- for is.
-local function focusUpgradeEntry()
+-- Deliberately hung off Controller rather than declared as a local function.
+-- This chunk sits exactly on Luau's ceiling of 200 top-level locals: adding one
+-- more here broke the whole engine with "Out of local registers when trying to
+-- allocate actionLogText: exceeded limit 200", and it broke at a line far away
+-- from the change, because the register that ran out was simply the next one
+-- asked for. A field on an existing table costs no register.
+function Controller.FocusUpgradeEntry()
     local uid = Controller.FocusUID
     if not uid then
         return nil
@@ -12935,7 +12941,7 @@ end
 
 local function buildUpgradePlan()
     if Controller.FocusUID then
-        local entries, focusError = focusUpgradeEntry()
+        local entries, focusError = Controller.FocusUpgradeEntry()
         if entries then
             return entries
         end
