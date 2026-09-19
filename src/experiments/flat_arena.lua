@@ -15,6 +15,7 @@ do
     CONFIG.FlatArenaMaxSize = 600         -- skip enormous parts (whole platforms)
     CONFIG.FlatArenaRescan = 2            -- seconds between sweeps
     CONFIG.FlatArenaBossRange = 300
+    CONFIG.FlatArenaMobRange = 130
 
     -- sharper reactions while the arena is flat
     CONFIG.FlatDodgeSolveInterval = 1 / 30
@@ -167,16 +168,26 @@ do
     end
 
     ---------------------------------------------------------------------------
+    local function inNorthernLands()
+        local value = Workspace:FindFirstChild("dungeonName")
+        return value and value.Value == "Northern Lands"
+    end
+
     local function bossNearby(controller)
         local enemy = controller.CurrentEnemy
         local root = controller.Character.Root
         if not root or not enemy or not enemy.Root or not enemy.Root.Parent then
             return false
         end
-        if not isBossEnemy(enemy) then
-            return false
+        local range = (enemy.Root.Position - root.Position).Magnitude
+        if isBossEnemy(enemy) then
+            return range <= CONFIG.FlatArenaBossRange
         end
-        return (enemy.Root.Position - root.Position).Magnitude <= CONFIG.FlatArenaBossRange
+        -- Northern Lands mobs are fought by circling them, and scenery is what
+        -- breaks a circle - you get half way round and walk into a rock. Same
+        -- client-side clearing as the boss arenas: collision off and hidden for
+        -- decoration only, never the floor, all restored afterwards.
+        return inNorthernLands() and range <= CONFIG.FlatArenaMobRange
     end
 
     local oldNew = UIWController.new

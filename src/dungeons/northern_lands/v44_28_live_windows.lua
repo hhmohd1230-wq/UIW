@@ -344,6 +344,18 @@ do
             preferred = unit(flatten(goal - root.Position))
         end
 
+        -- Mobs: walk a circle around them instead of standing and trading.
+        -- They close the distance and fire straight lines at where you are, so
+        -- a constant orbit inside our own cast range beats both behaviours at
+        -- once - their shots land behind us and they never arrive.
+        if not champion and not bob and enemy then
+            local ok, spot = pcall(self.GetMobOrbitGoal, self, enemy)
+            if ok and spot then
+                goal = spot
+                preferred = unit(flatten(goal - root.Position))
+            end
+        end
+
         -- Leading a colour orb into its crystal beats any standing position:
         -- the orb homes at walking speed, so it is never outrun, and the only
         -- way it ends is at the crystal.
