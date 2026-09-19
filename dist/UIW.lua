@@ -17980,10 +17980,23 @@ do
     end
     -- Room 2 is not the final boss room, so the generic classifier missed the
     -- Champion. This also prevented the elevated-boss line-of-sight exception.
+    --
+    -- Bob and Odin were missing from this list, and it cost us the entire
+    -- second boss fight. Measured with a cast-block probe sampling ten times a
+    -- second: against Bob, 100% of 397 samples were blocked with "closing for
+    -- close-range mob combo". The mob combo holds fire until you are inside
+    -- MobBurstRange, and the dodge planner holds Bob at 40 studs and further -
+    -- so we never closed, so we never cast, for the whole fight. Every boss in
+    -- this dungeon has to be named here or it is treated as a mob.
+    local NL_BOSSES = {
+        ["midgardian champion"] = true,
+        ["bob the frost giant"] = true,
+        ["odin"] = true,
+    }
     local boss = isBossEnemy
     isBossEnemy = function(enemy)
         if northern() and enemy and enemy.Model
-            and normalizeEnemyName(enemy.Model.Name) == "midgardian champion" then
+            and NL_BOSSES[normalizeEnemyName(enemy.Model.Name)] then
             return true
         end
         return boss(enemy)
@@ -18467,7 +18480,7 @@ do
     local newController = UIWController.new
     function UIWController.new()
         local self = newController()
-        self.Version = "45.4-goalpull"
+        self.Version = "45.5-bossnames"
         return self
     end
 end
