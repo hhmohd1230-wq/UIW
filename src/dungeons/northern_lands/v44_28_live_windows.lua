@@ -716,7 +716,13 @@ do
             -- Asking "is 62 studs of ground clear" would reject almost every
             -- direction in a room with anything in it, which would undo the
             -- long lookahead the moment it started to matter.
-            local probe=math.min(distance,CONFIG.NLProbeDistance)
+            -- Only the long-horizon bosses need this. Applying it everywhere
+            -- quietly loosened the Champion's clearance check from 36 studs to
+            -- 22, so directions that are blocked further out started passing -
+            -- and his fight went from 29s and no deaths to 57s and two. His
+            -- plan is to hold close to the pillar and turn with the gap, and
+            -- that only works if the direction really is clear the whole way.
+            local probe=wide and math.min(distance,CONFIG.NLProbeDistance) or distance
             if dir.Magnitude==0 or (self.Geometry:IsDirectionClear(dir,probe,yaw)
                 and self.Geometry:IsGroundPadded(root.Position+dir*probe,CONFIG.EdgeHardPadding)) then
                 local score=0
@@ -798,7 +804,7 @@ do
     local newController = UIWController.new
     function UIWController.new()
         local self = newController()
-        self.Version = "47.4-beamwarn"
+        self.Version = "47.5-champion"
         return self
     end
 end

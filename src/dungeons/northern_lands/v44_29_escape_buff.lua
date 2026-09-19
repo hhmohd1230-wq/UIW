@@ -9,6 +9,7 @@
 -- leaving and not.
 do
     CONFIG.NLEscapeBuff = true
+    CONFIG.NLKeepSpeed = true
     CONFIG.NLEscapeBuffInterval = 0.4     -- how often we are allowed to consider it
     CONFIG.NLSlamBuffPad = 6              -- inside circle + this, spend the buff
     CONFIG.NLRushSpeed = 22               -- studs/s that counts as a charging attack
@@ -96,6 +97,44 @@ do
         return false
     end
 
+    -- Hold the speed buff up as continuously as the game allows.
+    --
+    -- Measured: WalkSpeed sits at 24 for about 90% of the time, in a cycle of
+    -- roughly 5.5 seconds fast then 1.5 slow. Inner Rage has a 6 second cooldown
+    -- against a buff lasting about 5.5, so something near 92% is the ceiling -
+    -- 24 cannot be made permanent through the spell, and writing WalkSpeed
+    -- directly is the thing that got the account kicked. What we can do is never
+    -- leave the buff sitting ready while we are slow, which is where most of the
+    -- missing time goes.
+    function UIWController:KeepSpeedUp()
+        if not CONFIG.NLKeepSpeed or not self.AutoCombat or not inNorthernLands() then
+            return false
+        end
+        local character = self.Character
+        local humanoid = character and character.Humanoid
+        if not humanoid or not character:IsAlive() then
+            return false
+        end
+        if humanoid.WalkSpeed > CONFIG.WalkSpeed + 1 then
+            self.SpeedFast = (self.SpeedFast or 0) + 1
+            return false                       -- already fast, save the cast
+        end
+        self.SpeedSlow = (self.SpeedSlow or 0) + 1
+        local combat = self.Combat
+        if not combat or not combat:CanSendInput() or combat:IsBusyCasting() then
+            return false
+        end
+        for _, slot in ipairs({ "q", "e" }) do
+            local tool = combat:GetTool(slot)
+            if tool and combat:IsBuffTool(tool) and combat:IsReady(slot) then
+                combat:Press(slot)
+                self.SpeedRefreshes = (self.SpeedRefreshes or 0) + 1
+                return true
+            end
+        end
+        return false
+    end
+
     function UIWController:TryNorthernEscapeBuff()
         if not CONFIG.NLEscapeBuff or not self.AutoCombat or not inNorthernLands() then
             return false
@@ -177,6 +216,12 @@ do
             return
         end
         pcall(self.WatchChampionReturn, self)
-        pcall(self.TryNorthernEscapeBuff, self)
+        -- escapes first: if something is about to land on us, the buff is better
+        -- spent getting out than on topping up a timer
+        if not pcall(self.TryNorthernEscapeBuff, self) then
+            pcall(self.KeepSpeedUp, self)
+        else
+            pcall(self.KeepSpeedUp, self)
+        end
     end
 end
