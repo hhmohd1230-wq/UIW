@@ -267,21 +267,72 @@ do
             self.Height = hit and hit.Position.Y or (root.Position.Y - root.Size.Y/2 - (h and h.HipHeight or 2))
         end
 
-        -- Let the floor climb back. It is lowered on purpose for the pit and
-        -- then left there, which is what strands us on the way up afterwards.
-        -- Raising is safe in a way that lowering is not: a real floor above the
-        -- artificial one means we are about to fall through a surface the mobs
-        -- are standing on, and the only reason we can is that we switched its
-        -- collision off ourselves. Lowering stays where it belongs, under the
-        -- pit descent, so this cannot fight it - and it holds off entirely
-        -- while that descent is in progress.
-        if hit and not self.PitDropping and hit.Position.Y > self.Height + 4 then
-            self.Height = hit.Position.Y
+        -- Follow the floor, in both directions.
+        --
+        -- This was a raise-only rule for one build and that was a mistake with
+        -- an obvious failure mode: the floor ratchets up to the highest thing
+        -- we ever pass over and then stays there, so walking off a raised slab
+        -- leaves the only solid surface in the world above our heads and we
+        -- drop out from underneath it. Measured in game at exactly that: the
+        -- platform at 27.7 with the character at 21, standing under its own
+        -- floor.
+        --
+        -- The height to use is not simply whatever the ray under us hits. Ice3
+        -- meshes float over the pit, and one of those directly below us reads
+        -- as a floor at 18 while every probe ten studs out reads -61. So take
+        -- the middle of a small ring instead of the single sample: a real floor
+        -- carries the whole ring and wins, an isolated chunk is outvoted. That
+        -- is the same thing the original comment was reaching for when it said
+        -- the real floor is what carries the mobs.
+        if not self.PitDropping then
+            local ring = {}
+            if hit then ring[#ring+1] = hit.Position.Y end
+            for i = 0, 7 do
+                local a = i * math.pi / 4
+                local at = root.Position + Vector3.new(math.cos(a) * 11, 6, math.sin(a) * 11)
+                local r2 = workspace:Raycast(at, Vector3.new(0, -400, 0), self.Params)
+                if r2 then ring[#ring+1] = r2.Position.Y end
+            end
+            if #ring > 0 then
+                table.sort(ring)
+                local target = ring[math.ceil(#ring / 2)]
+                if target > self.Height then
+                    -- Rise like a lift, never like a launch.
+                    self.Height = math.min(target, self.Height + 70 * math.min(dt or 0.03, 0.1))
+                    self.DropSince = nil
+                elseif target < self.Height - 0.75 then
+                    -- Confirm a drop before taking it, so a flickering edge
+                    -- cannot jolt us, then take all of it. Going down when the
+                    -- map goes down is the point.
+                    self.DropSince = self.DropSince or os.clock()
+                    if os.clock() - self.DropSince > 0.15 then
+                        self.Height, self.DropSince = target, nil
+                    end
+                else
+                    self.Height, self.DropSince = target, nil
+                end
+                self.Lowest = math.min(self.Lowest or ring[1], ring[1])
+            end
         end
 
-        -- How deep this dungeon goes, learned rather than assumed.
-        local floorY = math.min(self.Height, hit and hit.Position.Y or self.Height)
-        self.Lowest = math.min(self.Lowest or floorY, floorY)
+        -- How deep this dungeon goes, learned rather than assumed - and it has
+        -- to be learned from further away than our own feet. While we hover
+        -- above the pit waiting for a clear landing, the floor under us reads
+        -- 17 and the pit floor is at -62, so a catch floor placed from the
+        -- first number sits forty-eight studs above the ground we are trying
+        -- to reach and blocks the descent it was meant to make survivable.
+        if os.clock() - (self.DepthAt or 0) > 0.5 then
+            self.DepthAt = os.clock()
+            for i = 0, 5 do
+                local a = i * math.pi / 3
+                for _, radius in ipairs({45, 110}) do
+                    local at = root.Position + Vector3.new(math.cos(a) * radius, 6, math.sin(a) * radius)
+                    local far = workspace:Raycast(at, Vector3.new(0, -600, 0), self.Params)
+                    if far then self.Lowest = math.min(self.Lowest or far.Position.Y, far.Position.Y) end
+                end
+            end
+        end
+        self.Lowest = math.min(self.Lowest or self.Height, self.Height)
 
         self.Platform.CFrame = CFrame.new(root.Position.X, self.Height-1, root.Position.Z)
         self.Platform.Parent = workspace
@@ -316,14 +367,20 @@ do
             end
         end
     end
-    function test:LandingClear(point, enemies)
+    -- The clearance is an argument now, not a constant. Twenty-two mobs are
+    -- alive in that pit and they do not politely leave a forty-eight stud hole
+    -- anywhere, so a fixed requirement means no landing is ever found and we
+    -- hover above the fight for as long as it lasts. Landing near a mob is a
+    -- fight; never landing is not.
+    function test:LandingClear(point, enemies, clearance)
+        clearance = clearance or 48
         for _, e in ipairs(enemies) do
             if e.Room==6 and e.Root and e.Root.Parent then
                 local v=e.Root.AssemblyLinearVelocity
                 if v.Magnitude>30 then v=v.Unit*30 end
                 for _,dt in ipairs({0,1.2}) do
                     local delta=e.Root.Position+v*dt-point
-                    if Vector3.new(delta.X,0,delta.Z).Magnitude<48 then return false end
+                    if Vector3.new(delta.X,0,delta.Z).Magnitude<clearance then return false end
                 end
             end
         end
@@ -354,8 +411,15 @@ do
             if e.Room >= 7 and e.Root.Position.Y > root.Position.Y+22 then nextGroup = e end
         end
         if lower and not bobAlive then
+            if not self.PitSeen then self.PitWaitingSince = os.clock() end
             self.PitSeen = true
             self.PitClearAt = nil
+            -- Give up ground on the clearance the longer we stand up here doing
+            -- nothing: forty-eight studs to start with, then down to twenty
+            -- over half a minute. Hovering costs the whole fight; landing close
+            -- to a spearman costs one exchange.
+            local waited = os.clock() - (self.PitWaitingSince or os.clock())
+            local clearance = math.max(20, 48 - waited)
             local offset = Vector3.new(lower.Root.Position.X-root.Position.X,0,lower.Root.Position.Z-root.Position.Z)
             if offset.Magnitude < 200 and not self.PitEntered then
                 local guards = {}
@@ -373,7 +437,7 @@ do
                     end
                     return
                 end
-                if landing and not self:LandingClear(landing,enemies) then landing=nil self.PitJumpAt=nil end
+                if landing and not self:LandingClear(landing,enemies,clearance) then landing=nil self.PitJumpAt=nil end
                 if not landing then
                     self.PitLanding=nil
                     if os.clock()-(self.PitSearchAt or 0)<0.5 then
@@ -392,7 +456,7 @@ do
                                 local travel=Vector3.new(candidate.X-root.Position.X,0,candidate.Z-root.Position.Z)
                                 if not workspace:Raycast(root.Position,travel,params)
                                     and not workspace:Raycast(root.Position+Vector3.new(0,candidate.Y-root.Position.Y,0),travel,params)
-                                    and self:LandingClear(candidate,enemies) then
+                                    and self:LandingClear(candidate,enemies,clearance) then
                                     if travel.Magnitude<bestScore then landing=candidate bestScore=travel.Magnitude end
                                 end
                             end
@@ -402,13 +466,13 @@ do
                 end
                 if not landing then
                     c.Dodger.NLPitLandingGoal=nil
-                    self.PitStatus="waiting for clear landing"
+                    self.PitStatus=string.format("waiting for a landing with %.0f studs clear", clearance)
                     return
                 end
                 c.Dodger.NLPitLandingGoal=Vector3.new(landing.X,root.Position.Y,landing.Z)
                 local away=Vector3.new(landing.X-root.Position.X,0,landing.Z-root.Position.Z)
                 self.PitStatus="moving above clear landing"
-                if away.Magnitude<6 and self:LandingClear(Vector3.new(root.Position.X,landing.Y,root.Position.Z),enemies) then
+                if away.Magnitude<6 and self:LandingClear(Vector3.new(root.Position.X,landing.Y,root.Position.Z),enemies,clearance) then
                     if not self.PitJumpAt then
                         self.PitJumpAt=os.clock()
                         c.Character.Humanoid.Jump=true
