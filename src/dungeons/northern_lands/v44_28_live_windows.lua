@@ -940,6 +940,14 @@ do
         -- attacks are arena-scale and ours is 88 studs, which is the tension
         -- that needs an explicit answer.
         local rangePull = CONFIG.NLRangePull
+        if not (wide or champion) then
+            -- Same family of bug as the descent flag that stayed on: a mode
+            -- left set after the thing it described is gone. Harmless here so
+            -- far, but it reads as "evade" on the diagnostics long after the
+            -- boss is dead, and a stale state that looks live is how the last
+            -- three of these started.
+            self.NLBossMode = nil
+        end
         if wide or champion then
             -- standing was computed above: the summed risk of not moving.
             local pressed = standing >= CONFIG.NLDangerRisk
