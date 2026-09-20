@@ -568,7 +568,21 @@ do
     -- touched anything? Fire the column back up through the parts we changed.
     -- If the original map would have stopped us, this is not the way down.
     function test:DropPathReal(point, fromY)
-        if not self.OriginalParams or (self.OriginalStamp or 0) ~= self.Count then
+        -- Rebuilt on a timer, not on the part count.
+        --
+        -- The count changes whenever the map gains a part, which during a
+        -- descent is constantly - mobs spawning below, effects appearing. Each
+        -- change threw this away and rebuilt an eight-hundred element filter
+        -- list, and the landing search calls this up to forty-eight times a
+        -- pass, twice a second. That is forty thousand table inserts a second
+        -- at precisely the moment we are trying to drop, which is the lag on
+        -- the way down.
+        --
+        -- Two seconds of staleness costs nothing here: the question it answers
+        -- is whether the untouched map had a hole in this spot, and the map's
+        -- scenery does not move.
+        local stale = os.clock() - (self.OriginalAt or 0) > 2
+        if not self.OriginalParams or stale then
             local changed = {}
             for p in pairs(self.Changed) do
                 if p.Parent and self.Supports[p] ~= true then changed[#changed+1] = p end
@@ -577,7 +591,7 @@ do
             params.FilterType = Enum.RaycastFilterType.Include
             params.FilterDescendantsInstances = changed
             params.RespectCanCollide = false
-            self.OriginalParams, self.OriginalStamp = params, self.Count
+            self.OriginalParams, self.OriginalAt = params, os.clock()
         end
         local rise = (fromY or 0) - point.Y
         if rise <= 4 then return true end
