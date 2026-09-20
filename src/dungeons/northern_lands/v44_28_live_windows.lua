@@ -136,7 +136,23 @@ do
     -- evading before the square is fatal rather than once it is.
     CONFIG.NLDangerRisk = 45
     CONFIG.NLEvadeGoalScale = 0.15   -- evading: almost nothing pulls us back in
-    CONFIG.NLAttackRangeScale = 3    -- attacking: get inside 88 and stay there
+    -- Raised 3 -> 8 as a single-variable experiment, with a prediction.
+    --
+    -- Bob's average distance across 116 logged fights and five builds: 134,
+    -- 133, 130, 144, 140. It has not moved, against a reach of 88, while the
+    -- Champion sits at 64-81 on the same settings and kills three times faster.
+    -- The attack/evade split was supposed to fix this and did not.
+    --
+    -- We DO walk at him - measured, toward him in half of all frames, and the
+    -- direction straight at him is clear 97% of the time. So this is not a
+    -- blocked path, it is an equilibrium: the range term pulls in, his arena's
+    -- forty-odd beams push out, and the balance point is 130.
+    --
+    -- PREDICTION: if that balance is the whole story, raising this moves the
+    -- balance point down toward 88. If distance still does not move, the cause
+    -- is not the weighting and I stop turning this dial - the next step would
+    -- be logging the actual score breakdown per direction, not another guess.
+    CONFIG.NLAttackRangeScale = 8    -- attacking: get inside 88 and stay there
     CONFIG.NLGapClearance = 9      -- beam half width plus a body
     CONFIG.NLMinRadius = 28        -- closest we stand to the pillar
     CONFIG.NLMaxRadius = 135       -- and the furthest, for Sun-Burst
@@ -1260,7 +1276,7 @@ do
     local newController = UIWController.new
     function UIWController.new()
         local self = newController()
-        self.Version = "50.3-orb"
+        self.Version = "50.4-closein"
         return self
     end
 end
