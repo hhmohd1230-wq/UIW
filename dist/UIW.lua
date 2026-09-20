@@ -28772,6 +28772,17 @@ do
     -- past ninety degrees from the crystals is refused outright rather than
     -- merely discouraged.
     CONFIG.NLBobBehindCos = 0.0
+    -- Where we stand relative to Bob when fighting from the totems: just
+    -- inside the 88 stud reach, so a step backward does not drop us out of it.
+    CONFIG.NLBobStandRange = 80
+    -- Standing on the anchor is still standing. The totems are the safe line,
+    -- not a safe spot, so we walk it: in toward him to hit, back out toward the
+    -- pillars, and round again. The whole swing stays inside the 88 stud reach
+    -- so the damage never stops for the sake of the movement, and it never
+    -- takes us further out than the pillars themselves.
+    CONFIG.NLBobPulseDepth = 24      -- studs travelled in and back out
+    CONFIG.NLBobPulsePeriod = 3.0    -- seconds for one full in-and-out
+    CONFIG.NLBobPulseFloor = 40      -- never closer than this to him
     -- Corner avoidance for mob fights. Checked for this many of the best
     -- candidates only; eight probes each, this far out, and each blocked
     -- direction costs this much.
@@ -29491,62 +29502,62 @@ do
         -- both where the damage happens and where the wave is easiest to step
         -- around.
         if bob and enemy.Root and enemy.Root.Parent then
-            local offset = flatten(root.Position - enemy.Root.Position)
-            local out = offset.Magnitude > 1 and offset.Unit or Vector3.new(1, 0, 0)
-
-            -- Stay on the crystal side of him.
+            -- Fight him from the totems.
             --
-            -- His colour orbs spawn at him and home on us, and the only thing
-            -- that ends one is the crystal of its colour. So where we stand
-            -- decides whether the orb's path crosses a crystal on its way or
-            -- crosses open floor: drift round behind him and there is nothing
-            -- between us and it, the errand has to walk the orb the entire
-            -- length of the arena, and it catches us first.
+            -- Measured in his arena: the three crystals sit at (-144,268),
+            -- (-159,335) and (-105,377), a centroid of (-136,327), and Bob
+            -- stands 96 studs from it. Our shuriken reaches 88. So the pillars
+            -- are almost exactly at fighting range already - which is why that
+            -- is the safe place to stand rather than a compromise.
             --
-            -- The side we are on was never chosen before - we simply held
-            -- whatever bearing we happened to arrive on. Now the standing
-            -- bearing leans toward the crystals, hard enough to matter and
-            -- softly enough that the dodge still owns the moment.
-            local crystalDir
+            -- Everything we want is true there at once. It is inside our reach
+            -- so we can damage him. It is the crystal side by construction, so
+            -- an orb aimed at us crosses a pillar on the way instead of the
+            -- whole arena. The pillars themselves are solid, so a beam has
+            -- something to break on. And it is a fixed place rather than a
+            -- bearing that drifts, so the dodge becomes forward and back along
+            -- one line instead of a slow wander round him.
+            --
+            -- This replaces the lean-toward-the-crystals and never-go-behind
+            -- rules that came before it. Both were approximations of standing
+            -- here; an anchor makes them unnecessary rather than merely
+            -- satisfied.
+            local anchor
             local crystals = Workspace:FindFirstChild("secondBossCrystals")
             if crystals then
                 local sum, n = Vector3.zero, 0
                 for _, child in ipairs(crystals:GetDescendants()) do
                     if child:IsA("BasePart") then sum, n = sum + child.Position, n + 1 end
                 end
-                if n > 0 then
-                    local toward = flatten(sum / n - enemy.Root.Position)
-                    if toward.Magnitude > 1 then
-                        crystalDir = toward.Unit
-                        out = unit(out + crystalDir * CONFIG.NLBobCrystalSide)
-                        if out.Magnitude < 0.1 then out = crystalDir end
-                    end
-                end
+                if n > 0 then anchor = sum / n end
             end
 
-            -- ...and never round the back of him.
-            --
-            -- Leaning toward the crystals was not enough: a lean still allows
-            -- the far side, and there is no reason to ever be there. An orb
-            -- spawned while we are behind him has the whole arena to cross
-            -- before it meets a crystal, so it meets us instead. Behind Bob is
-            -- not a worse position, it is a losing one, so it stops being a
-            -- position we can hold at all.
-            if crystalDir then
-                local side = out:Dot(crystalDir)
-                if side < CONFIG.NLBobBehindCos then
-                    -- push the bearing back round to the nearest edge of the
-                    -- allowed arc rather than snapping to the crystals, so we
-                    -- do not sprint across his face to get there
-                    local across = Vector3.new(-crystalDir.Z, 0, crystalDir.X)
-                    if out:Dot(across) < 0 then across = -across end
-                    out = unit(crystalDir * CONFIG.NLBobBehindCos
-                        + across * math.sqrt(math.max(0, 1 - CONFIG.NLBobBehindCos^2)))
-                    self.NLBobPushedRound = (self.NLBobPushedRound or 0) + 1
+            local stand
+            if anchor then
+                local toBoss = flatten(enemy.Root.Position - Vector3.new(anchor.X, enemy.Root.Position.Y, anchor.Z))
+                local gap = toBoss.Magnitude
+                if gap > 1 then
+                    -- The line from the totems to Bob is the one we walk. The
+                    -- far end of it is whichever is nearer: the pillars
+                    -- themselves, or the edge of our reach.
+                    local far = math.min(gap, CONFIG.NLBobStandRange)
+                    -- Phase runs 0 -> 1 -> 0 over one period, so the near end
+                    -- is approached and left again smoothly rather than
+                    -- snapping, which would read as a stutter to the mover.
+                    local phase = (1 - math.cos((now / CONFIG.NLBobPulsePeriod) * math.pi * 2)) * 0.5
+                    local want = math.max(CONFIG.NLBobPulseFloor, far - phase * CONFIG.NLBobPulseDepth)
+                    stand = enemy.Root.Position - toBoss.Unit * want
+                    self.NLBobPulse = want
+                else
+                    stand = Vector3.new(anchor.X, enemy.Root.Position.Y, anchor.Z)
                 end
+                self.NLBobAnchored = (self.NLBobAnchored or 0) + 1
+            else
+                -- no crystals in the world: fall back to the old bearing
+                local offset = flatten(root.Position - enemy.Root.Position)
+                local out = offset.Magnitude > 1 and offset.Unit or Vector3.new(1, 0, 0)
+                stand = enemy.Root.Position + out * CONFIG.NLBobRadius
             end
-
-            local stand = enemy.Root.Position + out * CONFIG.NLBobRadius
             -- One job at a time. Trying to hold position on Bob while a colour
             -- orb homes on us is two errands pulling in different directions,
             -- and the orb always wins the argument by touching us. So while one
@@ -30036,7 +30047,7 @@ do
     local newController = UIWController.new
     function UIWController.new()
         local self = newController()
-        self.Version = "50.8-closer"
+        self.Version = "51.0-bobpulse"
         return self
     end
 end
