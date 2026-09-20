@@ -28731,7 +28731,15 @@ do
         -- 14 of 34 hits, and the cause of five separate deaths. A mob attack,
         -- not a boss one, which is why it went unnoticed while we studied
         -- bosses. Three hits of ~33% kill.
-        northernMageShot = 3,
+        -- Raised from 3. Measured in the lower room, six bars crossed us in
+        -- seven tenths of a second - 32, 31, 29, 30, 29, 29 percent - which is
+        -- death twice over from one wave. A 3 put this level with a moving beam
+        -- while it was killing us faster than anything Bob has. The recorded
+        -- distances run 22, 22, 21, 17, 17, 14 studs and that is the bar
+        -- carrying on past us between the server applying the damage and our
+        -- sampling it, not a hitbox we have mismeasured: the wave moves, so by
+        -- the time we see it, it has left.
+        northernMageShot = 5,
         secondBossSpreadBeam = 6,     -- also measured as a one-shot: 100%
         secondBossMovingBeam = 3,
         firstBossJumpSlam = 4,
@@ -28835,8 +28843,12 @@ do
     --    position that ends up within this range of a bar is priced by how
     --    close it is, so stepping the seventeen studs fully out beats standing
     --    in the slot - and if we truly are boxed in, the slot is still there.
-    CONFIG.NLMageClearOut = 22            -- studs of daylight we want from a bar
-    CONFIG.NLMageClearCost = 3.5          -- per stud short of that
+    -- 22 was not enough daylight and the measurement says so plainly: we were
+    -- struck at 22 studs and then at 21, 17, 17 and 14 as the rest of the row
+    -- came through. A bar is 35 wide with 13 between them, so clearing one bar
+    -- by twenty studs still leaves us in the path of the next. Clear the row.
+    CONFIG.NLMageClearOut = 34            -- studs of daylight we want from a bar
+    CONFIG.NLMageClearCost = 7            -- per stud short of that
     -- Bob's wave, measured: ten discs, diameters 22 up to 76 in steps of 6, at
     -- 0, 22, 44 ... 198 studs from him, spawned in sequence about every third of
     -- a second and marching outward along one bearing. It is not a ring around
@@ -29608,7 +29620,7 @@ do
     local newController = UIWController.new
     function UIWController.new()
         local self = newController()
-        self.Version = "48.2-strategy"
+        self.Version = "48.3-mage"
         return self
     end
 end
