@@ -31084,6 +31084,10 @@ do
                 p.LocalTransparencyModifier = saved.LocalAlpha or 0
             end
         end
+        for part, was in pairs(self.BarrierWas or {}) do
+            if part.Parent then part.CanCollide = was end
+        end
+        self.BarrierWas = nil
         self.Changed = {}
         self.Supports = {}
         self.Count = 0
@@ -31262,8 +31266,54 @@ do
         self.Params.FilterDescendantsInstances = refs
         self.Params.RespectCanCollide = false
         self.Params.IgnoreWater = true
+        -- EXPERIMENT: dodge through the closed gates instead of around them.
+        --
+        -- A closed barrier is a wall across the room we are fighting in, and it
+        -- takes a whole arc of dodge directions off the table at exactly the
+        -- moment we are pinned against it. Switching its collision off gives
+        -- that space back.
+        --
+        -- Set CONFIG.NLBarrierDodge = false to put the gates and their guards
+        -- straight back.
+        --
+        -- WHAT I EXPECT TO GO WRONG, written down before testing so it is not
+        -- explained away afterwards: the barrier is solid on the SERVER. We can
+        -- only turn it off here. That is the same disagreement that produced
+        -- the floating bug this morning - our client says there is no floor,
+        -- the server says there is, and the character hangs between the two
+        -- answers going nowhere. A gate is a bigger, flatter version of that,
+        -- and stepping through one may end with the server putting us back or
+        -- with us wedged inside it.
+        --
+        -- The guards below exist precisely to stop us crossing early, so this
+        -- also removes the thing that keeps a room's fight in its own room. If
+        -- progression stalls - mobs left behind, a room that never completes -
+        -- this is the first suspect, not the tenth.
+        if CONFIG.NLBarrierDodge == nil then CONFIG.NLBarrierDodge = true end
+
         local rooms = workspace:FindFirstChild("dungeon")
-        if rooms then
+        if rooms and CONFIG.NLBarrierDodge then
+            for _, p in ipairs(rooms:QueryDescendants("BasePart")) do
+                if p.Name:lower() == "physicalbarrier" then
+                    if not self.BarrierWas then self.BarrierWas = {} end
+                    if self.BarrierWas[p] == nil then self.BarrierWas[p] = p.CanCollide end
+                    p.CanCollide = false
+                    self.BarriersOpened = (self.BarriersOpened or 0) + 1
+                end
+            end
+            -- and take down any guard we already built for them
+            for part, guard in pairs(self.Guards) do
+                guard:Destroy()
+                self.Guards[part] = nil
+            end
+        end
+
+        if rooms and not CONFIG.NLBarrierDodge then
+            -- restore anything the experiment switched off
+            for part, was in pairs(self.BarrierWas or {}) do
+                if part.Parent then part.CanCollide = was end
+            end
+            self.BarrierWas = nil
             for _, p in ipairs(rooms:QueryDescendants("BasePart")) do
                 if p.Name:lower() == "physicalbarrier" and p.CanCollide and not self.Guards[p] then
                     local guard = Instance.new("Part")
