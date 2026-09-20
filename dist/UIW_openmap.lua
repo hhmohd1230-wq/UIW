@@ -31342,7 +31342,38 @@ do
             if e.Room == 6 and e.Root.Position.Y < 0 then lower = e end
             if e.Room >= 7 and e.Root.Position.Y > root.Position.Y+22 then nextGroup = e end
         end
-        if not lower or bobAlive then self.PitAbove = false end
+        -- Whatever else is true, a descent that is not happening is not in
+        -- progress.
+        --
+        -- PitDropping suspends the edge guard for EVERY mover in the script,
+        -- and it was only ever cleared inside the branch below that needs a
+        -- live room 6 mob to run. So the moment the last one died - or they
+        -- despawned, or Bob came back into the reckoning - the flag stuck on,
+        -- and from then until the end of the run nothing in the script would
+        -- refuse to walk off a ledge. That is the "stuck and buggy after
+        -- dropping down": not the drop, the state we are left in afterwards.
+        if not lower or bobAlive then
+            self.PitAbove = false
+            if self.PitDropping then
+                self.PitDropping = false
+                self.PitLanding = nil
+                self.PitStatus = "descent ended: nothing left down there"
+            end
+        end
+        -- And a hard limit regardless. The fall is seventy-four studs, call it
+        -- three seconds; anything still claiming to be mid-descent after ten is
+        -- a stuck flag, not a fall, and it is holding the edge guard open.
+        if self.PitDropping then
+            self.PitDropSince = self.PitDropSince or os.clock()
+            if os.clock() - self.PitDropSince > 10 then
+                self.PitDropping = false
+                self.PitLanding = nil
+                self.PitDropSince = nil
+                self.PitStatus = "descent timed out; edge guard back on"
+            end
+        else
+            self.PitDropSince = nil
+        end
         if lower and not bobAlive then
             if not self.PitSeen then self.PitWaitingSince = os.clock() end
             self.PitSeen = true
