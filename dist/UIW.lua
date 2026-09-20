@@ -28768,6 +28768,10 @@ do
     -- their shots landing where we just were. A flat cost means holding still
     -- has to be clearly better than moving, not merely equal.
     CONFIG.NLStandStillCost = 45
+    -- The same idea for bosses, where it had no cost at all until now. Measured
+    -- against Bob on Nightmare: 20% of the fight held still, while the two
+    -- attacks that decide it do more than our whole health bar in one touch.
+    CONFIG.NLBossStandStillCost = 60
     -- Mage waves: leave the lane, do not live in it. Standing in the six stud
     -- gap between two bars does work - it is the neat answer, and it is also a
     -- stationary answer that stops the circle and depends on us holding a gap
@@ -29515,9 +29519,22 @@ do
                     score+=math.max(0,after-castRange)*CONFIG.NLRangePull
                 end
                 if self.NLDirection then score+=(1-dir:Dot(self.NLDirection))*1.5 end
-                if mobFight and dir.Magnitude == 0 then
-                    score += CONFIG.NLStrategyExperiment
-                        and CONFIG.NLStandStillCostExp or CONFIG.NLStandStillCost
+                if dir.Magnitude == 0 then
+                    if mobFight then
+                        score += CONFIG.NLStrategyExperiment
+                            and CONFIG.NLStandStillCostExp or CONFIG.NLStandStillCost
+                    else
+                        -- Standing still was FREE at a boss. Only mob fights
+                        -- were ever charged for it, and measured against Bob on
+                        -- Nightmare we hold still for 20% of the fight - with
+                        -- his wave at 119% and his beam at 113%, every one of
+                        -- those frames is a coin flip we do not need to take.
+                        -- Lower than the mob figure on purpose: boss dodging is
+                        -- a precise business and there are real moments when
+                        -- the square you are on is the right one. This only has
+                        -- to beat a tie.
+                        score += CONFIG.NLBossStandStillCost
+                    end
                 end
                 if waveDir and waveNear <= CONFIG.NLWaveLaneRange and dir.Magnitude > 0 then
                     score += math.abs(dir:Dot(waveDir)) * CONFIG.NLWaveLaneCost
@@ -29573,7 +29590,9 @@ do
         -- those. Sideways first, because a way round is what we want, not a way
         -- through: the two directions across our facing are tried before the
         -- ones ahead and behind.
-        if mobFight and (not best or best.Magnitude == 0) then
+        -- Boxed in at a boss is rarer - 4 frames in 147 against Bob - but the
+        -- consequence is worse, so the same sidestep applies.
+        if (not best or best.Magnitude == 0) then
             local shortest, shortestScore = nil, math.huge
             local facing = Vector3.new(math.cos(yaw), 0, math.sin(yaw))
             for i = 0, 15 do
@@ -29641,7 +29660,7 @@ do
     local newController = UIWController.new
     function UIWController.new()
         local self = newController()
-        self.Version = "49.1-nightmare"
+        self.Version = "49.2-bossmove"
         return self
     end
 end
