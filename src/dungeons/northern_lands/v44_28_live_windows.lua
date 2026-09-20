@@ -1328,6 +1328,21 @@ do
             if shortest then best, bestScore = shortest, shortestScore end
         end
 
+        -- Nothing scored: walk at the goal anyway rather than hand back.
+        --
+        -- Handing back to the base solver here reads as caution and behaves as
+        -- paralysis. Measured at the end of a Bob fight: wedged inside the west
+        -- wall, every compass direction blocked at distance zero, so the
+        -- shortlist came back empty, this line fired, the base solver had no
+        -- route either, and the character stood in the wall until the player
+        -- rejoined the game. The scorer having no opinion is not a reason to
+        -- stop moving - it is exactly the moment movement matters most, because
+        -- the only states where every direction looks bad are the ones we need
+        -- to leave. So we take the direction we already wanted.
+        if not best and preferred and preferred.Magnitude > 0.05 then
+            best = preferred
+            self.NLNoCandidate = (self.NLNoCandidate or 0) + 1
+        end
         if not best then self.NLDirection=nil return solve(self,routeDirection,enemy,yaw) end
         self.NLAt,self.NLDirection=now,best
         self.NLEmergency,self.NLDodging=standing>=100,best.Magnitude>0.05
@@ -1399,7 +1414,7 @@ do
     local newController = UIWController.new
     function UIWController.new()
         local self = newController()
-        self.Version = "51.0-bobpulse"
+        self.Version = "51.1-unwedge"
         return self
     end
 end

@@ -276,8 +276,29 @@ do
                     -- The file already said this and then did the opposite: the
                     -- real floor is what carries the mobs and it is what should
                     -- carry us. Its slopes and steps are the arena, not clutter.
-                    p.CanCollide = self.Supports[p] == true
-                    p.CanQuery = self.Supports[p] == true
+                    -- Walls stay solid unless we are actually dropping.
+                    --
+                    -- This line used to switch collision off on EVERY anchored
+                    -- map part that is not a floor, which is every wall in the
+                    -- dungeon. Measured, standing still, at the end of a Bob
+                    -- fight: character at (-242, 21, 366), all sixteen compass
+                    -- rays blocked at distance ZERO by Meshes/JTNWarrior_Cube.133,
+                    -- the floor ray blocked at zero as well. We were inside the
+                    -- west wall. The client had let us walk into it; the server,
+                    -- which never agreed the wall was passable, held us there.
+                    -- The dodge solver then found no direction it liked, handed
+                    -- back to the base solver, and the base solver stood still -
+                    -- so the run sat wedged in a wall until the player rejoined.
+                    --
+                    -- The map only needs to open for the seconds we spend
+                    -- getting down the cliff, which is what PitDropping marks.
+                    -- The rest of the time the arena should be the arena: the
+                    -- walls that stop us are the same walls that stop the mobs,
+                    -- and a wall we can see through but not walk through costs
+                    -- us nothing.
+                    local keep = self.Supports[p] == true or not self.PitDropping
+                    p.CanCollide = keep and self.Changed[p].Collide or false
+                    p.CanQuery = keep and self.Changed[p].Query or false
                     p.Transparency = 1
                     p.LocalTransparencyModifier = 1
                     self.Count += 1
@@ -571,7 +592,13 @@ do
         -- again three studs lower than the map.
         for p, saved in pairs(self.Changed) do
             if p.Parent then
-                p.CanCollide = self.Supports[p] == true
+                -- Same rule as the sweep: solid unless we are dropping. This
+                -- loop runs every frame and used to force the sweep's answer
+                -- back to "nothing but floors is solid", so it has to agree
+                -- with it or the walls come down again a frame later.
+                local keep = self.Supports[p] == true or not self.PitDropping
+                p.CanCollide = keep and saved.Collide or false
+                p.CanQuery = keep and saved.Query or false
                 p.Transparency = 1
                 p.LocalTransparencyModifier = 1
             end
