@@ -29574,6 +29574,44 @@ do
                 if score<bestScore then best,bestScore=dir,score end
             end
         end
+
+        -- Boxed in is not a reason to stand there.
+        --
+        -- Measured over a mob fight: eight per cent of frames under three studs
+        -- a second, and two per cent with all sixteen directions failing the
+        -- clearance gate at once. In those frames standing was not chosen over
+        -- moving, it was the only thing left on the list - so the 140 we charge
+        -- for holding still never got compared against anything, and we planted
+        -- ourselves in the middle of a pack that was closing in.
+        --
+        -- When a pack surrounds us every direction has a body in it, which is
+        -- exactly when moving matters most. So ask again with a step short
+        -- enough to be a sidestep rather than a charge, and take the best of
+        -- those. Sideways first, because a way round is what we want, not a way
+        -- through: the two directions across our facing are tried before the
+        -- ones ahead and behind.
+        if mobFight and (not best or best.Magnitude == 0) then
+            local shortest, shortestScore = nil, math.huge
+            local facing = Vector3.new(math.cos(yaw), 0, math.sin(yaw))
+            for i = 0, 15 do
+                local angle = i * math.pi / 8
+                local dir = Vector3.new(math.cos(angle), 0, math.sin(angle))
+                if self.Geometry:IsDirectionClear(dir, 6, yaw) then
+                    local position = root.Position + dir * 6
+                    -- Sideways beats forwards and backwards, then the ordinary
+                    -- risk of the square decides between the two sides.
+                    local sideways = 1 - math.abs(dir:Dot(facing))
+                    local score = risk(list, position, 0.25) - sideways * 40
+                    for _, mob in ipairs(melee) do
+                        score += math.max(0, CONFIG.NLMeleeKeepOut - flatten(position-mob).Magnitude)
+                            * CONFIG.NLMeleeWeight
+                    end
+                    if score < shortestScore then shortest, shortestScore = dir, score end
+                end
+            end
+            if shortest then best, bestScore = shortest, shortestScore end
+        end
+
         if not best then self.NLDirection=nil return solve(self,routeDirection,enemy,yaw) end
         self.NLAt,self.NLDirection=now,best
         self.NLEmergency,self.NLDodging=standing>=100,best.Magnitude>0.05
@@ -29620,7 +29658,7 @@ do
     local newController = UIWController.new
     function UIWController.new()
         local self = newController()
-        self.Version = "48.3-mage"
+        self.Version = "48.4-nostop"
         return self
     end
 end
