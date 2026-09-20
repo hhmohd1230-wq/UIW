@@ -52,5 +52,6 @@ src/dungeons/northern_lands/v44_29_escape_buff.lua
 src/dungeons/northern_lands/v44_30_color_orbs.lua
 src/dungeons/northern_lands/v46_04_reach_high_mobs.lua
 src/patches/v46_06_cast_when_ready.lua
+src/patches/v49_05_cast_guard_and_escape.lua
 src/99_start.lua
 src/99_telemetry.lua
