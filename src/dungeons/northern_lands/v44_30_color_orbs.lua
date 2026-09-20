@@ -39,30 +39,16 @@ do
     -- the arena - by then the errand is a panic, not a plan.
     CONFIG.NLOrbAct = 120            -- only start the errand inside this
     CONFIG.NLOrbHold = 1.5           -- seconds a spotted orb keeps the errand alive
-    -- How far past the crystal we stand. This was 9, and 9 was too close: the
-    -- orb can arrive at an angle and clip us instead of the crystal.
-    --
-    -- CORRECTION, and an honest one. The number below was raised to 46, and the
-    -- two blast settings after it were invented outright, on the strength of a
-    -- measurement that turned out to be an artefact. The claim was that the orb
-    -- detonates as a 120 stud genericNeonBall and that this had become the
-    -- biggest source of damage in the fight. It had not. genericNeonBall is
-    -- decoration - the game's client scripts clone it, fade it out over 0.45s
-    -- and bin it, and our OWN abilities spawn one on our own character, which
-    -- is why it was always sitting at distance 0 and collecting the blame for
-    -- every hit from every real attack. There is no 120 stud blast.
-    --
-    -- The rest of the reasoning still stands on its own: the orb homes on US,
-    -- so wherever we stand it flies towards us, and if the crystal is on that
-    -- line it dies on the crystal on the way. Standing further back keeps the
-    -- crystal between us and it for longer. So the values are left alone for
-    -- now rather than guessed at twice - but they are UNVALIDATED, and the
-    -- errand telemetry (OrbErrands / OrbBlastRuns / OrbWhy, now printed on
-    -- every fight line) is there to settle them with real numbers.
-    CONFIG.NLOrbStandOff = 46
-    CONFIG.NLOrbDone = 18            -- orb this close to its crystal: job done
-    CONFIG.NLOrbBlastRadius = 66
-    CONFIG.NLOrbBlastHold = 1.6      -- seconds we keep clearing away from it
+    -- How far behind the crystal we stand. 46 came from the same phantom blast
+    -- as the escape below it: with nothing to be thrown clear of, the only job
+    -- this number has is making sure the orb meets the crystal before it meets
+    -- us. Close enough to be behind the pillar, far enough that an orb arriving
+    -- at an angle still clips the pillar and not us.
+    CONFIG.NLOrbStandOff = 16
+    CONFIG.NLOrbDone = 18            -- orb this close to its crystal: it is done
+    -- Keep holding the spot for a moment after it lands, so we do not turn back
+    -- toward Bob while the last of it is still in the air.
+    CONFIG.NLOrbSettle = 0.6
 
     local function inNorthernLands()
         local value = Workspace:FindFirstChild("dungeonName")
@@ -192,20 +178,26 @@ do
         local goal = crystal + beyond * CONFIG.NLOrbStandOff
         goal = Vector3.new(goal.X, root.Position.Y, goal.Z)
 
+        -- Deleted: the blast escape.
+        --
+        -- When the orb got close to its crystal we used to sprint sixty-six
+        -- studs away from it, because the orb was believed to detonate as a 120
+        -- stud genericNeonBall. It does not. genericNeonBall is decoration -
+        -- the game's own client scripts clone it, fade it out over 0.45s and
+        -- bin it, and our OWN abilities spawn one on our character, which is
+        -- why it sat at distance 0 in the logs and collected the blame for
+        -- every real hit. There is no blast to escape.
+        --
+        -- So the orb ends the way it was always meant to: we stand behind its
+        -- crystal and wait for it to arrive. Running at the last moment was
+        -- costing us the seconds either side of it for nothing, and sometimes
+        -- pulled the orb off the crystal it was about to hit.
         if flatten(orb.Part.Position - crystal).Magnitude <= CONFIG.NLOrbDone then
-            -- About to detonate. Do not merely stop leading it - get clear, in a
-            -- straight line away from where the blast is going to be.
-            local away = flatten(root.Position - crystal)
-            local out = away.Magnitude > 1 and away.Unit or Vector3.new(1, 0, 0)
-            local flee = crystal + out * CONFIG.NLOrbBlastRadius
-            solver.NLOrbGoal = Vector3.new(flee.X, root.Position.Y, flee.Z)
-            solver.NLOrbUntil = now + CONFIG.NLOrbBlastHold
-            self.OrbBlastRuns = (self.OrbBlastRuns or 0) + 1
-            return
+            self.OrbWaits = (self.OrbWaits or 0) + 1
         end
 
         solver.NLOrbGoal = goal
-        solver.NLOrbUntil = now + CONFIG.NLOrbHold
+        solver.NLOrbUntil = now + CONFIG.NLOrbHold + CONFIG.NLOrbSettle
         solver.NLOrbColour = orb.Colour
         self.OrbErrands = (self.OrbErrands or 0) + 1
     end
