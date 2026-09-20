@@ -30809,9 +30809,41 @@ do
         return wet ~= nil and wet.Position.Y > point.Y + 3
     end
 
-    function test:LandingClear(point, enemies, clearance)
+    -- Drop through the opening the map actually has, not through a hole we
+    -- made ourselves.
+    --
+    -- We switch collision off on hundreds of scenery parts, and every one of
+    -- them is a floor we could now fall through that a player could not. A
+    -- landing reachable only because we deleted something in the way is not a
+    -- route down, it is a clipping bug with extra steps, and it puts us inside
+    -- geometry at the bottom.
+    --
+    -- So the test is simply: would this fall have been possible before we
+    -- touched anything? Fire the column back up through the parts we changed.
+    -- If the original map would have stopped us, this is not the way down.
+    function test:DropPathReal(point, fromY)
+        if not self.OriginalParams or (self.OriginalStamp or 0) ~= self.Count then
+            local changed = {}
+            for p in pairs(self.Changed) do
+                if p.Parent and self.Supports[p] ~= true then changed[#changed+1] = p end
+            end
+            local params = RaycastParams.new()
+            params.FilterType = Enum.RaycastFilterType.Include
+            params.FilterDescendantsInstances = changed
+            params.RespectCanCollide = false
+            self.OriginalParams, self.OriginalStamp = params, self.Count
+        end
+        local rise = (fromY or 0) - point.Y
+        if rise <= 4 then return true end
+        local blocked = workspace:Raycast(point + Vector3.new(0, 2, 0),
+            Vector3.new(0, rise, 0), self.OriginalParams)
+        return blocked == nil
+    end
+
+    function test:LandingClear(point, enemies, clearance, fromY)
         clearance = clearance or 48
         if self:OverWater(point) then return false end
+        if fromY and not self:DropPathReal(point, fromY) then return false end
         for _, e in ipairs(enemies) do
             if e.Room==6 and e.Root and e.Root.Parent then
                 local v=e.Root.AssemblyLinearVelocity
@@ -30852,17 +30884,33 @@ do
             if not self.PitSeen then self.PitWaitingSince = os.clock() end
             self.PitSeen = true
             self.PitClearAt = nil
-            -- However we got here, if we are already down among them then we
-            -- are in the pit and there is nothing left to plan. Without this
-            -- the status line still reads "moving above clear landing" while we
-            -- stand on the pit floor, and the search goes on looking for a
-            -- landing below a floor that is already under our feet.
-            if root.Position.Y < lower.Root.Position.Y + 20 then
-                self.PitEntered = true
+            -- Are we down there? Ask the question every frame instead of
+            -- latching it.
+            --
+            -- PitEntered was a one-way switch, and dying is the obvious thing
+            -- that undoes it: we drop in, get killed, respawn at the checkpoint
+            -- back up on the middle tier - and the switch is still on, so the
+            -- descent never runs again. Caught exactly that live, standing at
+            -- Y 19 with the status reading "already in the pit" and fifteen
+            -- mobs seventy-five studs below. A fact about where we are should
+            -- be measured, not remembered.
+            local inPit = root.Position.Y < lower.Root.Position.Y + 20
+            if inPit then
+                self.PitEntered = true      -- sticky, but only as "we got down
+                                            -- there once", for the checkpoint
+                                            -- reset after the pit is cleared
                 self.PitDropping = false
                 self.PitTargetY = nil
                 c.Dodger.NLPitLandingGoal = nil
-                self.PitStatus = "already in the pit"
+                self.PitStatus = "in the pit"
+            elseif self.PitDropping and root.Position.Y > lower.Root.Position.Y + 60 then
+                -- Back up top while supposedly mid-descent: we died on the way
+                -- down. Start the approach over rather than waiting out a fall
+                -- that is no longer happening.
+                self.PitDropping = false
+                self.PitLanding = nil
+                self.PitWaitingSince = os.clock()
+                self.PitStatus = "back on the upper tier, starting again"
             end
             -- Give up ground on the clearance the longer we stand up here doing
             -- nothing: forty-eight studs to start with, then down to twenty
@@ -30871,7 +30919,7 @@ do
             local waited = os.clock() - (self.PitWaitingSince or os.clock())
             local clearance = math.max(20, 48 - waited)
             local offset = Vector3.new(lower.Root.Position.X-root.Position.X,0,lower.Root.Position.Z-root.Position.Z)
-            if offset.Magnitude < 200 and not self.PitEntered then
+            if offset.Magnitude < 200 and not inPit then
                 local guards = {}
                 for p,g in pairs(self.Guards) do if p.Parent and p.CanCollide then guards[#guards+1]=g end end
                 local params = RaycastParams.new()
@@ -30894,7 +30942,7 @@ do
                     end
                     return
                 end
-                if landing and not self:LandingClear(landing,enemies,clearance) then landing=nil self.PitJumpAt=nil end
+                if landing and not self:LandingClear(landing,enemies,clearance,root.Position.Y) then landing=nil self.PitJumpAt=nil end
                 if not landing then
                     self.PitLanding=nil
                     if os.clock()-(self.PitSearchAt or 0)<0.5 then
@@ -30913,7 +30961,7 @@ do
                                 local travel=Vector3.new(candidate.X-root.Position.X,0,candidate.Z-root.Position.Z)
                                 if not workspace:Raycast(root.Position,travel,params)
                                     and not workspace:Raycast(root.Position+Vector3.new(0,candidate.Y-root.Position.Y,0),travel,params)
-                                    and self:LandingClear(candidate,enemies,clearance) then
+                                    and self:LandingClear(candidate,enemies,clearance,root.Position.Y) then
                                     if travel.Magnitude<bestScore then landing=candidate bestScore=travel.Magnitude end
                                 end
                             end
@@ -30929,7 +30977,7 @@ do
                 c.Dodger.NLPitLandingGoal=Vector3.new(landing.X,root.Position.Y,landing.Z)
                 local away=Vector3.new(landing.X-root.Position.X,0,landing.Z-root.Position.Z)
                 self.PitStatus="moving above clear landing"
-                if away.Magnitude<6 and self:LandingClear(Vector3.new(root.Position.X,landing.Y,root.Position.Z),enemies,clearance) then
+                if away.Magnitude<6 and self:LandingClear(Vector3.new(root.Position.X,landing.Y,root.Position.Z),enemies,clearance,root.Position.Y) then
                     -- Walk off the cliff.
                     --
                     -- Lowering our own floor and riding it down was the plan
@@ -30980,11 +31028,31 @@ do
             self.PitStatus = self.PitResetGain>22 and "checkpoint reset confirmed" or "checkpoint reset did not gain height; no repeat"
         end)
     end
+    -- Let go of the edge, but only while we mean to.
+    --
+    -- Every mover in this script refuses to step off a ledge - IsGroundPadded
+    -- guards the dodge scorer, the route planner and the controller, and that
+    -- guard is why we can steer at a landing seventy-four studs below and never
+    -- actually leave: the one direction that gets us there is the one direction
+    -- forbidden everywhere. Suspended for the committed descent and nothing
+    -- else, so a stray edge cannot swallow us the rest of the time.
+    local oldPadded = c.Geometry.IsGroundPadded
+    function c.Geometry:IsGroundPadded(position, radius, ...)
+        if test.Enabled and test.PitDropping then
+            return true
+        end
+        return oldPadded(self, position, radius, ...)
+    end
+    test.RestorePadded = function()
+        c.Geometry.IsGroundPadded = oldPadded
+    end
+
     function test:SetEnabled(value)
         self.Enabled = value == true
         if self.Enabled then self:Sweep() self:WalkSurface(0) self:RemoveWater() else self:Restore() end
     end
     function test:Destroy()
+        if self.RestorePadded then pcall(self.RestorePadded) end
         if self.Connection then self.Connection:Disconnect() end
         if self.MapConnection then self.MapConnection:Disconnect() end
         self:Restore()
