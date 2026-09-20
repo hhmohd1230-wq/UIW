@@ -125,6 +125,11 @@ do
     CONFIG.NLCornerChecks = 4
     CONFIG.NLCornerProbe = 16
     CONFIG.NLCornerCost = 14
+    -- Leaving a circle radially. NLCircleNear is how far outside the rim still
+    -- counts as "getting out", so we commit to the exit before the edge rather
+    -- than at it.
+    CONFIG.NLCircleNear = 26
+    CONFIG.NLCircleOutCost = 38
     -- Where we stand for the few seconds after the Champion returns from the
     -- floor. Well short of the 135 stud run-out that measured badly.
     CONFIG.NLChampWideRadius = 88
@@ -1052,6 +1057,41 @@ do
             end
         end
 
+        -- Circles are left by going straight out of them.
+        --
+        -- The scorer has only ever known "inside the box" or "outside it", so
+        -- for a disc it treats every escaping direction as equal - and most of
+        -- them are not. From anywhere inside a circle the shortest way out is
+        -- radial, and a tangential step can spend the whole lookahead still in
+        -- it. That is the difference between clearing the Champion's slam and
+        -- being caught on its edge.
+        --
+        -- Which attacks are circles, measured rather than assumed: his seeking
+        -- spikes are 20 x 0 x 20 and his big spike 40 x 0 x 40, both flat discs
+        -- - the four rings and the big one. The jump slam is the same shape of
+        -- problem. Bob's ice spikes too.
+        local CIRCLE = {
+            firstBossJumpSlam = true, firstBossSeekingSpikes = true,
+            firstBossBigSpike = true, largeIceSpikes = true,
+            mediumIceSpikes = true, smallIceSpikes = true,
+        }
+        local circles = {}
+        for _, box in ipairs(list) do
+            if CIRCLE[box.Name] then
+                local away = flatten(root.Position - box.CF.Position)
+                local reach = math.max(box.Half.X, box.Half.Z)
+                -- only the ones we are in or nearly in: a disc across the room
+                -- has no opinion about which way we walk
+                if away.Magnitude < reach + CONFIG.NLCircleNear then
+                    circles[#circles+1] = {
+                        out = away.Magnitude > 1 and away.Unit or Vector3.new(1, 0, 0),
+                        urgency = math.clamp((reach + CONFIG.NLCircleNear - away.Magnitude)
+                            / math.max(reach, 1), 0, 2),
+                    }
+                end
+            end
+        end
+
         local best,bestScore=nil,math.huge
         local scored={}
         if not self.NLCornerParams then
@@ -1146,6 +1186,12 @@ do
                         score += math.abs(dir:Dot(waveAxis)) * CONFIG.NLBobWaveAxisCost
                     else
                         score += CONFIG.NLBobWaveAxisCost      -- standing in it is the worst option
+                    end
+                end
+                -- ...and price every stud of that exit we are not taking.
+                if dir.Magnitude > 0 then
+                    for _, circle in ipairs(circles) do
+                        score += (1 - dir:Dot(circle.out)) * circle.urgency * CONFIG.NLCircleOutCost
                     end
                 end
                 scored[i] = score
@@ -1276,7 +1322,7 @@ do
     local newController = UIWController.new
     function UIWController.new()
         local self = newController()
-        self.Version = "50.4-closein"
+        self.Version = "50.5-circles"
         return self
     end
 end

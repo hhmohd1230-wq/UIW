@@ -113,7 +113,18 @@ do
     -- have no access to one - a rise of this much inside a second is him
     -- arriving, not him walking up a ramp.
     CONFIG.ChampionRiseStuds = 14
-    CONFIG.ChampionRiseHold = 4.0     -- seconds we stay wide afterwards
+    -- Four seconds was the guess. The rotation, as described by the person who
+    -- plays it: attack, he jumps to the floor, you escape, attack, four rings,
+    -- one big ring aimed where you are, then he returns to the top - and what
+    -- he opens with from up there is biggest in the middle of the map. So the
+    -- window has to still be open when he lands, not close as he starts to
+    -- climb, and being wide is worth more than the couple of casts it costs.
+    CONFIG.ChampionRiseHold = 7.0
+
+    -- Going down is a signal too. He drops to the floor to slam, and the fall
+    -- itself is the warning for it - the same height watch in reverse.
+    CONFIG.ChampionDropStuds = 14
+    CONFIG.ChampionDropHold = 2.0
 
     function UIWController:WatchChampionReturn()
         if not self.AutoCombat then return end
@@ -130,6 +141,15 @@ do
         local was = self.ChampSeenY
         self.ChampSeenY = y
         if not was then return end
+
+        if was - y >= CONFIG.ChampionDropStuds then
+            -- He is coming down. The slam lands where he lands, so the useful
+            -- thing is distance from him, immediately, and the radial exit in
+            -- the solver does the rest once the disc exists.
+            self.ChampWideUntil = math.max(self.ChampWideUntil or 0,
+                now + CONFIG.ChampionDropHold)
+            self.ChampDrops = (self.ChampDrops or 0) + 1
+        end
 
         if y - was >= CONFIG.ChampionRiseStuds then
             self.ChampWideUntil = now + CONFIG.ChampionRiseHold

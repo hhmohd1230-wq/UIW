@@ -28773,6 +28773,11 @@ do
     CONFIG.NLCornerChecks = 4
     CONFIG.NLCornerProbe = 16
     CONFIG.NLCornerCost = 14
+    -- Leaving a circle radially. NLCircleNear is how far outside the rim still
+    -- counts as "getting out", so we commit to the exit before the edge rather
+    -- than at it.
+    CONFIG.NLCircleNear = 26
+    CONFIG.NLCircleOutCost = 38
     -- Where we stand for the few seconds after the Champion returns from the
     -- floor. Well short of the 135 stud run-out that measured badly.
     CONFIG.NLChampWideRadius = 88
@@ -29700,6 +29705,41 @@ do
             end
         end
 
+        -- Circles are left by going straight out of them.
+        --
+        -- The scorer has only ever known "inside the box" or "outside it", so
+        -- for a disc it treats every escaping direction as equal - and most of
+        -- them are not. From anywhere inside a circle the shortest way out is
+        -- radial, and a tangential step can spend the whole lookahead still in
+        -- it. That is the difference between clearing the Champion's slam and
+        -- being caught on its edge.
+        --
+        -- Which attacks are circles, measured rather than assumed: his seeking
+        -- spikes are 20 x 0 x 20 and his big spike 40 x 0 x 40, both flat discs
+        -- - the four rings and the big one. The jump slam is the same shape of
+        -- problem. Bob's ice spikes too.
+        local CIRCLE = {
+            firstBossJumpSlam = true, firstBossSeekingSpikes = true,
+            firstBossBigSpike = true, largeIceSpikes = true,
+            mediumIceSpikes = true, smallIceSpikes = true,
+        }
+        local circles = {}
+        for _, box in ipairs(list) do
+            if CIRCLE[box.Name] then
+                local away = flatten(root.Position - box.CF.Position)
+                local reach = math.max(box.Half.X, box.Half.Z)
+                -- only the ones we are in or nearly in: a disc across the room
+                -- has no opinion about which way we walk
+                if away.Magnitude < reach + CONFIG.NLCircleNear then
+                    circles[#circles+1] = {
+                        out = away.Magnitude > 1 and away.Unit or Vector3.new(1, 0, 0),
+                        urgency = math.clamp((reach + CONFIG.NLCircleNear - away.Magnitude)
+                            / math.max(reach, 1), 0, 2),
+                    }
+                end
+            end
+        end
+
         local best,bestScore=nil,math.huge
         local scored={}
         if not self.NLCornerParams then
@@ -29794,6 +29834,12 @@ do
                         score += math.abs(dir:Dot(waveAxis)) * CONFIG.NLBobWaveAxisCost
                     else
                         score += CONFIG.NLBobWaveAxisCost      -- standing in it is the worst option
+                    end
+                end
+                -- ...and price every stud of that exit we are not taking.
+                if dir.Magnitude > 0 then
+                    for _, circle in ipairs(circles) do
+                        score += (1 - dir:Dot(circle.out)) * circle.urgency * CONFIG.NLCircleOutCost
                     end
                 end
                 scored[i] = score
@@ -29924,7 +29970,7 @@ do
     local newController = UIWController.new
     function UIWController.new()
         local self = newController()
-        self.Version = "50.4-closein"
+        self.Version = "50.5-circles"
         return self
     end
 end
@@ -30696,7 +30742,18 @@ do
     -- have no access to one - a rise of this much inside a second is him
     -- arriving, not him walking up a ramp.
     CONFIG.ChampionRiseStuds = 14
-    CONFIG.ChampionRiseHold = 4.0     -- seconds we stay wide afterwards
+    -- Four seconds was the guess. The rotation, as described by the person who
+    -- plays it: attack, he jumps to the floor, you escape, attack, four rings,
+    -- one big ring aimed where you are, then he returns to the top - and what
+    -- he opens with from up there is biggest in the middle of the map. So the
+    -- window has to still be open when he lands, not close as he starts to
+    -- climb, and being wide is worth more than the couple of casts it costs.
+    CONFIG.ChampionRiseHold = 7.0
+
+    -- Going down is a signal too. He drops to the floor to slam, and the fall
+    -- itself is the warning for it - the same height watch in reverse.
+    CONFIG.ChampionDropStuds = 14
+    CONFIG.ChampionDropHold = 2.0
 
     function UIWController:WatchChampionReturn()
         if not self.AutoCombat then return end
@@ -30713,6 +30770,15 @@ do
         local was = self.ChampSeenY
         self.ChampSeenY = y
         if not was then return end
+
+        if was - y >= CONFIG.ChampionDropStuds then
+            -- He is coming down. The slam lands where he lands, so the useful
+            -- thing is distance from him, immediately, and the radial exit in
+            -- the solver does the rest once the disc exists.
+            self.ChampWideUntil = math.max(self.ChampWideUntil or 0,
+                now + CONFIG.ChampionDropHold)
+            self.ChampDrops = (self.ChampDrops or 0) + 1
+        end
 
         if y - was >= CONFIG.ChampionRiseStuds then
             self.ChampWideUntil = now + CONFIG.ChampionRiseHold
