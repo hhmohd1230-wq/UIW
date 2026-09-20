@@ -30442,9 +30442,19 @@ do
         for x=math.floor(lo.X/256)*256, hi.X, 256 do
             for y=math.floor(lo.Y/256)*256, hi.Y, 256 do
                 for z=math.floor(lo.Z/256)*256, hi.Z, 256 do
-                    local corner = Vector3int16.new(x/4,y/4,z/4)
-                    local backup = workspace.Terrain:CopyRegion(Region3int16.new(corner, Vector3int16.new(x/4+63,y/4+63,z/4+63)))
-                    self.WaterBackup[#self.WaterBackup+1] = {Data=backup, Corner=corner}
+                    -- Capped. This pass alone was holding 252 copied regions,
+                    -- a quarter of a million voxels each, for an undo of a
+                    -- client-side water-to-air swap that a rejoin undoes by
+                    -- itself. The memory cost more than the insurance was worth.
+                    if #self.WaterBackup < 32 then
+                        local corner = Vector3int16.new(x/4,y/4,z/4)
+                        local ok, backup = pcall(function()
+                            return workspace.Terrain:CopyRegion(Region3int16.new(corner, Vector3int16.new(x/4+63,y/4+63,z/4+63)))
+                        end)
+                        if ok and backup then
+                            self.WaterBackup[#self.WaterBackup+1] = {Data=backup, Corner=corner}
+                        end
+                    end
                     workspace.Terrain:ReplaceMaterial(Region3.new(Vector3.new(x,y,z),Vector3.new(x+256,y+256,z+256)),4,Enum.Material.Water,Enum.Material.Air)
                 end
             end
@@ -30452,46 +30462,70 @@ do
         self.WaterReady = true
     end
 
-    -- Once is not enough. RemoveWater runs a single pass when the map settles
-    -- and thirty water columns were still there afterwards, all in one area -
-    -- terrain streams in, and anything that arrives after the pass survives it.
-    -- Landing in water means swimming and swimming here means stuck, so this
-    -- keeps clearing a box around us for as long as we are in the dungeon.
-    -- ReplaceMaterial only touches water, and each chunk is backed up once so
-    -- Restore still puts the map back as we found it.
+    -- Once is not enough, but the first version of this was far too much.
+    --
+    -- It blanket-cleared twenty-seven 256-stud cubes around the player every
+    -- two seconds and copied every one of them first for the undo. Measured:
+    -- 41 ms per sweep - two and a half frames, on a timer - and 363 terrain
+    -- regions held in memory and still climbing, because moving through the
+    -- dungeon keeps finding fresh chunks. That is the lag in the lower room:
+    -- down there we are somewhere new every few seconds, so it never stops
+    -- growing.
+    --
+    -- Almost all of that work was spent on chunks with no water in them. So
+    -- look first, with six rays that stop at water, and only clear where there
+    -- actually is some - one cube at a time, an eighth of the old volume.
+    -- Quiet ground now costs six raycasts a second and nothing else.
     function test:ClearWaterNear(root, now)
-        if now - (self.WaterSweepAt or 0) < 2 then return end
+        if now - (self.WaterSweepAt or 0) < 1 then return end
         self.WaterSweepAt = now
+        if not self.WaterParams then
+            local params = RaycastParams.new()
+            params.FilterType = Enum.RaycastFilterType.Include
+            params.FilterDescendantsInstances = {workspace.Terrain}
+            params.IgnoreWater = false
+            self.WaterParams = params
+        end
+        local found
+        for i = 0, 5 do
+            local a = i * math.pi / 3 + (now % 1) * math.pi
+            local at = root.Position + Vector3.new(math.cos(a) * 55, 100, math.sin(a) * 55)
+            local w = workspace:Raycast(at, Vector3.new(0, -300, 0), self.WaterParams)
+            if w and w.Material == Enum.Material.Water then found = w.Position break end
+        end
+        if not found then return end
+
+        local x = math.floor(found.X / 128) * 128
+        local y = math.floor(found.Y / 128) * 128
+        local z = math.floor(found.Z / 128) * 128
         self.WaterSeen = self.WaterSeen or {}
-        local base = Vector3.new(
-            math.floor((root.Position.X - 256) / 256) * 256,
-            math.floor((root.Position.Y - 256) / 256) * 256,
-            math.floor((root.Position.Z - 256) / 256) * 256)
-        for dx = 0, 512, 256 do
-            for dy = 0, 512, 256 do
-                for dz = 0, 512, 256 do
-                    local x, y, z = base.X + dx, base.Y + dy, base.Z + dz
-                    local key = x .. "," .. y .. "," .. z
-                    if not self.WaterSeen[key] then
-                        self.WaterSeen[key] = true
-                        local corner = Vector3int16.new(x/4, y/4, z/4)
-                        local ok, backup = pcall(function()
-                            return workspace.Terrain:CopyRegion(
-                                Region3int16.new(corner, Vector3int16.new(x/4+63, y/4+63, z/4+63)))
-                        end)
-                        if ok and backup then
-                            self.WaterBackup[#self.WaterBackup+1] = {Data=backup, Corner=corner}
-                        end
-                    end
-                    pcall(function()
-                        workspace.Terrain:ReplaceMaterial(
-                            Region3.new(Vector3.new(x, y, z), Vector3.new(x+256, y+256, z+256)),
-                            4, Enum.Material.Water, Enum.Material.Air)
-                    end)
-                end
+        local key = x .. "," .. y .. "," .. z
+        -- A chunk can need clearing more than once, because terrain streams in,
+        -- but not forever. Three passes and we leave it alone.
+        local tries = (self.WaterSeen[key] or 0) + 1
+        if tries > 3 then return end
+        self.WaterSeen[key] = tries
+        -- The undo is capped. Each copied region is a quarter of a million
+        -- voxels held in memory, and an uncapped pile of them is its own
+        -- performance problem - worse than the thing it was insuring against,
+        -- since this only ever turns water into air on our own client.
+        if tries == 1 and #self.WaterBackup < 32 then
+            local corner = Vector3int16.new(x/4, y/4, z/4)
+            local ok, backup = pcall(function()
+                return workspace.Terrain:CopyRegion(
+                    Region3int16.new(corner, Vector3int16.new(x/4+31, y/4+31, z/4+31)))
+            end)
+            if ok and backup then
+                self.WaterBackup[#self.WaterBackup+1] = {Data=backup, Corner=corner}
             end
         end
+        pcall(function()
+            workspace.Terrain:ReplaceMaterial(
+                Region3.new(Vector3.new(x, y, z), Vector3.new(x+128, y+128, z+128)),
+                4, Enum.Material.Water, Enum.Material.Air)
+        end)
     end
+
     function test:Sweep()
         local map = workspace:FindFirstChild("Map") or workspace:FindFirstChild("map")
         if not map then return end
