@@ -31331,6 +31331,27 @@ do
             local waited = os.clock() - (self.PitWaitingSince or os.clock())
             local clearance = math.max(20, 48 - waited)
             local offset = Vector3.new(lower.Root.Position.X-root.Position.X,0,lower.Root.Position.Z-root.Position.Z)
+
+            -- Walk there first.
+            --
+            -- Everything below only plans once we are within 200 studs of the
+            -- room, and nothing whatsoever was walking us those last few
+            -- hundred. Measured standing still at 234 studs out with 22 mobs
+            -- waiting below: status nil, no landing, no goal, forever. It used
+            -- to work by accident, because the ordinary pull toward a target
+            -- drifted us into range - and then I stopped us targeting mobs we
+            -- cannot reach from up here, which removed the accident and left
+            -- the deadlock behind it.
+            --
+            -- So the approach is explicit now. Out of range, the goal is simply
+            -- the room below us; inside it, the real landing logic takes over.
+            if not inPit and offset.Magnitude >= 200 then
+                c.Dodger.NLPitLandingGoal = Vector3.new(
+                    lower.Root.Position.X, root.Position.Y, lower.Root.Position.Z)
+                self.PitStatus = string.format("walking to the lower room, %.0f studs out",
+                    offset.Magnitude)
+            end
+
             if offset.Magnitude < 200 and not inPit then
                 local guards = {}
                 for p,g in pairs(self.Guards) do if p.Parent and p.CanCollide then guards[#guards+1]=g end end
