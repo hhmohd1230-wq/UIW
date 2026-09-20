@@ -28767,6 +28767,11 @@ do
     -- How strongly the standing bearing leans toward his crystals. 1 would put
     -- us exactly between them and him; this is a lean, not a leash.
     CONFIG.NLBobCrystalSide = 0.8
+    -- How far round the back of Bob we will go at all. This is the cosine of
+    -- the angle from the crystal bearing, so 0 is a straight half - anything
+    -- past ninety degrees from the crystals is refused outright rather than
+    -- merely discouraged.
+    CONFIG.NLBobBehindCos = 0.0
     -- Corner avoidance for mob fights. Checked for this many of the best
     -- candidates only; eight probes each, this far out, and each blocked
     -- direction costs this much.
@@ -29490,6 +29495,7 @@ do
             -- whatever bearing we happened to arrive on. Now the standing
             -- bearing leans toward the crystals, hard enough to matter and
             -- softly enough that the dodge still owns the moment.
+            local crystalDir
             local crystals = Workspace:FindFirstChild("secondBossCrystals")
             if crystals then
                 local sum, n = Vector3.zero, 0
@@ -29499,9 +29505,32 @@ do
                 if n > 0 then
                     local toward = flatten(sum / n - enemy.Root.Position)
                     if toward.Magnitude > 1 then
-                        out = unit(out + toward.Unit * CONFIG.NLBobCrystalSide)
-                        if out.Magnitude < 0.1 then out = toward.Unit end
+                        crystalDir = toward.Unit
+                        out = unit(out + crystalDir * CONFIG.NLBobCrystalSide)
+                        if out.Magnitude < 0.1 then out = crystalDir end
                     end
+                end
+            end
+
+            -- ...and never round the back of him.
+            --
+            -- Leaning toward the crystals was not enough: a lean still allows
+            -- the far side, and there is no reason to ever be there. An orb
+            -- spawned while we are behind him has the whole arena to cross
+            -- before it meets a crystal, so it meets us instead. Behind Bob is
+            -- not a worse position, it is a losing one, so it stops being a
+            -- position we can hold at all.
+            if crystalDir then
+                local side = out:Dot(crystalDir)
+                if side < CONFIG.NLBobBehindCos then
+                    -- push the bearing back round to the nearest edge of the
+                    -- allowed arc rather than snapping to the crystals, so we
+                    -- do not sprint across his face to get there
+                    local across = Vector3.new(-crystalDir.Z, 0, crystalDir.X)
+                    if out:Dot(across) < 0 then across = -across end
+                    out = unit(crystalDir * CONFIG.NLBobBehindCos
+                        + across * math.sqrt(math.max(0, 1 - CONFIG.NLBobBehindCos^2)))
+                    self.NLBobPushedRound = (self.NLBobPushedRound or 0) + 1
                 end
             end
 
@@ -29933,6 +29962,31 @@ do
         self.IsDodging=self.NLDodging
         if self.NLDodging then self.LastMovement=best end
         self.NLLiveBoxes,self.NLLiveBeams=#list,#beams
+        -- Stand sideways to the Champion while he is beaming from the top.
+        --
+        -- A character is about four studs across the shoulders and two deep. So
+        -- how wide a target we are depends entirely on which way we are
+        -- pointing: square on to a beam we are four studs of it, turned side on
+        -- we are two. Half the cross-section, for free, and it is the reason a
+        -- gap that looks impossible from the front is walkable from the side.
+        --
+        -- It costs the cast, because Flame Shuriken flies along our look vector
+        -- and a sideways look is a shuriken into the wall. That is exactly the
+        -- trade the attack/evade split already makes - damage does not matter
+        -- while the room is full of lines - so this only applies when we are
+        -- evading or inside the window after he returns to the top, and we face
+        -- him again the moment we are attacking.
+        if champion and enemy and enemy.Root and enemy.Root.Parent
+            and (self.NLBossMode == "evade" or self.NLChampWide)
+        then
+            local toBoss = flatten(enemy.Root.Position - root.Position)
+            if toBoss.Magnitude > 1 then
+                -- his bearing, turned a quarter so he sits off our shoulder
+                yaw = math.atan2(toBoss.Z, toBoss.X) + math.pi / 2
+                self.NLSideways = (self.NLSideways or 0) + 1
+            end
+        end
+
         return best,yaw,self.NLEmergency,self.NLDodging
     end
 
@@ -29970,7 +30024,7 @@ do
     local newController = UIWController.new
     function UIWController.new()
         local self = newController()
-        self.Version = "50.5-circles"
+        self.Version = "50.6-stance"
         return self
     end
 end
