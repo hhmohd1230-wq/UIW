@@ -100,11 +100,69 @@ do
         return false
     end
 
+    ---------------------------------------------------------------------------
+    -- The Champion's return from the floor.
+    ---------------------------------------------------------------------------
+    -- He drops down and comes back up, and the moment he lands back on top is
+    -- the one that catches us: we are still standing where the last phase
+    -- wanted us, near the middle, and what follows is easiest to read from
+    -- further out. So watch his height, and when it jumps back up, sprint and
+    -- give ourselves room rather than dodging from inside the pattern.
+    --
+    -- Detected from his own root rather than from any phase flag, because we
+    -- have no access to one - a rise of this much inside a second is him
+    -- arriving, not him walking up a ramp.
+    CONFIG.ChampionRiseStuds = 14
+    CONFIG.ChampionRiseHold = 4.0     -- seconds we stay wide afterwards
+
+    function UIWController:WatchChampionReturn()
+        if not self.AutoCombat then return end
+        local enemy = self.Target or self.CurrentTarget
+        local model = enemy and enemy.Model
+        if not model or not model.Name:find("Champion") then
+            self.ChampSeenY = nil
+            return
+        end
+        local root = enemy.Root
+        if not root or not root.Parent then return end
+        local now = os.clock()
+        local y = root.Position.Y
+        local was = self.ChampSeenY
+        self.ChampSeenY = y
+        if not was then return end
+
+        if y - was >= CONFIG.ChampionRiseStuds then
+            self.ChampWideUntil = now + CONFIG.ChampionRiseHold
+            self.ChampReturns = (self.ChampReturns or 0) + 1
+            -- Speed first: the room we want is several strides away and the
+            -- buff is what turns that into one.
+            pcall(function()
+                local combat = self.Combat
+                if combat and combat:CanSendInput() and not combat:IsBusyCasting() then
+                    for _, slot in ipairs({ "q", "e" }) do
+                        local tool = combat:GetTool(slot)
+                        if tool and combat:IsBuffTool(tool) and combat:IsReady(slot) then
+                            combat:Press(slot)
+                            break
+                        end
+                    end
+                end
+            end)
+        end
+
+        -- While the window is open, hold the outer radius.
+        local solver = self.Dodger
+        if solver then
+            solver.NLChampWide = (now < (self.ChampWideUntil or 0)) or nil
+        end
+    end
+
     local oldEscapeStep = UIWController.Step
     function UIWController:Step()
         oldEscapeStep(self)
         if self.Destroyed or not self.Enabled then return end
         pcall(self.EscapeWithSpeed, self)
+        pcall(self.WatchChampionReturn, self)
     end
 
     local oldEscapeNew = UIWController.new

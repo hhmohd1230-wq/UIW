@@ -28755,6 +28755,18 @@ do
     -- the fallback is the middle of the table. Anything still sitting on this
     -- number is unmeasured, not safe.
     CONFIG.NLUnknownWeight = 3
+    -- How hard the pit landing pulls. It has to beat the ordinary hazard
+    -- shuffle on a balcony full of nothing in particular, because standing up
+    -- there is not safe, it is just quiet - the fight is downstairs and every
+    -- second spent not arriving is a second of the run.
+    CONFIG.NLPitGoalPull = 9
+    -- How close to Bob counts as "already committed". Inside this we keep
+    -- fighting through a colour orb, because backing out costs more than the
+    -- orb does; outside it, the orb is the only job until it is on its crystal.
+    CONFIG.NLBobOrbCommit = 55
+    -- Where we stand for the few seconds after the Champion returns from the
+    -- floor. Well short of the 135 stud run-out that measured badly.
+    CONFIG.NLChampWideRadius = 88
     CONFIG.NLGapClearance = 9      -- beam half width plus a body
     CONFIG.NLMinRadius = 28        -- closest we stand to the pillar
     CONFIG.NLMaxRadius = 135       -- and the furthest, for Sun-Burst
@@ -29374,6 +29386,22 @@ do
                     radius = math.clamp(math.max(radius, packed), CONFIG.NLMinRadius, CONFIG.NLMaxRadius)
                 end
 
+                -- The few seconds after he comes back up from the floor. We are
+                -- still standing where the last phase wanted us, and whatever
+                -- he opens with is easier to read with room to move.
+                --
+                -- Deliberately a floor of NLChampWideRadius and not the 135 the
+                -- note below rejects. That experiment latched the run-out for
+                -- the whole fight and measured 6 deaths at 0.69%/s against 0
+                -- deaths at 2.67%/s, because his beams reach 125 anyway and we
+                -- spent the fight walking instead of killing. This is a few
+                -- seconds at a specific moment, which is a different claim -
+                -- and if the numbers say otherwise it comes straight back out.
+                if self.NLChampWide then
+                    radius = math.clamp(math.max(radius, CONFIG.NLChampWideRadius),
+                        CONFIG.NLMinRadius, CONFIG.NLMaxRadius)
+                end
+
                 -- Tried and rejected: latching a run out to 135 studs when the
                 -- beam count spikes. Measured, it was much worse - 6 deaths and
                 -- 0.69%/s against 0 deaths and 2.67%/s for staying close - and
@@ -29410,8 +29438,20 @@ do
             local offset = flatten(root.Position - enemy.Root.Position)
             local out = offset.Magnitude > 1 and offset.Unit or Vector3.new(1, 0, 0)
             local stand = enemy.Root.Position + out * CONFIG.NLBobRadius
-            goal = Vector3.new(stand.X, root.Position.Y, stand.Z)
-            preferred = unit(flatten(goal - root.Position))
+            -- One job at a time. Trying to hold position on Bob while a colour
+            -- orb homes on us is two errands pulling in different directions,
+            -- and the orb always wins the argument by touching us. So while one
+            -- is live, the only aim is to put it on its crystal - unless we are
+            -- already close enough that leaving would cost more than staying,
+            -- in which case keep hitting him and deal with the orb from here.
+            if offset.Magnitude > CONFIG.NLBobOrbCommit
+                and self.NLOrbGoal and now < (self.NLOrbUntil or 0)
+            then
+                self.NLHoldForOrb = now
+            else
+                goal = Vector3.new(stand.X, root.Position.Y, stand.Z)
+                preferred = unit(flatten(goal - root.Position))
+            end
         end
 
         -- Mobs: walk a circle around them instead of standing and trading.
@@ -29429,6 +29469,21 @@ do
         -- Leading a colour orb into its crystal beats any standing position:
         -- the orb homes at walking speed, so it is never outrun, and the only
         -- way it ends is at the crystal.
+        -- Getting down into the lower room beats everything else on the list.
+        --
+        -- This goal has been set by the open-map layer for weeks and read by
+        -- nobody: NLPitLandingGoal was written in seven places and consumed in
+        -- none. The descent had no steering of its own, so the only thing that
+        -- ever carried us toward the hole was the ordinary pull toward a target
+        -- - and the moment we stopped targeting mobs we could not reach from
+        -- the balcony, there was nothing left moving us at all. That is the
+        -- freeze at the top: not a decision to stand still, an empty plan.
+        local pitGoal = self.NLPitLandingGoal
+        if pitGoal then
+            goal = Vector3.new(pitGoal.X, root.Position.Y, pitGoal.Z)
+            preferred = unit(flatten(goal - root.Position))
+        end
+
         local orbErrand = false
         if self.NLOrbGoal and now < (self.NLOrbUntil or 0) then
             goal = self.NLOrbGoal
@@ -29499,6 +29554,9 @@ do
         -- and the pillar is between us and it.
         if orbErrand then
             goalPull = math.max(goalPull, CONFIG.NLOrbGoalPull)
+        end
+        if pitGoal then
+            goalPull = math.max(goalPull, CONFIG.NLPitGoalPull)
         end
         -- the nearest live mage wave, and which way it is travelling
         local waveDir, waveNear = nil, math.huge
@@ -29703,7 +29761,7 @@ do
     local newController = UIWController.new
     function UIWController.new()
         local self = newController()
-        self.Version = "49.4-weights"
+        self.Version = "49.7-phases"
         return self
     end
 end
@@ -30470,11 +30528,69 @@ do
         return false
     end
 
+    ---------------------------------------------------------------------------
+    -- The Champion's return from the floor.
+    ---------------------------------------------------------------------------
+    -- He drops down and comes back up, and the moment he lands back on top is
+    -- the one that catches us: we are still standing where the last phase
+    -- wanted us, near the middle, and what follows is easiest to read from
+    -- further out. So watch his height, and when it jumps back up, sprint and
+    -- give ourselves room rather than dodging from inside the pattern.
+    --
+    -- Detected from his own root rather than from any phase flag, because we
+    -- have no access to one - a rise of this much inside a second is him
+    -- arriving, not him walking up a ramp.
+    CONFIG.ChampionRiseStuds = 14
+    CONFIG.ChampionRiseHold = 4.0     -- seconds we stay wide afterwards
+
+    function UIWController:WatchChampionReturn()
+        if not self.AutoCombat then return end
+        local enemy = self.Target or self.CurrentTarget
+        local model = enemy and enemy.Model
+        if not model or not model.Name:find("Champion") then
+            self.ChampSeenY = nil
+            return
+        end
+        local root = enemy.Root
+        if not root or not root.Parent then return end
+        local now = os.clock()
+        local y = root.Position.Y
+        local was = self.ChampSeenY
+        self.ChampSeenY = y
+        if not was then return end
+
+        if y - was >= CONFIG.ChampionRiseStuds then
+            self.ChampWideUntil = now + CONFIG.ChampionRiseHold
+            self.ChampReturns = (self.ChampReturns or 0) + 1
+            -- Speed first: the room we want is several strides away and the
+            -- buff is what turns that into one.
+            pcall(function()
+                local combat = self.Combat
+                if combat and combat:CanSendInput() and not combat:IsBusyCasting() then
+                    for _, slot in ipairs({ "q", "e" }) do
+                        local tool = combat:GetTool(slot)
+                        if tool and combat:IsBuffTool(tool) and combat:IsReady(slot) then
+                            combat:Press(slot)
+                            break
+                        end
+                    end
+                end
+            end)
+        end
+
+        -- While the window is open, hold the outer radius.
+        local solver = self.Dodger
+        if solver then
+            solver.NLChampWide = (now < (self.ChampWideUntil or 0)) or nil
+        end
+    end
+
     local oldEscapeStep = UIWController.Step
     function UIWController:Step()
         oldEscapeStep(self)
         if self.Destroyed or not self.Enabled then return end
         pcall(self.EscapeWithSpeed, self)
+        pcall(self.WatchChampionReturn, self)
     end
 
     local oldEscapeNew = UIWController.new
