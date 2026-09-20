@@ -116,6 +116,15 @@ do
     -- fighting through a colour orb, because backing out costs more than the
     -- orb does; outside it, the orb is the only job until it is on its crystal.
     CONFIG.NLBobOrbCommit = 55
+    -- How strongly the standing bearing leans toward his crystals. 1 would put
+    -- us exactly between them and him; this is a lean, not a leash.
+    CONFIG.NLBobCrystalSide = 0.8
+    -- Corner avoidance for mob fights. Checked for this many of the best
+    -- candidates only; eight probes each, this far out, and each blocked
+    -- direction costs this much.
+    CONFIG.NLCornerChecks = 4
+    CONFIG.NLCornerProbe = 16
+    CONFIG.NLCornerCost = 14
     -- Where we stand for the few seconds after the Champion returns from the
     -- floor. Well short of the 135 stud run-out that measured badly.
     CONFIG.NLChampWideRadius = 88
@@ -798,6 +807,35 @@ do
         if bob and enemy.Root and enemy.Root.Parent then
             local offset = flatten(root.Position - enemy.Root.Position)
             local out = offset.Magnitude > 1 and offset.Unit or Vector3.new(1, 0, 0)
+
+            -- Stay on the crystal side of him.
+            --
+            -- His colour orbs spawn at him and home on us, and the only thing
+            -- that ends one is the crystal of its colour. So where we stand
+            -- decides whether the orb's path crosses a crystal on its way or
+            -- crosses open floor: drift round behind him and there is nothing
+            -- between us and it, the errand has to walk the orb the entire
+            -- length of the arena, and it catches us first.
+            --
+            -- The side we are on was never chosen before - we simply held
+            -- whatever bearing we happened to arrive on. Now the standing
+            -- bearing leans toward the crystals, hard enough to matter and
+            -- softly enough that the dodge still owns the moment.
+            local crystals = Workspace:FindFirstChild("secondBossCrystals")
+            if crystals then
+                local sum, n = Vector3.zero, 0
+                for _, child in ipairs(crystals:GetDescendants()) do
+                    if child:IsA("BasePart") then sum, n = sum + child.Position, n + 1 end
+                end
+                if n > 0 then
+                    local toward = flatten(sum / n - enemy.Root.Position)
+                    if toward.Magnitude > 1 then
+                        out = unit(out + toward.Unit * CONFIG.NLBobCrystalSide)
+                        if out.Magnitude < 0.1 then out = toward.Unit end
+                    end
+                end
+            end
+
             local stand = enemy.Root.Position + out * CONFIG.NLBobRadius
             -- One job at a time. Trying to hold position on Bob while a colour
             -- orb homes on us is two errands pulling in different directions,
@@ -999,6 +1037,15 @@ do
         end
 
         local best,bestScore=nil,math.huge
+        local scored={}
+        if not self.NLCornerParams then
+            local params = RaycastParams.new()
+            params.FilterType = Enum.RaycastFilterType.Exclude
+            params.FilterDescendantsInstances = {self.CharacterService.Character}
+            params.RespectCanCollide = true
+            self.NLCornerParams = params
+        end
+        self.NLCornerParams.FilterDescendantsInstances = {self.CharacterService.Character}
         for i=0,16 do
             local angle=i*math.pi/8
             local dir=i==16 and Vector3.zero or Vector3.new(math.cos(angle),0,math.sin(angle))
@@ -1085,8 +1132,47 @@ do
                         score += CONFIG.NLBobWaveAxisCost      -- standing in it is the worst option
                     end
                 end
+                scored[i] = score
                 if score<bestScore then best,bestScore=dir,score end
             end
+        end
+
+        -- Do not step into a corner.
+        --
+        -- The scorer picks where to step and has never once asked what that
+        -- spot leaves us. A square with a wall on three sides can be the safest
+        -- place in the room this instant and a death sentence a second later,
+        -- because the next attack arrives and there is nowhere to go - and that
+        -- is exactly how a mob fight ends up somewhere with no dodge available.
+        -- It is the same failure as being surrounded, arrived at voluntarily.
+        --
+        -- Openness is only checked for the few candidates that already won on
+        -- risk, because casting eight probes from all sixteen endpoints every
+        -- frame would cost more than it saves. Four candidates, eight short
+        -- probes each, is cheap and catches the corner.
+        if mobFight and best and best.Magnitude > 0 then
+            local shortlist = {}
+            for i = 0, 15 do
+                local angle = i * math.pi / 8
+                local dir = Vector3.new(math.cos(angle), 0, math.sin(angle))
+                if scored[i] then shortlist[#shortlist+1] = {dir = dir, score = scored[i]} end
+            end
+            table.sort(shortlist, function(a, b) return a.score < b.score end)
+            local bestOpen, bestOpenScore = nil, math.huge
+            for k = 1, math.min(CONFIG.NLCornerChecks, #shortlist) do
+                local entry = shortlist[k]
+                local at = root.Position + entry.dir * speed * horizon
+                local open = 0
+                for j = 0, 7 do
+                    local a = j * math.pi / 4
+                    local probe = Vector3.new(math.cos(a), 0, math.sin(a)) * CONFIG.NLCornerProbe
+                    if not Workspace:Raycast(at, probe, self.NLCornerParams) then open += 1 end
+                end
+                local penalty = (8 - open) * CONFIG.NLCornerCost
+                local total = entry.score + penalty
+                if total < bestOpenScore then bestOpen, bestOpenScore = entry.dir, total end
+            end
+            if bestOpen then best = bestOpen end
         end
 
         -- Boxed in is not a reason to stand there.
@@ -1174,7 +1260,7 @@ do
     local newController = UIWController.new
     function UIWController.new()
         local self = newController()
-        self.Version = "50.0-attackevade"
+        self.Version = "50.2-corners"
         return self
     end
 end
