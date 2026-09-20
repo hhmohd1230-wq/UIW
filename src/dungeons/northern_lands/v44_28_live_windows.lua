@@ -16,11 +16,17 @@ do
     -- on its own, which is the entire budget before the wave is even counted.
     CONFIG.NLBobBoxes = 76
 
-    -- Not every attack costs the same. Measured: secondBossHorizontalBeam took
-    -- us from full to dead in one hit, while a passive beam is about 40%. The
-    -- planner was weighing them the same, so it would happily trade a brush
-    -- with the killer to avoid two cheap ones. These are multipliers on being
-    -- inside the box.
+    -- Not every attack costs the same. These are multipliers on being inside
+    -- the box, so the planner does not trade a brush with a killer to avoid two
+    -- cheap ones.
+    --
+    -- NIGHTMARE CHANGES THE PREMISE. Measured there: the Champion's passive
+    -- beam 135%, his jump slam 125%, Bob's horizontal beam 113%, his wave 119%.
+    -- Every one of those is more than our whole health bar, so there is no
+    -- longer any such thing as a cheap hit to trade against - the target is not
+    -- fewer hits, it is none. The weights still matter for choosing between two
+    -- bad squares, but anything measured above 100% belongs at the top of this
+    -- table, and the old numbers below it were all set on Insane.
     -- genericNeonBall used to sit here at 5, "measured 80-86% in one hit".
     -- That measurement was an artefact. Read the game's own scripts: every
     -- genericNeonBall, ours and the enemies', is cloned, tweened to
@@ -47,7 +53,15 @@ do
         northernMageShot = 5,
         secondBossSpreadBeam = 6,     -- also measured as a one-shot: 100%
         secondBossMovingBeam = 3,
-        firstBossJumpSlam = 4,
+        -- The Champion on Nightmare, measured: his passive beam took 135%, 102%
+        -- and 98% off us in one fight and killed us three times in 83 seconds.
+        -- It was not in this table at all, so it carried the default weight of
+        -- 1 - the lowest thing in the dungeon - on the strength of a note at
+        -- the top of this file saying a passive beam is "about 40%". That was
+        -- true on Insane. It is his whole fight on Nightmare, and the planner
+        -- was pricing it below a mob's shuriken.
+        firstBossPassiveBeam = 6,
+        firstBossJumpSlam = 6,        -- measured 125% on Nightmare, was 4
         -- Odin. Measured single hits of 42% and 78% with nothing the tracker
         -- could name, so these are first estimates from hitbox size rather than
         -- from attributed damage; the next runs will attribute them properly.
@@ -979,7 +993,7 @@ do
     local newController = UIWController.new
     function UIWController.new()
         local self = newController()
-        self.Version = "49.0-realrange"
+        self.Version = "49.1-nightmare"
         return self
     end
 end
