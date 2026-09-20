@@ -28827,7 +28827,23 @@ do
     -- measured 361 seconds, 15 deaths, and his health never moved off 100%. We
     -- spent the whole fight trying to reach a distance we did not need, through
     -- the beams, dying on the way, over and over.
-    CONFIG.NLBossCastRange = 140
+    -- ...and then 140 turned out to be just as made up as the 64 it replaced,
+    -- in the other direction. Measured on Nightmare against Bob: 574 frames of
+    -- fight, and his health moved on ONE of them. That single frame was at 87
+    -- studs. Everything logged past 90 - and 73% of the fight was past 120 -
+    -- did nothing at all.
+    --
+    -- 87 is not a coincidence. Flame Shuriken's own script flies the projectile
+    -- from six studs in front of us out to eighty-six, along our look vector,
+    -- and stops. That is the reach. We had been standing at 120 to 210 studs
+    -- holding the cast button at a boss we could not touch, which is the whole
+    -- explanation for a 113 second Champion and a Bob fight that will not end.
+    --
+    -- So this is the real number now. It also does the positioning work for
+    -- free: the scorer already charges four points a stud for every stud
+    -- outside cast range, and against a true 88 that term finally points where
+    -- the damage is instead of at a line in the air.
+    CONFIG.NLBossCastRange = 88
     -- The same made-up leash exists for mobs, twice over: DamageCastRange 64 and
     -- MobBurstRange 46, which holds fire until we have closed to 46 studs. That
     -- is what caps the circle - there is no point riding a wide arc if we stop
@@ -29611,7 +29627,7 @@ do
     local newController = UIWController.new
     function UIWController.new()
         local self = newController()
-        self.Version = "48.4-nostop"
+        self.Version = "49.0-realrange"
         return self
     end
 end
