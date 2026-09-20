@@ -79,12 +79,12 @@ do
                 local speed = velocity.Magnitude
                 if speed >= CONFIG.NLRushSpeed then
                     local offset = flatten(root.Position - part.Position)
-                    local closing = -offset:Dot(velocity.Unit)
+                    local closing = offset:Dot(velocity.Unit)
                     if closing > 0 then
                         local when = closing / speed
                         if when <= CONFIG.NLRushWindow then
                             -- how far off our position its path passes
-                            local miss = (offset + velocity.Unit * closing).Magnitude
+                            local miss = (offset - velocity.Unit * closing).Magnitude
                             local reach = math.max(part.Size.X, part.Size.Z) * 0.5
                             if miss <= CONFIG.NLRushMiss + reach then
                                 return true

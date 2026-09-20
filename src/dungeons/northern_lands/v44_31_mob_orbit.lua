@@ -113,7 +113,7 @@ do
 
         local offset = flatten(root.Position - centre)
         if offset.Magnitude < 1 then
-            return nil
+            offset=flatten(root.CFrame.RightVector)
         end
         local radial = offset.Unit
         local now = os.clock()
@@ -187,7 +187,11 @@ do
             end
         end
         if offset.Magnitude < CONFIG.NLMobOrbitMin then
-            return centre + radial * CONFIG.NLMobOrbitRadius
+            local reach=CONFIG.NLMobOrbitProbe
+            if self.Geometry:IsDirectionClear(radial,reach,directionToYaw(radial))
+                and self.Geometry:IsGroundPadded(root.Position+radial*reach,CONFIG.EdgeHardPadding) then
+                return centre + radial * CONFIG.NLMobOrbitRadius
+            end
         end
         return nil
     end

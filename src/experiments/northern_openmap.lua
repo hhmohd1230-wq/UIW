@@ -38,7 +38,18 @@ do
         local node = p
         while node and node ~= map do
             local n = node.Name:lower()
+            -- "door" already covered these, but say why they matter: the
+            -- Door_Circle and Door_Cube meshes are the structure the bottom
+            -- room is built out of - the floor the mobs stand on down there and
+            -- the rim that keeps us out of the water around it. Measured, our
+            -- own floor test threw the floor slabs away by one stud: they are
+            -- 61 x 11 x 25, dead level at normalY 0.99, and the thinness ratio
+            -- allowed 9.9 against their 11. The vertical rings failed it too,
+            -- correctly as floors, but they are what stops us sliding off the
+            -- edge, so the whole structure stays untouched rather than being
+            -- sorted into floor and scenery.
             if n:find("barrier", 1, true) or n:find("door", 1, true)
+                or n:find("door_circle", 1, true) or n:find("door_cube", 1, true)
                 or n:find("gate", 1, true)
                 -- the red, green and yellow totems are the answer to his colour
                 -- orbs, so they are never scenery
@@ -152,6 +163,47 @@ do
         end
         self.WaterReady = true
     end
+
+    -- Once is not enough. RemoveWater runs a single pass when the map settles
+    -- and thirty water columns were still there afterwards, all in one area -
+    -- terrain streams in, and anything that arrives after the pass survives it.
+    -- Landing in water means swimming and swimming here means stuck, so this
+    -- keeps clearing a box around us for as long as we are in the dungeon.
+    -- ReplaceMaterial only touches water, and each chunk is backed up once so
+    -- Restore still puts the map back as we found it.
+    function test:ClearWaterNear(root, now)
+        if now - (self.WaterSweepAt or 0) < 2 then return end
+        self.WaterSweepAt = now
+        self.WaterSeen = self.WaterSeen or {}
+        local base = Vector3.new(
+            math.floor((root.Position.X - 256) / 256) * 256,
+            math.floor((root.Position.Y - 256) / 256) * 256,
+            math.floor((root.Position.Z - 256) / 256) * 256)
+        for dx = 0, 512, 256 do
+            for dy = 0, 512, 256 do
+                for dz = 0, 512, 256 do
+                    local x, y, z = base.X + dx, base.Y + dy, base.Z + dz
+                    local key = x .. "," .. y .. "," .. z
+                    if not self.WaterSeen[key] then
+                        self.WaterSeen[key] = true
+                        local corner = Vector3int16.new(x/4, y/4, z/4)
+                        local ok, backup = pcall(function()
+                            return workspace.Terrain:CopyRegion(
+                                Region3int16.new(corner, Vector3int16.new(x/4+63, y/4+63, z/4+63)))
+                        end)
+                        if ok and backup then
+                            self.WaterBackup[#self.WaterBackup+1] = {Data=backup, Corner=corner}
+                        end
+                    end
+                    pcall(function()
+                        workspace.Terrain:ReplaceMaterial(
+                            Region3.new(Vector3.new(x, y, z), Vector3.new(x+256, y+256, z+256)),
+                            4, Enum.Material.Water, Enum.Material.Air)
+                    end)
+                end
+            end
+        end
+    end
     function test:Sweep()
         local map = workspace:FindFirstChild("Map") or workspace:FindFirstChild("map")
         if not map then return end
@@ -198,6 +250,18 @@ do
         local refs = {workspace.Terrain}
         for p in pairs(self.Supports) do
             if p.Parent then refs[#refs+1] = p self.Floors += 1 end
+        end
+        -- Protected structure never enters Supports, because we do not touch it
+        -- at all - but the bottom room's floor IS that structure, so without
+        -- this the height probe is blind to the one surface down there that
+        -- actually carries us.
+        for _, p in ipairs(map:QueryDescendants("BasePart")) do
+            local n = p.Name:lower()
+            if (n:find("door_cube", 1, true) or n:find("door_circle", 1, true))
+                and p.CanCollide and math.abs(p.CFrame.UpVector.Y) >= 0.65
+            then
+                refs[#refs+1] = p
+            end
         end
         self.Params = RaycastParams.new()
         self.Params.FilterType = Enum.RaycastFilterType.Include
@@ -656,6 +720,10 @@ do
         end
         elapsed += dt
         if test.Enabled then test:WalkSurface(dt) end
+        if test.Enabled then
+            local root = c.Character and c.Character.Root
+            if root then pcall(test.ClearWaterNear, test, root, os.clock()) end
+        end
         if test.Enabled and os.clock()-(test.PitCheckAt or 0)>=0.1 then
             test.PitCheckAt=os.clock()
             local pitOK,pitErr=pcall(test.UpdatePit,test)
