@@ -30926,6 +30926,7 @@ do
             if e.Room == 6 and e.Root.Position.Y < 0 then lower = e end
             if e.Room >= 7 and e.Root.Position.Y > root.Position.Y+22 then nextGroup = e end
         end
+        if not lower or bobAlive then self.PitAbove = false end
         if lower and not bobAlive then
             if not self.PitSeen then self.PitWaitingSince = os.clock() end
             self.PitSeen = true
@@ -30941,6 +30942,8 @@ do
             -- mobs seventy-five studs below. A fact about where we are should
             -- be measured, not remembered.
             local inPit = root.Position.Y < lower.Root.Position.Y + 20
+            -- Live, both ways: the moment we are down, targeting comes back.
+            self.PitAbove = not inPit
             if inPit then
                 self.PitEntered = true      -- sticky, but only as "we got down
                                             -- there once", for the checkpoint
@@ -30989,6 +30992,42 @@ do
                     return
                 end
                 if landing and not self:LandingClear(landing,enemies,clearance,root.Position.Y) then landing=nil self.PitJumpAt=nil end
+                -- Straight down the middle.
+                --
+                -- The rim search was the time sink: three rings of sixteen
+                -- probes hunting for a clear spot round the edge, re-run twice
+                -- a second, walking us back and forth along the lip looking for
+                -- a way in. There is a way in, it is the hole in the middle,
+                -- and it does not move. Go to the centre of the room below and
+                -- step off. The rings stay as a fallback for when the middle
+                -- genuinely is not usable.
+                if not landing then
+                    local sum, n = Vector3.zero, 0
+                    for _, e in ipairs(enemies) do
+                        if e.Room == 6 and e.Root and e.Root.Parent and e.Root.Position.Y < 0 then
+                            sum, n = sum + e.Root.Position, n + 1
+                        end
+                    end
+                    if n > 0 then
+                        local centre = sum / n
+                        local down = workspace:Raycast(
+                            Vector3.new(centre.X, root.Position.Y + 8, centre.Z),
+                            Vector3.new(0, -400, 0), self.Params)
+                        if down and down.Position.Y < self.Height - 20 then
+                            local middle = down.Position + Vector3.new(0, 3, 0)
+                            -- The centre still has to be somewhere we can
+                            -- actually survive arriving: dry, and reachable
+                            -- through an opening the untouched map has.
+                            if not self:OverWater(middle)
+                                and self:DropPathReal(middle, root.Position.Y)
+                            then
+                                landing = middle
+                                self.PitLanding = landing
+                                self.PitStatus = "heading for the middle"
+                            end
+                        end
+                    end
+                end
                 if not landing then
                     self.PitLanding=nil
                     if os.clock()-(self.PitSearchAt or 0)<0.5 then
@@ -31093,12 +31132,28 @@ do
         c.Geometry.IsGroundPadded = oldPadded
     end
 
+    -- Nothing to fight up here.
+    --
+    -- While the lower room is waiting for us, every second spent picking a
+    -- target we cannot reach is a second not spent getting down - and worse,
+    -- the target pulls the movement planner toward it and away from the hole.
+    -- No target until we are on their floor.
+    local oldSelect = c.SelectTarget
+    function c:SelectTarget(...)
+        if test.Enabled and test.PitAbove then
+            return nil
+        end
+        return oldSelect(self, ...)
+    end
+    test.RestoreSelect = function() c.SelectTarget = oldSelect end
+
     function test:SetEnabled(value)
         self.Enabled = value == true
         if self.Enabled then self:Sweep() self:WalkSurface(0) self:RemoveWater() else self:Restore() end
     end
     function test:Destroy()
         if self.RestorePadded then pcall(self.RestorePadded) end
+        if self.RestoreSelect then pcall(self.RestoreSelect) end
         if self.Connection then self.Connection:Disconnect() end
         if self.MapConnection then self.MapConnection:Disconnect() end
         self:Restore()
