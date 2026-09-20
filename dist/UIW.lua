@@ -28733,7 +28733,28 @@ do
         -- level with them: two of these is a death and nothing else comes
         -- close.
         secondBossCricleHitbox = 9,
+        -- Bob's colour orbs. These sat on the default of 1 while an entire file
+        -- of this script exists to walk them into a crystal because touching
+        -- one is a disaster. The planner was being told the opposite of what
+        -- the rest of the code believes.
+        secondBossRedOrb = 5, secondBossGreenOrb = 5, secondBossYellowOrb = 5,
     }
+    -- What an attack is worth when nobody has measured it yet.
+    --
+    -- This used to be 1, which made anything missing from the table above the
+    -- cheapest thing in the dungeon - and an audit against the full list of
+    -- this map's attack names found ELEVEN we track and then price at 1,
+    -- including every one of Bob's colour orbs, the Champion's seeking spikes
+    -- and whirlwind, Odin's bouncing orb beam, and the warrior's circle strike
+    -- we went to the trouble of measuring at 25 studs growing to 34.
+    --
+    -- A 1 against a 6 tells the planner to walk through any of those rather
+    -- than take one step nearer a beam. That is not caution, it is a statement
+    -- that we know they are harmless, and we do not know that about any of
+    -- them. Something we bothered to track is at least an ordinary attack, so
+    -- the fallback is the middle of the table. Anything still sitting on this
+    -- number is unmeasured, not safe.
+    CONFIG.NLUnknownWeight = 3
     CONFIG.NLGapClearance = 9      -- beam half width plus a body
     CONFIG.NLMinRadius = 28        -- closest we stand to the pillar
     CONFIG.NLMaxRadius = 135       -- and the furthest, for Sun-Burst
@@ -29244,7 +29265,7 @@ do
             local half=box.Half
             if math.abs(p.Y)<=half.Y then
                 local dx,dz=math.abs(p.X)-half.X,math.abs(p.Z)-half.Z
-                if dx<=0 and dz<=0 then score += (100+math.min(-dx,-dz)*2)*(DEADLY[box.Name] or 1)
+                if dx<=0 and dz<=0 then score += (100+math.min(-dx,-dz)*2)*(DEADLY[box.Name] or CONFIG.NLUnknownWeight)
                 else score += math.max(0,4-math.max(dx,dz))*0.4 end
             end
         end
@@ -29682,7 +29703,7 @@ do
     local newController = UIWController.new
     function UIWController.new()
         local self = newController()
-        self.Version = "49.3-odin"
+        self.Version = "49.4-weights"
         return self
     end
 end
