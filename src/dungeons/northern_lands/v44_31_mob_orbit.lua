@@ -113,7 +113,7 @@ do
 
         local offset = flatten(root.Position - centre)
         if offset.Magnitude < 1 then
-            offset=flatten(root.CFrame.RightVector)
+            return nil
         end
         local radial = offset.Unit
         local now = os.clock()
@@ -124,8 +124,15 @@ do
         -- alternatives. A lone mob keeps the fixed ladder.
         local radii = CONFIG.NLMobOrbitRadii
         if spread > 0 then
-            local want = math.clamp(spread + CONFIG.NLPackClearance,
-                CONFIG.NLMobOrbitMin, CONFIG.NLPackMaxRadius)
+            -- Experiment (NLStrategyExperiment): run a tighter circle. Mobs
+            -- chase us, so the shape we run is the shape they end up in - pull
+            -- the radius in and they bunch instead of trailing out behind.
+            local clearance = CONFIG.NLStrategyExperiment
+                and CONFIG.NLPackClearanceExp or CONFIG.NLPackClearance
+            local maxRadius = CONFIG.NLStrategyExperiment
+                and CONFIG.NLPackMaxRadiusExp or CONFIG.NLPackMaxRadius
+            local want = math.clamp(spread + clearance,
+                CONFIG.NLMobOrbitMin, maxRadius)
             radii = { want, want - 8, want + 8, CONFIG.NLMobOrbitMin }
         end
 
@@ -136,7 +143,9 @@ do
         end
 
         for _, spin in ipairs({ self.NLSpin or 1, -(self.NLSpin or 1) }) do
-          for _, degrees in ipairs({ CONFIG.NLMobOrbitStep, CONFIG.NLMobOrbitStep * 0.5 }) do
+          local step = CONFIG.NLStrategyExperiment
+              and CONFIG.NLMobOrbitStepExp or CONFIG.NLMobOrbitStep
+          for _, degrees in ipairs({ step, step * 0.5 }) do
             for _, radius in ipairs(radii) do
                 local point = orbitPoint(centre, radial, radius, degrees * spin)
                 if point then
@@ -187,11 +196,7 @@ do
             end
         end
         if offset.Magnitude < CONFIG.NLMobOrbitMin then
-            local reach=CONFIG.NLMobOrbitProbe
-            if self.Geometry:IsDirectionClear(radial,reach,directionToYaw(radial))
-                and self.Geometry:IsGroundPadded(root.Position+radial*reach,CONFIG.EdgeHardPadding) then
-                return centre + radial * CONFIG.NLMobOrbitRadius
-            end
+            return centre + radial * CONFIG.NLMobOrbitRadius
         end
         return nil
     end

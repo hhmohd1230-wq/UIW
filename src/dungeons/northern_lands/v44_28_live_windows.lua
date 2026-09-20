@@ -107,6 +107,41 @@ do
     -- staying in the lane; perpendicular is free.
     CONFIG.NLWaveLaneRange = 70    -- a wave this close is worth reacting to
     CONFIG.NLWaveLaneCost = 55
+
+    ---------------------------------------------------------------------------
+    -- EXPERIMENT: closer packs, never standing, and leaving the mage wave.
+    --
+    -- Three requested changes that belong together, kept together so they can
+    -- be lifted back out in one piece if the numbers get worse. Set
+    -- NLStrategyExperiment to false to fall back to the values in the comments.
+    ---------------------------------------------------------------------------
+    CONFIG.NLStrategyExperiment = true
+
+    -- 1. Group the pack tighter. Mobs chase us, so the circle we run is the
+    --    shape they end up in: a tighter, faster one funnels them into a heap
+    --    we can hit with one cast instead of a smear we chase across the room.
+    CONFIG.NLPackClearanceExp = 12        -- was 20 studs beyond the outermost mob
+    CONFIG.NLPackMaxRadiusExp = 70        -- was 80
+    CONFIG.NLMobOrbitStepExp = 40         -- was 32 degrees aimed ahead
+
+    -- 2. Never stand still in a mob fight, surrounded or not. 45 made standing
+    --    merely unattractive, and when a pack closes in it was still winning:
+    --    every direction costs something once they are all around us, so the
+    --    cheapest square was the one we were on. Standing is what lets them
+    --    settle their aim, so it has to lose to a bad direction, not just to a
+    --    good one. This is a cost and not a ban, so a genuinely walled-in spot
+    --    can still choose it.
+    CONFIG.NLStandStillCostExp = 140      -- was 45
+
+    -- 3. Leave the mage's wave instead of living in it. The gap between two
+    --    bars is six studs of real safety and the scorer found it, which is why
+    --    we would plant ourselves mid-attack and wait: nothing was charging us
+    --    for still being among the bars, only for being inside one. Now any
+    --    position that ends up within this range of a bar is priced by how
+    --    close it is, so stepping the seventeen studs fully out beats standing
+    --    in the slot - and if we truly are boxed in, the slot is still there.
+    CONFIG.NLMageClearOut = 22            -- studs of daylight we want from a bar
+    CONFIG.NLMageClearCost = 3.5          -- per stud short of that
     -- Bob's wave, measured: ten discs, diameters 22 up to 76 in steps of 6, at
     -- 0, 22, 44 ... 198 studs from him, spawned in sequence about every third of
     -- a second and marching outward along one bearing. It is not a ring around
@@ -430,15 +465,9 @@ do
             -- entirely below the height test while we walk through it, so a
             -- flat hazard gets a body's worth of height instead.
             local tall = half.Y < 4 and 9 or 3
-            local ends=info and windup[name] and math.max(0.3,windup[name]+0.5-(now-info.Seen)) or math.huge
-            -- After a warning fades, use the same remaining lifetime as live().
-            -- Otherwise a beam with 0.1s left blocks a whole 2.6s route prediction.
-            if info and timed[name] and not warnBox[name] and info.HadWarning and now-info.Visible>0.05 then
-                ends=math.min(ends,math.max(0,(linger[name] or 0.30)-(now-info.Visible)))
-            end
             list[#list+1] = {CF=cf, Half=half+Vector3.new(pad,tall,pad), V=velocity, Omega=omega or 0,
                 Starts=0,
-                Ends=ends,
+                Ends=info and windup[name] and math.max(0.3,windup[name]+0.5-(now-info.Seen)) or math.huge,
                 Name=name, Distance=math.sqrt(dx * dx + dy * dy + dz * dz)}
         end
         for _,container in ipairs(Workspace:GetChildren()) do
@@ -452,8 +481,7 @@ do
         end
         for _,data in ipairs(self.Hazards:GetActive()) do
             local part, container = data.Part, data.Container
-            if part and part.Parent and not data.IsPrecast
-                and not (container and (timed[container.Name] or bodyPart[container.Name])) then
+            if part and part.Parent and not data.IsPrecast and not (container and timed[container.Name]) then
                 add(part, self.Hazards:GetProjectileVelocity(data), container and container.Name or part.Name)
             end
         end
@@ -653,7 +681,7 @@ do
         -- They close the distance and fire straight lines at where you are, so
         -- a constant orbit inside our own cast range beats both behaviours at
         -- once - their shots land behind us and they never arrive.
-        if not champion and not bob and not odin and enemy then
+        if not champion and not bob and enemy then
             local ok, spot = pcall(self.GetMobOrbitGoal, self, enemy)
             if ok and spot then
                 goal = spot
@@ -695,17 +723,13 @@ do
         -- corridor from near its middle.
         local wide = bob or odin
         local horizon = wide and CONFIG.NLBossHorizon or (champion and 1.5 or 0.65)
-        local times = wide and {0.12,0.3,0.55,0.8,1.1,1.4,2.0,2.6}
+        local times = wide and {0.3,0.8,1.4,2.0,2.6}
             or (champion and {0.15,0.4,0.7,1.0,1.25,1.5} or {0.12,0.3,0.5,0.65})
         local melee={}
         if not champion then
             for _,e in ipairs(self.Dungeon and self.Dungeon:GetAliveEnemies() or {}) do
                 if e.Root and e.Root.Parent and getEnemyThreatClass(e)=="Melee" then
-                    if math.abs(e.Root.Position.Y-root.Position.Y)<12 then
-                        local velocity=flatten(e.Root.AssemblyLinearVelocity)
-                        if velocity.Magnitude>30 then velocity=velocity.Unit*30 end
-                        melee[#melee+1]={Position=e.Root.Position,Velocity=velocity}
-                    end
+                    melee[#melee+1]=e.Root.Position
                 end
             end
         end
@@ -723,7 +747,7 @@ do
         if enemy and enemy.Root and enemy.Root.Parent then
             castTarget = enemy.Root.Position
             castRange = (enemy.Model and LONG_RANGE[normalizeEnemyName(enemy.Model.Name)])
-                and CONFIG.NLBossCastRange or ((not champion and not odin) and CONFIG.NLMobCastRange or (CONFIG.DamageCastRange or 64))
+                and CONFIG.NLBossCastRange or (CONFIG.DamageCastRange or 64)
         end
         local goalPull = CONFIG.NLGoalPull
         if goal then
@@ -751,16 +775,7 @@ do
                 end
             end
         end
-        local mobFight = not champion and not bob and not odin and enemy ~= nil
-        if mobFight then
-            if now-(self.NLProgressAt or 0)>0.7 then
-                local moved=self.NLProgressPosition and flatten(root.Position-self.NLProgressPosition).Magnitude or math.huge
-                self.NLBlockedDirection=(moved<2 and self.NLDirection and self.NLDirection.Magnitude>0.5) and self.NLDirection or nil
-                self.NLProgressPosition,self.NLProgressAt=root.Position,now
-            end
-        else
-            self.NLBlockedDirection,self.NLProgressPosition,self.NLProgressAt=nil,nil,nil
-        end
+        local mobFight = not champion and not bob and enemy ~= nil
 
         -- Bob's wave corridor: the line from him through the nearest disc.
         local waveAxis, waveAxisNear = nil, math.huge
@@ -792,14 +807,13 @@ do
             -- that only works if the direction really is clear the whole way.
             local probe=wide and math.min(distance,CONFIG.NLProbeDistance) or distance
             if dir.Magnitude==0 or (self.Geometry:IsDirectionClear(dir,probe,yaw)
-                and self.Geometry:IsGroundPadded(root.Position+dir*math.min(probe,4),CONFIG.EdgeHardPadding)
                 and self.Geometry:IsGroundPadded(root.Position+dir*probe,CONFIG.EdgeHardPadding)) then
                 local score=0
                 for _,t in ipairs(times) do
                     local position=root.Position+dir*speed*t
                     score+=risk(list,position,t)
                     for _,mob in ipairs(melee) do
-                        score+=math.max(0,CONFIG.NLMeleeKeepOut-flatten(position-(mob.Position+mob.Velocity*math.min(t,0.65))).Magnitude)
+                        score+=math.max(0,CONFIG.NLMeleeKeepOut-flatten(position-mob).Magnitude)
                             *CONFIG.NLMeleeWeight
                     end
                 end
@@ -811,14 +825,37 @@ do
                     score+=math.max(0,after-castRange)*CONFIG.NLRangePull
                 end
                 if self.NLDirection then score+=(1-dir:Dot(self.NLDirection))*1.5 end
-                if mobFight and self.NLBlockedDirection and dir.Magnitude>0 then
-                    score+=math.max(0,dir:Dot(self.NLBlockedDirection))*80
-                end
                 if mobFight and dir.Magnitude == 0 then
-                    score += CONFIG.NLStandStillCost
+                    score += CONFIG.NLStrategyExperiment
+                        and CONFIG.NLStandStillCostExp or CONFIG.NLStandStillCost
                 end
                 if waveDir and waveNear <= CONFIG.NLWaveLaneRange and dir.Magnitude > 0 then
                     score += math.abs(dir:Dot(waveDir)) * CONFIG.NLWaveLaneCost
+                end
+                if CONFIG.NLStrategyExperiment and waveDir
+                    and waveNear <= CONFIG.NLWaveLaneRange
+                then
+                    -- How much daylight is left between us and the nearest bar
+                    -- at the end of the move. Sitting in the six stud slot
+                    -- between two of them reads as perfectly safe to everything
+                    -- else in this scorer, because it is - right up until the
+                    -- next wave arrives on a slightly different line and we are
+                    -- still standing there.
+                    for _, t in ipairs(times) do
+                        local position = root.Position + dir * speed * t
+                        local closest = math.huge
+                        for _, box in ipairs(list) do
+                            if box.Name == "northernMageShot" then
+                                local here = box.CF:PointToObjectSpace(position)
+                                local dx = math.max(math.abs(here.X) - box.Half.X, 0)
+                                local dz = math.max(math.abs(here.Z) - box.Half.Z, 0)
+                                closest = math.min(closest, math.sqrt(dx*dx + dz*dz))
+                            end
+                        end
+                        if closest < CONFIG.NLMageClearOut then
+                            score += (CONFIG.NLMageClearOut - closest) * CONFIG.NLMageClearCost
+                        end
+                    end
                 end
                 if waveAxis and waveAxisNear <= CONFIG.NLBobWaveRange then
                     if dir.Magnitude > 0 then
@@ -833,7 +870,7 @@ do
         if not best then self.NLDirection=nil return solve(self,routeDirection,enemy,yaw) end
         self.NLAt,self.NLDirection=now,best
         self.NLEmergency,self.NLDodging=standing>=100,best.Magnitude>0.05
-        self.LastDodgeReason=champion and "nl-champion-live" or bob and "nl-bob-live" or odin and "nl-odin-live" or "nl-mob-live"
+        self.LastDodgeReason=champion and "nl-champion-live" or "nl-mob-live"
         self.LastSolve=now
         self.CachedDirection,self.CachedYaw,self.CachedDodging=best,yaw,self.NLDodging
         self.IsDodging=self.NLDodging
@@ -876,7 +913,7 @@ do
     local newController = UIWController.new
     function UIWController.new()
         local self = newController()
-        self.Version = "48.1-wave"
+        self.Version = "48.2-strategy"
         return self
     end
 end
