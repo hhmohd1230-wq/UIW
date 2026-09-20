@@ -135,6 +135,22 @@ do
     CONFIG.NLBobPulseDepth = 24      -- studs travelled in and back out
     CONFIG.NLBobPulsePeriod = 3.0    -- seconds for one full in-and-out
     CONFIG.NLBobPulseFloor = 40      -- never closer than this to him
+    -- How far from the middle of the three totems we are willing to get.
+    --
+    -- Confirmed against the live parts: red (-144.29, 23.24, 268.26), green
+    -- (-158.76, 23.24, 334.84), yellow (-105.02, 23.24, 377.47), each one
+    -- 8.68 x 21.71 x 8.68. Their middle is (-136, 327) and the furthest of the
+    -- three is 60 studs from it, so a 55 stud ring is the triangle itself
+    -- rather than a circle drawn round it.
+    --
+    -- Without this the standing point was only ever "on the line to Bob", and
+    -- when he wandered the line took us with him: measured 274 and 208 studs
+    -- out on the two totem builds. Near the totems has to be a constraint, not
+    -- a starting point.
+    CONFIG.NLBobTotemRing = 55
+    -- And do not stand in a pillar. They are 8.68 across, we are about 4, so
+    -- anything under 10 is a collision; 13 leaves room to walk past one.
+    CONFIG.NLBobTotemClear = 13
     -- Corner avoidance for mob fights. Checked for this many of the best
     -- candidates only; eight probes each, this far out, and each blocked
     -- direction costs this much.
@@ -875,11 +891,15 @@ do
             -- here; an anchor makes them unnecessary rather than merely
             -- satisfied.
             local anchor
+            local pillars = {}
             local crystals = Workspace:FindFirstChild("secondBossCrystals")
             if crystals then
                 local sum, n = Vector3.zero, 0
                 for _, child in ipairs(crystals:GetDescendants()) do
-                    if child:IsA("BasePart") then sum, n = sum + child.Position, n + 1 end
+                    if child:IsA("BasePart") then
+                        sum, n = sum + child.Position, n + 1
+                        pillars[#pillars + 1] = child.Position
+                    end
                 end
                 if n > 0 then anchor = sum / n end
             end
@@ -899,7 +919,33 @@ do
                     local phase = (1 - math.cos((now / CONFIG.NLBobPulsePeriod) * math.pi * 2)) * 0.5
                     local want = math.max(CONFIG.NLBobPulseFloor, far - phase * CONFIG.NLBobPulseDepth)
                     stand = enemy.Root.Position - toBoss.Unit * want
-                    self.NLBobPulse = want
+
+                    -- Stay near the totems even when he does not. If the point
+                    -- we picked has drifted outside the ring, pull it back to
+                    -- the ring's edge on the same bearing: still the closest we
+                    -- can be to him, but from among the places that are near
+                    -- the pillars.
+                    local flatAnchor = Vector3.new(anchor.X, stand.Y, anchor.Z)
+                    local out = stand - flatAnchor
+                    if out.Magnitude > CONFIG.NLBobTotemRing then
+                        stand = flatAnchor + out.Unit * CONFIG.NLBobTotemRing
+                        self.NLBobRinged = (self.NLBobRinged or 0) + 1
+                    end
+
+                    -- Near a pillar, not inside one. They are solid and 8.68
+                    -- across, and walking into one is its own way of standing
+                    -- still for the rest of the fight.
+                    for _, p in ipairs(pillars) do
+                        local away = Vector3.new(stand.X - p.X, 0, stand.Z - p.Z)
+                        if away.Magnitude < CONFIG.NLBobTotemClear then
+                            local push = away.Magnitude > 0.5 and away.Unit
+                                or Vector3.new(1, 0, 0)
+                            stand = Vector3.new(p.X, stand.Y, p.Z)
+                                + push * CONFIG.NLBobTotemClear
+                            self.NLBobPillarClear = (self.NLBobPillarClear or 0) + 1
+                        end
+                    end
+                    self.NLBobPulse = (stand - enemy.Root.Position).Magnitude
                 else
                     stand = Vector3.new(anchor.X, enemy.Root.Position.Y, anchor.Z)
                 end
@@ -1414,7 +1460,7 @@ do
     local newController = UIWController.new
     function UIWController.new()
         local self = newController()
-        self.Version = "51.1-unwedge"
+        self.Version = "51.2-totemring"
         return self
     end
 end

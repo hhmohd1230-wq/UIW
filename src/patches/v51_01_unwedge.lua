@@ -19,7 +19,7 @@
 do
     CONFIG.Unwedge = true
     CONFIG.UnwedgeMoved = 2.5      -- studs in a second: less than this is stuck
-    CONFIG.UnwedgeFor = 3          -- consecutive stuck seconds before we act
+    CONFIG.UnwedgeFor = 5          -- consecutive stuck seconds before we act
     CONFIG.UnwedgeJumpPhase = 3.0  -- seconds of jump-and-walk first
     CONFIG.UnwedgeGhostPhase = 3.0  -- then this long with our own collision off
     CONFIG.UnwedgeProbe = 24       -- how far the escape rays look
@@ -128,11 +128,21 @@ do
         local moved = state.Last and (root.Position - state.Last).Magnitude or math.huge
         state.Last, state.At = root.Position, now
 
-        -- Only count it against us if we were actually trying to go somewhere.
-        -- Standing still on purpose - waiting out an orb, holding a totem line
-        -- while nothing is in reach - is not being stuck.
-        local trying = hum.MoveDirection.Magnitude > 0.1
-        if trying and moved < CONFIG.UnwedgeMoved then
+        -- Deliberately NOT gated on MoveDirection.
+        --
+        -- The first draft only counted a second against us if the humanoid was
+        -- already trying to walk, on the reasoning that standing still on
+        -- purpose is not being stuck. Measured an hour later: character at
+        -- (-239, 26, 364), not moving, MoveDirection exactly 0 - and so never
+        -- counted as stuck at all. That is the failure mode, not the exception
+        -- to it. With no target the solver produces no goal, the base solver
+        -- produces no direction, and a character that has been told to go
+        -- nowhere looks identical to one that cannot go anywhere.
+        --
+        -- So any five seconds without moving is treated as stuck. The real
+        -- deliberate holds are all shorter than that: the colour-orb wait is
+        -- NLOrbHold + NLOrbSettle, about 2.1 seconds at most.
+        if moved < CONFIG.UnwedgeMoved then
             state.Stuck = state.Stuck + 1
         else
             state.Stuck = 0
