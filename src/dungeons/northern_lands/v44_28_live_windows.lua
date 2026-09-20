@@ -119,6 +119,15 @@ do
     -- Where we stand for the few seconds after the Champion returns from the
     -- floor. Well short of the 135 stud run-out that measured badly.
     CONFIG.NLChampWideRadius = 88
+
+    -- The line between the two boss modes, and how hard each one commits.
+    --
+    -- NLDangerRisk is read against the same summed standing risk the solver
+    -- already uses to declare an emergency at 100, set lower so we start
+    -- evading before the square is fatal rather than once it is.
+    CONFIG.NLDangerRisk = 45
+    CONFIG.NLEvadeGoalScale = 0.15   -- evading: almost nothing pulls us back in
+    CONFIG.NLAttackRangeScale = 3    -- attacking: get inside 88 and stay there
     CONFIG.NLGapClearance = 9      -- beam half width plus a body
     CONFIG.NLMinRadius = 28        -- closest we stand to the pillar
     CONFIG.NLMaxRadius = 135       -- and the furthest, for Sun-Burst
@@ -898,6 +907,50 @@ do
             local away = flatten(goal - root.Position).Magnitude
             goalPull = goalPull * math.clamp(away / 25, 1, CONFIG.NLGoalPullMax)
         end
+
+        -----------------------------------------------------------------------
+        -- Two jobs, one at a time, at a boss.
+        -----------------------------------------------------------------------
+        -- Until now this scorer blended everything every frame: hazard risk,
+        -- the pull toward where we want to stand, and the penalty for being out
+        -- of cast range, all summed into one number. So there was never a
+        -- moment of deciding to attack or deciding to evade - just a permanent
+        -- compromise between them, which is the worst version of each.
+        --
+        -- What that produced on Nightmare, measured from six logged Bob fights:
+        -- 14 to 29 seconds each, one death each, one or two casts landed, and
+        -- an average distance of 98 to 167 studs against a reach of 88. We
+        -- were too far to hurt him and dying anyway - and the deaths do not
+        -- track the distance, because his beams are 400 studs long and his wave
+        -- is a 198 stud corridor. Standing off buys nothing. It only costs.
+        --
+        -- So distance stops being used as a safety lever, and the two jobs are
+        -- separated by the one signal that already exists: the solver's own
+        -- reading of how bad the square under us is.
+        --
+        --   calm     - nothing is landing here soon. Closing is the whole job,
+        --              so the pull toward cast range is multiplied up and the
+        --              hazard shuffle stops outvoting it.
+        --   danger   - something is. Damage does not matter for the next second
+        --              and a half; take the safest direction and take it whole,
+        --              with the goal and range terms nearly switched off so
+        --              nothing is dragging us back toward him mid-dodge.
+        --
+        -- Mobs keep the blended behaviour. This is a boss problem: their
+        -- attacks are arena-scale and ours is 88 studs, which is the tension
+        -- that needs an explicit answer.
+        local rangePull = CONFIG.NLRangePull
+        if wide or champion then
+            -- standing was computed above: the summed risk of not moving.
+            local pressed = standing >= CONFIG.NLDangerRisk
+            self.NLBossMode = pressed and "evade" or "attack"
+            if pressed then
+                goalPull = goalPull * CONFIG.NLEvadeGoalScale
+                rangePull = rangePull * CONFIG.NLEvadeGoalScale
+            else
+                rangePull = rangePull * CONFIG.NLAttackRangeScale
+            end
+        end
         -- Walking the orb to its crystal is not a preference to be outvoted. It
         -- is the only thing that ends the orb: it homes at walking pace, so it
         -- is never outrun, and on contact it makes a 120 stud explosion. The
@@ -969,7 +1022,7 @@ do
                 else score-=dir:Dot(preferred)*4 end
                 if castTarget then
                     local after=flatten(root.Position+dir*distance-castTarget).Magnitude
-                    score+=math.max(0,after-castRange)*CONFIG.NLRangePull
+                    score+=math.max(0,after-castRange)*rangePull
                 end
                 if self.NLDirection then score+=(1-dir:Dot(self.NLDirection))*1.5 end
                 if dir.Magnitude == 0 then
@@ -1113,7 +1166,7 @@ do
     local newController = UIWController.new
     function UIWController.new()
         local self = newController()
-        self.Version = "49.7-phases"
+        self.Version = "50.0-attackevade"
         return self
     end
 end
