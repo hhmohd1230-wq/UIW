@@ -69,6 +69,10 @@ do
         thirdBossMissile = 4,
         thirdBossMultiRings = 3,
         thirdBossBouncingOrb = 3,
+        -- Unvalidated, like the rest of his: first guesses, to be replaced the
+        -- moment one clean Odin fight goes through the attribution.
+        thirdBossPassiveOrb = 4,
+        thirdBossSpiralOrb = 4,
         largeIceSpikes = 3,           -- Bob, an 80 stud circle
         mediumIceSpikes = 2,
         smallIceSpikes = 2,
@@ -355,6 +359,24 @@ do
         -- 42-78% off us in single hits that the tracker recorded as "nothing
         -- nearby". thirdBossBouncingOrb is 12 cubed, thirdBossMissile 10x10x30.
         thirdBossBouncingOrb=true, thirdBossMissile=true, thirdBossBouncingOrbBeam=true,
+        -- Two more of Odin's, from a full list of the dungeon's attack names.
+        -- We were tracking 13 of the 32 attacks Northern Lands has, and four of
+        -- the missing ones were his - which is a poor position to be in against
+        -- the boss we have never measured.
+        --
+        -- Both of these pass the test the neon ball failed. thirdBossPassiveOrb
+        -- is a real travelling projectile: the game clones it, then drives it
+        -- along its own look vector from a Heartbeat connection for up to
+        -- twenty seconds. thirdBossSpiralOrb appears in no client script at
+        -- all, which means the server makes it, the same signature as Bob's
+        -- beams and every other attack that has ever actually hurt us.
+        --
+        -- thirdBossSmite and thirdBossBeamPart are deliberately NOT here. The
+        -- smite is particles emitted where the hit already landed and the beam
+        -- part lives 0.4 seconds; both are the picture of an attack arriving,
+        -- like the neon ball, and adding them would put a hazard on our own
+        -- head after the damage was already done.
+        thirdBossPassiveOrb=true, thirdBossSpiralOrb=true,
         -- and Bob's moving beam, now that we know where its body is
         secondBossMovingBeam=true}
     local tracks = setmetatable({}, {__mode="k"})
@@ -1012,7 +1034,7 @@ do
     local newController = UIWController.new
     function UIWController.new()
         local self = newController()
-        self.Version = "49.2-bossmove"
+        self.Version = "49.3-odin"
         return self
     end
 end
