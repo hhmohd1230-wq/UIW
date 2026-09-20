@@ -28810,7 +28810,19 @@ do
     -- balance point down toward 88. If distance still does not move, the cause
     -- is not the weighting and I stop turning this dial - the next step would
     -- be logging the actual score breakdown per direction, not another guess.
-    CONFIG.NLAttackRangeScale = 8    -- attacking: get inside 88 and stay there
+    -- 8 worked, so the equilibrium theory was right and this continues.
+    --
+    -- Bob before: 142, 144 studs, 3.8 and 9.7 percent of his health per fight.
+    -- Bob after 3 -> 8: 114 and 116 studs, 17.6 and 22.2 percent per fight, and
+    -- deaths down from 0.89 to 0.75-0.80. Roughly double the damage for less
+    -- dying, from one number.
+    --
+    -- Still 26 studs outside the reach, so the same step again - 8 -> 12 rather
+    -- than straight to 20, because the far side of this is standing in his lap
+    -- and the samples are only four and five fights deep. Same prediction as
+    -- before: distance falls toward 88. If it stalls again at some new number,
+    -- that number is where the beams win and the dial stops.
+    CONFIG.NLAttackRangeScale = 12   -- attacking: get inside 88 and stay there
     CONFIG.NLGapClearance = 9      -- beam half width plus a body
     CONFIG.NLMinRadius = 28        -- closest we stand to the pillar
     CONFIG.NLMaxRadius = 135       -- and the furthest, for Sun-Burst
@@ -30024,7 +30036,7 @@ do
     local newController = UIWController.new
     function UIWController.new()
         local self = newController()
-        self.Version = "50.6-stance"
+        self.Version = "50.8-closer"
         return self
     end
 end
