@@ -31379,7 +31379,7 @@ print("[UIW] NavigationV2-v44.20 loaded | persistent mob combos + safe-spot hold
 
 -- Optional standalone add-on; appended only by build-openmap.ps1.
 -- Keep original walk surfaces and elevations. Never edit dungeon mechanics.
-do
+local function setupNorthernOpenMap()
     local env = getgenv()
     if env.UIW_OpenMap then env.UIW_OpenMap:Destroy() end
     local c = env.UIW
@@ -32428,8 +32428,10 @@ do
         and workspace:FindFirstChild("dungeonStarted") and not workspace.dungeonStarted.Value
 end
 
+setupNorthernOpenMap()
+
 -- Optional open-map build only; Bob-specific aiming and observed damage feedback.
-do
+local function setupBobFeedback()
     local c = getgenv().UIW
     local d = workspace:FindFirstChild("dungeonName")
     if not c or not d or d.Value ~= "Northern Lands" then return end
@@ -32505,6 +32507,8 @@ do
         return direction,facing,emergency,dodging
     end
 end
+
+setupBobFeedback()
 
 Controller:Start()
 

@@ -1,6 +1,6 @@
 -- Optional standalone add-on; appended only by build-openmap.ps1.
 -- Keep original walk surfaces and elevations. Never edit dungeon mechanics.
-do
+local function setupNorthernOpenMap()
     local env = getgenv()
     if env.UIW_OpenMap then env.UIW_OpenMap:Destroy() end
     local c = env.UIW
@@ -1048,3 +1048,5 @@ do
     test.PreparedBeforeStart = test.WaterReady == true and test.Count > 0
         and workspace:FindFirstChild("dungeonStarted") and not workspace.dungeonStarted.Value
 end
+
+setupNorthernOpenMap()
