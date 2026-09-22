@@ -1688,6 +1688,7 @@ function UIWController:Step()
     local attacked = false
     if self.AutoCombat then
         attacked = self.Combat:Update(self.CurrentEnemy)
+        self.Combat:TrySwing()
     end
 
     local overlaps = self.Hazards:GetCurrentOverlaps(yaw)
@@ -2213,4 +2214,3 @@ function UIWController:Destroy()
 
     log("Destroyed")
 end
-

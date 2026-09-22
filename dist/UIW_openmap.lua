@@ -5944,6 +5944,8 @@ function CombatController.new(characterService, selfTracker)
             q = 0,
             e = 0,
         },
+        LastSwing = 0,
+        SwingCount = 0,
         LastAction = nil,
         AttackCommitTarget = nil,
         AttackCommitUntil = 0,
@@ -6095,12 +6097,67 @@ function CombatController:Press(slot)
     self.LastAction = slot
 end
 
+function CombatController:TrySwing()
+    local character = self.CharacterService.Character
+    local player = LocalPlayer
+    if not self.CharacterService:IsAlive() or not character or not player then
+        return false
+    end
+
+    local peaceful = player:FindFirstChild("peaceful")
+    if not peaceful or peaceful.Value ~= false or self:IsBusyCasting() then
+        return false
+    end
+
+    local dungeonStarted = Workspace:FindFirstChild("dungeonStarted")
+    if dungeonStarted and dungeonStarted.Value ~= true then
+        return false
+    end
+
+    local weapon, swingRemote
+    for _, accessory in ipairs(character:GetChildren()) do
+        if accessory:IsA("Accessory") and accessory:FindFirstChild("Weapon") then
+            local candidate = accessory:FindFirstChildOfClass("RemoteEvent")
+            if candidate then
+                weapon, swingRemote = accessory, candidate
+                break
+            end
+        end
+    end
+    if not weapon then
+        return false
+    end
+
+    local attackSpeed = weapon:FindFirstChild("attackSpeed")
+    local swingsPerSecond = attackSpeed and tonumber(attackSpeed.Value) or 2
+    local interval = 1 / math.clamp(swingsPerSecond or 2, 0.5, 5)
+    local now = os.clock()
+    if now - self.LastSwing < interval then
+        return false
+    end
+
+    local remotes = game:GetService("ReplicatedStorage"):FindFirstChild("remotes")
+    local weaponUsed = remotes and remotes:FindFirstChild("weaponUsed")
+    if not weaponUsed or not weaponUsed:IsA("RemoteEvent") then
+        return false
+    end
+
+    self.LastSwing = now
+    local ok = pcall(function()
+        swingRemote:FireServer()
+        weaponUsed:FireServer()
+    end)
+    if ok then
+        self.SwingCount += 1
+    end
+    return ok
+end
+
 function CombatController:Update(enemy)
     -- Replaced by the v38 combat + dodge section near the end of this file.
     self.LastAction = nil
     return false
 end
-
 
 local TargetHealthBar = {}
 TargetHealthBar.__index = TargetHealthBar
@@ -20408,6 +20465,7 @@ function UIWController:Step()
     local attacked = false
     if self.AutoCombat then
         attacked = self.Combat:Update(self.CurrentEnemy)
+        self.Combat:TrySwing()
     end
 
     local overlaps = self.Hazards:GetCurrentOverlaps(yaw)
@@ -20933,7 +20991,6 @@ function UIWController:Destroy()
 
     log("Destroyed")
 end
-
 
 --[[
     UIW v38 — Combat + Dodge upgrade patch

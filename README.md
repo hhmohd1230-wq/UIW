@@ -3,6 +3,9 @@
 Roblox dungeon automation script (Volt executor). The source lives in `src/`,
 split by area; `dist/UIW.lua` is the joined, ready-to-run file.
 
+With Auto Combat enabled, UIW also swings the equipped weapon at its attack
+speed during a started dungeon, pausing while casting or in a peaceful area.
+
 Base version: **v44.20** (from `UIW_v44.17.lua`). The split is lossless: building
 reproduces that file byte for byte.
 
