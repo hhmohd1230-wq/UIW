@@ -250,6 +250,45 @@ local SETTINGS_FOLDER = "UIW"
 local SETTINGS_FILE = SETTINGS_FOLDER .. "/settings.json"
 local AUTOEXEC_FILE = "UIW/UIW_Aura_Mage_v13.lua"
 
+-- Ordered by the level needed to enter each mode. Carry progression uses the
+-- lowest configured alt, not the host's level.
+local CARRY_STAGES = {
+    { Name = "Desert Temple", Difficulty = "Easy", Level = 1 },
+    { Name = "Desert Temple", Difficulty = "Medium", Level = 6 },
+    { Name = "Desert Temple", Difficulty = "Hard", Level = 12 },
+    { Name = "Desert Temple", Difficulty = "Insane", Level = 20 },
+    { Name = "Desert Temple", Difficulty = "Nightmare", Level = 27 },
+    { Name = "Winter Outpost", Difficulty = "Easy", Level = 30 },
+    { Name = "Winter Outpost", Difficulty = "Medium", Level = 40 },
+    { Name = "Winter Outpost", Difficulty = "Hard", Level = 45 },
+    { Name = "Winter Outpost", Difficulty = "Insane", Level = 50 },
+    { Name = "Winter Outpost", Difficulty = "Nightmare", Level = 55 },
+    { Name = "Pirate Island", Difficulty = "Insane", Level = 60 },
+    { Name = "Pirate Island", Difficulty = "Nightmare", Level = 65 },
+    { Name = "King's Castle", Difficulty = "Insane", Level = 70 },
+    { Name = "King's Castle", Difficulty = "Nightmare", Level = 75 },
+    { Name = "The Underworld", Difficulty = "Insane", Level = 80 },
+    { Name = "The Underworld", Difficulty = "Nightmare", Level = 85 },
+    { Name = "Samurai Palace", Difficulty = "Insane", Level = 90 },
+    { Name = "Samurai Palace", Difficulty = "Nightmare", Level = 95 },
+    { Name = "The Canals", Difficulty = "Insane", Level = 100 },
+    { Name = "The Canals", Difficulty = "Nightmare", Level = 105 },
+    { Name = "Ghastly Harbor", Difficulty = "Insane", Level = 110 },
+    { Name = "Ghastly Harbor", Difficulty = "Nightmare", Level = 115 },
+    { Name = "Steampunk Sewers", Difficulty = "Insane", Level = 120 },
+    { Name = "Steampunk Sewers", Difficulty = "Nightmare", Level = 125 },
+    { Name = "Orbital Outpost", Difficulty = "Insane", Level = 140 },
+    { Name = "Orbital Outpost", Difficulty = "Nightmare", Level = 145 },
+    { Name = "Volcanic Chambers", Difficulty = "Insane", Level = 150 },
+    { Name = "Volcanic Chambers", Difficulty = "Nightmare", Level = 155 },
+    { Name = "Aquatic Temple", Difficulty = "Insane", Level = 160 },
+    { Name = "Aquatic Temple", Difficulty = "Nightmare", Level = 165 },
+    { Name = "Enchanted Forest", Difficulty = "Insane", Level = 170 },
+    { Name = "Enchanted Forest", Difficulty = "Nightmare", Level = 175 },
+    { Name = "Northern Lands", Difficulty = "Insane", Level = 180 },
+    { Name = "Northern Lands", Difficulty = "Nightmare", Level = 185 },
+}
+
 local DEFAULT_SETTINGS = {
     Enabled = true,
     AutoCombat = true,
@@ -262,6 +301,12 @@ local DEFAULT_SETTINGS = {
     FPSLimitEnabled = false,
     FPSCap = 30,
     BlackScreen = false,
+    CarryEnabled = false,
+    CarryHostName = "",
+    CarryAlts = "",
+    CarryMode = "Auto",
+    CarryFixedStage = 1,
+    CarryHardcore = false,
     AutoExecuteOnTeleport = false,
     LowEffects = true,
     WalkSpeed = 16,

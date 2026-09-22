@@ -677,9 +677,10 @@ function HUD.new(controller)
 
     tabButton("Home", "⌂", 1)
     tabButton("Automation", "⚔", 2)
-    tabButton("Settings", "⚙", 3)
-    tabButton("Configs", "▤", 4)
-    tabButton("Inventory", "▦", 5)
+    tabButton("Carry", "♣", 3)
+    tabButton("Settings", "⚙", 4)
+    tabButton("Configs", "▤", 5)
+    tabButton("Inventory", "▦", 6)
     local inventoryPage = newPage("Inventory", false)
     if UIKit.BuildInventoryPage then UIKit.BuildInventoryPage(self, inventoryPage, controller) end
 
@@ -938,6 +939,91 @@ function HUD.new(controller)
                 controller.LowFx:Disable()
             end
         end)
+
+    -----------------------------------------------------------------------
+    -- Carry
+    -----------------------------------------------------------------------
+    local carryPage = newPage("Carry", true)
+    pageHeader(carryPage, 0, "Carry", "Keep the host and listed alts together")
+
+    local carryStatusCard = UIKit.Card(carryPage, { Size = UDim2.new(1, 0, 0, 100), LayoutOrder = 1 })
+    self.CarryTargetLabel = UIKit.Label(carryStatusCard, {
+        Position = UDim2.fromOffset(14, 8), Size = UDim2.new(1, -28, 0, 35),
+        Font = UIKit.Fonts.Semi, TextSize = 13, TextWrapped = true,
+        TextYAlignment = Enum.TextYAlignment.Top, Text = "Set a host and alts", ZIndex = 3,
+    })
+    self.CarryStatusLabel = UIKit.Label(carryStatusCard, {
+        Position = UDim2.fromOffset(14, 48), Size = UDim2.new(1, -28, 0, 43),
+        TextSize = 11, TextColor3 = T.SubText, TextWrapped = true,
+        TextYAlignment = Enum.TextYAlignment.Top, Text = "Carry off", ZIndex = 3,
+    })
+
+    toggleRow(carryPage, 2, "Carry System", "Host creates parties; alts follow and join",
+        function() return controller.CarryEnabled end,
+        function(value) controller:SetCarryOption("CarryEnabled", value) end)
+
+    local function carryInput(order, title, placeholder, height, getter, key)
+        local card = UIKit.Card(carryPage, { Size = UDim2.new(1, 0, 0, height), LayoutOrder = order })
+        UIKit.Label(card, { Position = UDim2.fromOffset(14, 8), Size = UDim2.new(1, -28, 0, 18),
+            Font = UIKit.Fonts.Semi, TextSize = 13, Text = title, ZIndex = 3 })
+        local box = UIKit.New("TextBox", {
+            Position = UDim2.fromOffset(14, 30), Size = UDim2.new(1, -28, 0, height - 42),
+            BackgroundColor3 = T.Tile, BorderSizePixel = 0, ClearTextOnFocus = false,
+            Font = UIKit.Fonts.Body, TextSize = 12, TextColor3 = T.Text,
+            PlaceholderText = placeholder, PlaceholderColor3 = T.Muted,
+            Text = getter(), TextXAlignment = Enum.TextXAlignment.Left,
+            TextYAlignment = Enum.TextYAlignment.Top, TextWrapped = true,
+            MultiLine = key == "CarryAlts", ZIndex = 3, Parent = card,
+        })
+        UIKit.Corner(box, 8)
+        UIKit.Padding(box, 8, 5, 8, 5)
+        box.FocusLost:Connect(function()
+            controller:SetCarryOption(key, box.Text)
+            box.Text = getter()
+        end)
+        return box
+    end
+    self.CarryHostBox = carryInput(3, "Host username", "Main account username", 76,
+        function() return controller.CarryHostName end, "CarryHostName")
+    self.CarryAltsBox = carryInput(4, "Alt usernames", "Separate names with commas, spaces or new lines", 102,
+        function() return controller.CarryAlts end, "CarryAlts")
+
+    toggleRow(carryPage, 5, "Fixed Dungeon", "Off: progress by the lowest alt's level",
+        function() return controller.CarryMode == "Fixed" end,
+        function(value) controller:SetCarryOption("CarryMode", value and "Fixed" or "Auto") end)
+    toggleRow(carryPage, 6, "Hardcore", "Use Hardcore when the host creates the party",
+        function() return controller.CarryHardcore end,
+        function(value) controller:SetCarryOption("CarryHardcore", value) end)
+
+    local stageCard = UIKit.Card(carryPage, { Size = UDim2.new(1, 0, 0, 256), LayoutOrder = 7 })
+    UIKit.Label(stageCard, { Position = UDim2.fromOffset(14, 8), Size = UDim2.new(1, -28, 0, 18),
+        Font = UIKit.Fonts.Semi, TextSize = 13, Text = "Fixed dungeon and difficulty", ZIndex = 3 })
+    UIKit.Label(stageCard, { Position = UDim2.fromOffset(14, 27), Size = UDim2.new(1, -28, 0, 16),
+        TextSize = 10, TextColor3 = T.Muted,
+        Text = "Pick one below. Used when Fixed Dungeon is on.", ZIndex = 3 })
+    local stageList = UIKit.New("ScrollingFrame", {
+        Position = UDim2.fromOffset(10, 48), Size = UDim2.new(1, -20, 1, -58),
+        BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 4,
+        CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
+        ZIndex = 3, Parent = stageCard,
+    })
+    UIKit.New("UIListLayout", { Padding = UDim.new(0, 4),
+        SortOrder = Enum.SortOrder.LayoutOrder, Parent = stageList })
+    self.CarryStageButtons = {}
+    for index, stage in ipairs(CARRY_STAGES) do
+        local button = UIKit.Button(stageList, {
+            Size = UDim2.new(1, -8, 0, 30), BackgroundColor3 = T.Tile,
+            Font = UIKit.Fonts.Body, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left,
+            Text = string.format("  %s · %s (Lv %d)", stage.Name, stage.Difficulty, stage.Level),
+            LayoutOrder = index, ZIndex = 4,
+        })
+        UIKit.Corner(button, 6)
+        button.MouseButton1Click:Connect(function()
+            controller:SetCarryOption("CarryFixedStage", index)
+            self:RefreshCarry()
+        end)
+        self.CarryStageButtons[index] = button
+    end
 
     -----------------------------------------------------------------------
     -- Settings
@@ -1491,6 +1577,7 @@ function HUD.new(controller)
     selectTab(Workspace:FindFirstChild("dungeonName") and "Home" or "Inventory")
     self:RefreshControls()
     self:RefreshConfigs()
+    self:RefreshCarry()
     if controller.StartupNotice then
         task.delay(0.5, function()
             self:Notify(controller.StartupNotice, "success")
@@ -1649,6 +1736,26 @@ function HUD:RefreshControls()
     end
     if not enabled then
         self:SetStatus("IDLE", "paused")
+    end
+end
+
+function HUD:RefreshCarry()
+    if not self.CarryStatusLabel then return end
+    local controller = self.Controller
+    self.CarryStatusLabel.Text = controller.CarryStatus or (controller.CarryEnabled and "Starting carry" or "Carry off")
+    local index, reason, lowest = controller:CarryTarget()
+    if index then
+        local stage = CARRY_STAGES[index]
+        local nextStage = CARRY_STAGES[index + 1]
+        self.CarryTargetLabel.Text = string.format("Target: %s %s | lowest alt Lv %d%s",
+            stage.Name, stage.Difficulty, lowest,
+            controller.CarryMode == "Auto" and nextStage and (" | next at " .. nextStage.Level) or "")
+    else
+        self.CarryTargetLabel.Text = reason or "Set a host and alts"
+    end
+    for buttonIndex, button in ipairs(self.CarryStageButtons or {}) do
+        button.BackgroundColor3 = buttonIndex == controller.CarryFixedStage
+            and UIKit.Theme.Accent or UIKit.Theme.Tile
     end
 end
 

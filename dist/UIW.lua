@@ -291,6 +291,45 @@ local SETTINGS_FOLDER = "UIW"
 local SETTINGS_FILE = SETTINGS_FOLDER .. "/settings.json"
 local AUTOEXEC_FILE = "UIW/UIW_Aura_Mage_v13.lua"
 
+-- Ordered by the level needed to enter each mode. Carry progression uses the
+-- lowest configured alt, not the host's level.
+local CARRY_STAGES = {
+    { Name = "Desert Temple", Difficulty = "Easy", Level = 1 },
+    { Name = "Desert Temple", Difficulty = "Medium", Level = 6 },
+    { Name = "Desert Temple", Difficulty = "Hard", Level = 12 },
+    { Name = "Desert Temple", Difficulty = "Insane", Level = 20 },
+    { Name = "Desert Temple", Difficulty = "Nightmare", Level = 27 },
+    { Name = "Winter Outpost", Difficulty = "Easy", Level = 30 },
+    { Name = "Winter Outpost", Difficulty = "Medium", Level = 40 },
+    { Name = "Winter Outpost", Difficulty = "Hard", Level = 45 },
+    { Name = "Winter Outpost", Difficulty = "Insane", Level = 50 },
+    { Name = "Winter Outpost", Difficulty = "Nightmare", Level = 55 },
+    { Name = "Pirate Island", Difficulty = "Insane", Level = 60 },
+    { Name = "Pirate Island", Difficulty = "Nightmare", Level = 65 },
+    { Name = "King's Castle", Difficulty = "Insane", Level = 70 },
+    { Name = "King's Castle", Difficulty = "Nightmare", Level = 75 },
+    { Name = "The Underworld", Difficulty = "Insane", Level = 80 },
+    { Name = "The Underworld", Difficulty = "Nightmare", Level = 85 },
+    { Name = "Samurai Palace", Difficulty = "Insane", Level = 90 },
+    { Name = "Samurai Palace", Difficulty = "Nightmare", Level = 95 },
+    { Name = "The Canals", Difficulty = "Insane", Level = 100 },
+    { Name = "The Canals", Difficulty = "Nightmare", Level = 105 },
+    { Name = "Ghastly Harbor", Difficulty = "Insane", Level = 110 },
+    { Name = "Ghastly Harbor", Difficulty = "Nightmare", Level = 115 },
+    { Name = "Steampunk Sewers", Difficulty = "Insane", Level = 120 },
+    { Name = "Steampunk Sewers", Difficulty = "Nightmare", Level = 125 },
+    { Name = "Orbital Outpost", Difficulty = "Insane", Level = 140 },
+    { Name = "Orbital Outpost", Difficulty = "Nightmare", Level = 145 },
+    { Name = "Volcanic Chambers", Difficulty = "Insane", Level = 150 },
+    { Name = "Volcanic Chambers", Difficulty = "Nightmare", Level = 155 },
+    { Name = "Aquatic Temple", Difficulty = "Insane", Level = 160 },
+    { Name = "Aquatic Temple", Difficulty = "Nightmare", Level = 165 },
+    { Name = "Enchanted Forest", Difficulty = "Insane", Level = 170 },
+    { Name = "Enchanted Forest", Difficulty = "Nightmare", Level = 175 },
+    { Name = "Northern Lands", Difficulty = "Insane", Level = 180 },
+    { Name = "Northern Lands", Difficulty = "Nightmare", Level = 185 },
+}
+
 local DEFAULT_SETTINGS = {
     Enabled = true,
     AutoCombat = true,
@@ -303,6 +342,12 @@ local DEFAULT_SETTINGS = {
     FPSLimitEnabled = false,
     FPSCap = 30,
     BlackScreen = false,
+    CarryEnabled = false,
+    CarryHostName = "",
+    CarryAlts = "",
+    CarryMode = "Auto",
+    CarryFixedStage = 1,
+    CarryHardcore = false,
     AutoExecuteOnTeleport = false,
     LowEffects = true,
     WalkSpeed = 16,
@@ -568,6 +613,13 @@ function ConfigStore.ReadMeta()
         ScriptPath = type(meta.ScriptPath) == "string" and meta.ScriptPath or nil,
         BlackScreen = blackScreen,
         RestoreFPSCap = restoreCap,
+        CarryEnabled = meta.CarryEnabled == true,
+        CarryHostName = type(meta.CarryHostName) == "string" and meta.CarryHostName or "",
+        CarryAlts = type(meta.CarryAlts) == "string" and meta.CarryAlts or "",
+        CarryMode = meta.CarryMode == "Fixed" and "Fixed" or "Auto",
+        CarryFixedStage = tonumber(meta.CarryFixedStage) or 1,
+        CarryHardcore = meta.CarryHardcore == true,
+        CarryRunStage = tonumber(meta.CarryRunStage),
     }
 end
 
@@ -579,6 +631,13 @@ function ConfigStore.WriteMeta(meta)
         ScriptPath = meta.ScriptPath,
         BlackScreen = meta.BlackScreen == true,
         RestoreFPSCap = meta.RestoreFPSCap,
+        CarryEnabled = meta.CarryEnabled == true,
+        CarryHostName = meta.CarryHostName or "",
+        CarryAlts = meta.CarryAlts or "",
+        CarryMode = meta.CarryMode == "Fixed" and "Fixed" or "Auto",
+        CarryFixedStage = meta.CarryFixedStage or 1,
+        CarryHardcore = meta.CarryHardcore == true,
+        CarryRunStage = meta.CarryRunStage,
     }, true)
 end
 
@@ -17394,9 +17453,10 @@ function HUD.new(controller)
 
     tabButton("Home", "⌂", 1)
     tabButton("Automation", "⚔", 2)
-    tabButton("Settings", "⚙", 3)
-    tabButton("Configs", "▤", 4)
-    tabButton("Inventory", "▦", 5)
+    tabButton("Carry", "♣", 3)
+    tabButton("Settings", "⚙", 4)
+    tabButton("Configs", "▤", 5)
+    tabButton("Inventory", "▦", 6)
     local inventoryPage = newPage("Inventory", false)
     if UIKit.BuildInventoryPage then UIKit.BuildInventoryPage(self, inventoryPage, controller) end
 
@@ -17655,6 +17715,91 @@ function HUD.new(controller)
                 controller.LowFx:Disable()
             end
         end)
+
+    -----------------------------------------------------------------------
+    -- Carry
+    -----------------------------------------------------------------------
+    local carryPage = newPage("Carry", true)
+    pageHeader(carryPage, 0, "Carry", "Keep the host and listed alts together")
+
+    local carryStatusCard = UIKit.Card(carryPage, { Size = UDim2.new(1, 0, 0, 100), LayoutOrder = 1 })
+    self.CarryTargetLabel = UIKit.Label(carryStatusCard, {
+        Position = UDim2.fromOffset(14, 8), Size = UDim2.new(1, -28, 0, 35),
+        Font = UIKit.Fonts.Semi, TextSize = 13, TextWrapped = true,
+        TextYAlignment = Enum.TextYAlignment.Top, Text = "Set a host and alts", ZIndex = 3,
+    })
+    self.CarryStatusLabel = UIKit.Label(carryStatusCard, {
+        Position = UDim2.fromOffset(14, 48), Size = UDim2.new(1, -28, 0, 43),
+        TextSize = 11, TextColor3 = T.SubText, TextWrapped = true,
+        TextYAlignment = Enum.TextYAlignment.Top, Text = "Carry off", ZIndex = 3,
+    })
+
+    toggleRow(carryPage, 2, "Carry System", "Host creates parties; alts follow and join",
+        function() return controller.CarryEnabled end,
+        function(value) controller:SetCarryOption("CarryEnabled", value) end)
+
+    local function carryInput(order, title, placeholder, height, getter, key)
+        local card = UIKit.Card(carryPage, { Size = UDim2.new(1, 0, 0, height), LayoutOrder = order })
+        UIKit.Label(card, { Position = UDim2.fromOffset(14, 8), Size = UDim2.new(1, -28, 0, 18),
+            Font = UIKit.Fonts.Semi, TextSize = 13, Text = title, ZIndex = 3 })
+        local box = UIKit.New("TextBox", {
+            Position = UDim2.fromOffset(14, 30), Size = UDim2.new(1, -28, 0, height - 42),
+            BackgroundColor3 = T.Tile, BorderSizePixel = 0, ClearTextOnFocus = false,
+            Font = UIKit.Fonts.Body, TextSize = 12, TextColor3 = T.Text,
+            PlaceholderText = placeholder, PlaceholderColor3 = T.Muted,
+            Text = getter(), TextXAlignment = Enum.TextXAlignment.Left,
+            TextYAlignment = Enum.TextYAlignment.Top, TextWrapped = true,
+            MultiLine = key == "CarryAlts", ZIndex = 3, Parent = card,
+        })
+        UIKit.Corner(box, 8)
+        UIKit.Padding(box, 8, 5, 8, 5)
+        box.FocusLost:Connect(function()
+            controller:SetCarryOption(key, box.Text)
+            box.Text = getter()
+        end)
+        return box
+    end
+    self.CarryHostBox = carryInput(3, "Host username", "Main account username", 76,
+        function() return controller.CarryHostName end, "CarryHostName")
+    self.CarryAltsBox = carryInput(4, "Alt usernames", "Separate names with commas, spaces or new lines", 102,
+        function() return controller.CarryAlts end, "CarryAlts")
+
+    toggleRow(carryPage, 5, "Fixed Dungeon", "Off: progress by the lowest alt's level",
+        function() return controller.CarryMode == "Fixed" end,
+        function(value) controller:SetCarryOption("CarryMode", value and "Fixed" or "Auto") end)
+    toggleRow(carryPage, 6, "Hardcore", "Use Hardcore when the host creates the party",
+        function() return controller.CarryHardcore end,
+        function(value) controller:SetCarryOption("CarryHardcore", value) end)
+
+    local stageCard = UIKit.Card(carryPage, { Size = UDim2.new(1, 0, 0, 256), LayoutOrder = 7 })
+    UIKit.Label(stageCard, { Position = UDim2.fromOffset(14, 8), Size = UDim2.new(1, -28, 0, 18),
+        Font = UIKit.Fonts.Semi, TextSize = 13, Text = "Fixed dungeon and difficulty", ZIndex = 3 })
+    UIKit.Label(stageCard, { Position = UDim2.fromOffset(14, 27), Size = UDim2.new(1, -28, 0, 16),
+        TextSize = 10, TextColor3 = T.Muted,
+        Text = "Pick one below. Used when Fixed Dungeon is on.", ZIndex = 3 })
+    local stageList = UIKit.New("ScrollingFrame", {
+        Position = UDim2.fromOffset(10, 48), Size = UDim2.new(1, -20, 1, -58),
+        BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 4,
+        CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
+        ZIndex = 3, Parent = stageCard,
+    })
+    UIKit.New("UIListLayout", { Padding = UDim.new(0, 4),
+        SortOrder = Enum.SortOrder.LayoutOrder, Parent = stageList })
+    self.CarryStageButtons = {}
+    for index, stage in ipairs(CARRY_STAGES) do
+        local button = UIKit.Button(stageList, {
+            Size = UDim2.new(1, -8, 0, 30), BackgroundColor3 = T.Tile,
+            Font = UIKit.Fonts.Body, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left,
+            Text = string.format("  %s · %s (Lv %d)", stage.Name, stage.Difficulty, stage.Level),
+            LayoutOrder = index, ZIndex = 4,
+        })
+        UIKit.Corner(button, 6)
+        button.MouseButton1Click:Connect(function()
+            controller:SetCarryOption("CarryFixedStage", index)
+            self:RefreshCarry()
+        end)
+        self.CarryStageButtons[index] = button
+    end
 
     -----------------------------------------------------------------------
     -- Settings
@@ -18208,6 +18353,7 @@ function HUD.new(controller)
     selectTab(Workspace:FindFirstChild("dungeonName") and "Home" or "Inventory")
     self:RefreshControls()
     self:RefreshConfigs()
+    self:RefreshCarry()
     if controller.StartupNotice then
         task.delay(0.5, function()
             self:Notify(controller.StartupNotice, "success")
@@ -18366,6 +18512,26 @@ function HUD:RefreshControls()
     end
     if not enabled then
         self:SetStatus("IDLE", "paused")
+    end
+end
+
+function HUD:RefreshCarry()
+    if not self.CarryStatusLabel then return end
+    local controller = self.Controller
+    self.CarryStatusLabel.Text = controller.CarryStatus or (controller.CarryEnabled and "Starting carry" or "Carry off")
+    local index, reason, lowest = controller:CarryTarget()
+    if index then
+        local stage = CARRY_STAGES[index]
+        local nextStage = CARRY_STAGES[index + 1]
+        self.CarryTargetLabel.Text = string.format("Target: %s %s | lowest alt Lv %d%s",
+            stage.Name, stage.Difficulty, lowest,
+            controller.CarryMode == "Auto" and nextStage and (" | next at " .. nextStage.Level) or "")
+    else
+        self.CarryTargetLabel.Text = reason or "Set a host and alts"
+    end
+    for buttonIndex, button in ipairs(self.CarryStageButtons or {}) do
+        button.BackgroundColor3 = buttonIndex == controller.CarryFixedStage
+            and UIKit.Theme.Accent or UIKit.Theme.Tile
     end
 end
 
@@ -18886,6 +19052,13 @@ function UIWController.new()
     self.FPSLimitEnabled = false
     self.FPSCap = 30
     self.BlackScreen = false
+    self.CarryEnabled = false
+    self.CarryHostName = ""
+    self.CarryAlts = ""
+    self.CarryMode = "Auto"
+    self.CarryFixedStage = 1
+    self.CarryHardcore = false
+    self.CarryRunStage = nil
     self.ActiveConfig = nil
     self.AutoLoadConfig = ""
 
@@ -18956,6 +19129,18 @@ function UIWController:ApplySettings(settings)
     self.FPSLimitEnabled = readBoolean("FPSLimitEnabled", self.FPSLimitEnabled)
     self.BlackScreen = readBoolean("BlackScreen", self.BlackScreen)
     self.FPSCap = validNumber(settings.FPSCap, 15, 120, self.FPSCap)
+    self.CarryEnabled = readBoolean("CarryEnabled", self.CarryEnabled)
+    if type(settings.CarryHostName) == "string" then
+        self.CarryHostName = string.sub(settings.CarryHostName, 1, 32)
+    end
+    if type(settings.CarryAlts) == "string" then
+        self.CarryAlts = string.sub(settings.CarryAlts, 1, 10000)
+    end
+    if settings.CarryMode == "Auto" or settings.CarryMode == "Fixed" then
+        self.CarryMode = settings.CarryMode
+    end
+    self.CarryFixedStage = math.floor(validNumber(settings.CarryFixedStage, 1, #CARRY_STAGES, self.CarryFixedStage))
+    self.CarryHardcore = readBoolean("CarryHardcore", self.CarryHardcore)
 
     CONFIG.WalkSpeed = validNumber(settings.WalkSpeed, 12, 40, CONFIG.WalkSpeed)
     CONFIG.DesiredCombatRange = validNumber(settings.DesiredCombatRange, 24, 60, CONFIG.DesiredCombatRange)
@@ -18992,6 +19177,12 @@ function UIWController:GetSettings()
         FPSLimitEnabled = self.FPSLimitEnabled,
         FPSCap = self.FPSCap,
         BlackScreen = self.BlackScreen,
+        CarryEnabled = self.CarryEnabled,
+        CarryHostName = self.CarryHostName,
+        CarryAlts = self.CarryAlts,
+        CarryMode = self.CarryMode,
+        CarryFixedStage = self.CarryFixedStage,
+        CarryHardcore = self.CarryHardcore,
         WalkSpeed = CONFIG.WalkSpeed,
         DesiredCombatRange = CONFIG.DesiredCombatRange,
         DamageCastRange = CONFIG.DamageCastRange,
@@ -19073,6 +19264,13 @@ function UIWController:WriteMeta()
     meta.ScriptPath = self:GetScriptPath()
     meta.BlackScreen = self.BlackScreen == true
     meta.RestoreFPSCap = tonumber(getgenv().UIW_OriginalFPSCap) or meta.RestoreFPSCap
+    meta.CarryEnabled = self.CarryEnabled == true
+    meta.CarryHostName = self.CarryHostName
+    meta.CarryAlts = self.CarryAlts
+    meta.CarryMode = self.CarryMode
+    meta.CarryFixedStage = self.CarryFixedStage
+    meta.CarryHardcore = self.CarryHardcore
+    meta.CarryRunStage = self.CarryRunStage
     return ConfigStore.WriteMeta(meta)
 end
 
@@ -19091,12 +19289,20 @@ function UIWController:InitConfigs()
     local meta = ConfigStore.ReadMeta()
     self.AutoExecuteOnTeleport = meta.AutoExecute
     self.AutoLoadConfig = meta.AutoLoad
+    self.CarryRunStage = meta.CarryRunStage
     if meta.BlackScreen and meta.RestoreFPSCap then
         getgenv().UIW_OriginalFPSCap = meta.RestoreFPSCap
     end
     if meta.BlackScreen ~= nil then
         self.BlackScreen = meta.BlackScreen
     end
+    self.CarryEnabled = meta.CarryEnabled
+    self.CarryHostName = meta.CarryHostName
+    self.CarryAlts = meta.CarryAlts
+    self.CarryMode = meta.CarryMode
+    self.CarryFixedStage = math.floor(math.clamp(meta.CarryFixedStage, 1, #CARRY_STAGES))
+    self.CarryHardcore = meta.CarryHardcore
+    self.CarryRunStage = meta.CarryRunStage
     if meta.AutoLoad ~= "" then
         local data = ConfigStore.Load(meta.AutoLoad)
         if data then
@@ -19249,7 +19455,7 @@ task.spawn(function()
         return HttpService:JSONDecode(readfile("UIW/accounts/" .. tostring(userId) .. "/uiw_meta.json"))
     end)
     if not okMeta or type(meta) ~= "table"
-        or (meta.AutoExecute ~= true and meta.BlackScreen ~= true)
+        or (meta.AutoExecute ~= true and meta.BlackScreen ~= true and meta.CarryEnabled ~= true)
     then
         return
     end
@@ -19278,7 +19484,7 @@ end)
 ]==]
 
 function UIWController:ConfigureAutoExecute(announce)
-    if not self.AutoExecuteOnTeleport and not self.BlackScreen then
+    if not self.AutoExecuteOnTeleport and not self.BlackScreen and not self.CarryEnabled then
         return false
     end
 
@@ -20952,7 +21158,13 @@ function UIWController:Start()
     end
 
     local function tryReplay()
-        if self.ReplayTriggered or not self.AutoRetryEnabled or self.Destroyed then
+        if self.ReplayTriggered or (not self.AutoRetryEnabled and not self.CarryEnabled) or self.Destroyed then
+            return
+        end
+        if self.CarryEnabled and string.lower(LocalPlayer.Name)
+            ~= string.lower(self.CarryHostName or "")
+        then
+            self.HUD:SetRetryStatus("carry: host controls replay", COLORS.Pathing)
             return
         end
 
@@ -20968,7 +21180,7 @@ function UIWController:Start()
         end
         local deadLongEnough = self.DeadSince and os.clock() - self.DeadSince >= CONFIG.ReplayOnDeathDelay
 
-        if not dungeonFinished() and not deadLongEnough then
+        if not dungeonFinished() and (self.CarryEnabled or not deadLongEnough) then
             self.CompletionSeenAt = nil
             if self.HUD and os.clock() - self.RunStartTime > 5 then
                 local fighting = readValue(
@@ -20983,8 +21195,21 @@ function UIWController:Start()
             return
         end
 
+
+        if self.CarryEnabled and not self:CarryRewardReady() then
+            self.HUD:SetRetryStatus("carry: waiting for reward and updated levels", COLORS.Pathing)
+            return
+        end
+
+        if self.CarryEnabled then
+            self.HUD:SetRetryStatus("carry: returning to lobby to retry or upgrade", COLORS.Pathing)
+            return
+        end
+
         self.CompletionSeenAt = self.CompletionSeenAt or os.clock()
-        local remaining = CONFIG.ReplayDelay - (os.clock() - self.CompletionSeenAt)
+        local delay = self.CarryEnabled and self.CarryMode == "Auto"
+            and math.max(CONFIG.ReplayDelay, 6) or CONFIG.ReplayDelay
+        local remaining = delay - (os.clock() - self.CompletionSeenAt)
 
         if remaining > 0 then
             if self.HUD then
@@ -21015,11 +21240,15 @@ function UIWController:Start()
 
         self.ReplayTriggered = true
         self.ReplayToken += 1
+        self.ReplaySourceJob = game.JobId
         local token = self.ReplayToken
 
         task.spawn(function()
             for attempt = 1, CONFIG.ReplayAttempts do
-                if token ~= self.ReplayToken or not self.AutoRetryEnabled or self.Destroyed then
+                if token ~= self.ReplayToken
+                    or (not self.AutoRetryEnabled and not self.CarryEnabled)
+                    or self.Destroyed or (self.CarryEnabled and self:CarryNeedsLobby())
+                then
                     return
                 end
 
@@ -21036,16 +21265,18 @@ function UIWController:Start()
                 if not ok then
                     warn("[UIW] replay request failed: " .. tostring(err))
                 end
+                if self.HUD then
+                    self.HUD:SetRetryStatus("replay sent • waiting for teleport", COLORS.Running)
+                end
 
-                task.wait(CONFIG.ReplayRetryInterval)
+                -- A successful request teleports the party asynchronously.
+                -- Multiple requests a few seconds apart can split the party
+                -- into different destination servers.
+                task.wait(12)
+                if self.Destroyed or game.JobId ~= self.ReplaySourceJob then return end
             end
 
-            if self.HUD then
-                self.HUD:SetRetryStatus("replay sent • waiting for teleport", COLORS.Running)
-            end
-
-            -- Still here after a while? Allow another round.
-            task.wait(10)
+            -- Still in this server after all attempts? Allow another round.
             if token == self.ReplayToken then
                 self.ReplayTriggered = false
                 self.CompletionSeenAt = nil
@@ -31689,9 +31920,428 @@ do
         return self
     end
 end
+-- Carry progression. The host chooses the highest stage available to the
+-- lowest listed alt; everyone else follows and joins the host's private party.
+do
+    local Remotes = game:GetService("ReplicatedStorage"):WaitForChild("remotes")
+
+    local function sameName(a, b)
+        return type(a) == "string" and type(b) == "string"
+            and string.lower(a) == string.lower(b)
+    end
+
+    local function cleanName(name)
+        return string.match(tostring(name or ""), "^%s*([%w_]+)%s*$")
+    end
+
+    local function altNames(raw)
+        local names, seen = {}, {}
+        for value in string.gmatch(tostring(raw or ""), "[^,%s;]+") do
+            local name = cleanName(value)
+            if name and not seen[string.lower(name)] then
+                seen[string.lower(name)] = true
+                table.insert(names, name)
+            end
+        end
+        return names
+    end
+
+    local function playerNamed(name)
+        for _, player in ipairs(Players:GetPlayers()) do
+            if sameName(player.Name, name) then return player end
+        end
+    end
+
+    local function playerLevel(player)
+        local loaded = player and player:FindFirstChild("dataLoaded")
+        if not loaded or loaded.Value ~= true then return nil end
+        local stats = player and player:FindFirstChild("leaderstats")
+        local level = stats and stats:FindFirstChild("Level")
+        return level and tonumber(level.Value)
+    end
+
+    local function stageForLevel(level)
+        local choice = 1
+        for index, stage in ipairs(CARRY_STAGES) do
+            if level >= stage.Level then choice = index else break end
+        end
+        return choice
+    end
+
+    local function stageForParty(party)
+        local map = party and party:FindFirstChild("mapName")
+        local diff = map and map:FindFirstChild("difficulty")
+        if not map or not diff then return nil end
+        for index, stage in ipairs(CARRY_STAGES) do
+            if stage.Name == map.Value and stage.Difficulty == diff.Value then
+                return index
+            end
+        end
+    end
+
+    local function inLobby()
+        local name = Workspace:FindFirstChild("dungeonName")
+        return name and name.Value == "" and Workspace:FindFirstChild("games") ~= nil
+    end
+
+    local function ownParty()
+        local games = Workspace:FindFirstChild("games")
+        local lobbies = games and games:FindFirstChild("inLobby")
+        if not lobbies then return nil end
+        for _, party in ipairs(lobbies:GetChildren()) do
+            if party:FindFirstChild(LocalPlayer.Name) then return party end
+        end
+    end
+
+    local function hostParty(hostName)
+        local games = Workspace:FindFirstChild("games")
+        local lobbies = games and games:FindFirstChild("inLobby")
+        if not lobbies then return nil end
+        for _, party in ipairs(lobbies:GetChildren()) do
+            if party:FindFirstChild(hostName)
+                and (sameName(party.Name, hostName)
+                    or string.sub(string.lower(party.Name), 1, #hostName + 1)
+                        == string.lower(hostName) .. "_")
+            then
+                return party
+            end
+        end
+    end
+
+    local function dungeonFinished()
+        local dungeon = Workspace:FindFirstChild("dungeon")
+        local bossRoom = dungeon and dungeon:FindFirstChild("bossRoom")
+        local flag = bossRoom and bossRoom:FindFirstChild("dungeonFinished")
+        return (flag and flag.Value == true)
+            or (dungeon and dungeon:GetAttribute("dungeonFinished") == true)
+    end
+
+    function UIWController:CarryRewardReady()
+        return self.CarryRewardAt ~= nil
+            and os.clock() - self.CarryRewardAt >= 5
+    end
+
+    local function pressPlay()
+        local intro = LocalPlayer:FindFirstChild("PlayerGui")
+        intro = intro and intro:FindFirstChild("introGui")
+        local title = intro and intro:FindFirstChild("title")
+        local frame = title and title:FindFirstChild("Frame")
+        local button = frame and frame:FindFirstChild("TextButton")
+        if not button or not frame.Visible then return false end
+        if type(firesignal) == "function" then
+            pcall(firesignal, button.Activated)
+        else
+            local center = button.AbsolutePosition + button.AbsoluteSize * 0.5
+            pcall(function()
+                VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, true, game, 0)
+                VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, false, game, 0)
+            end)
+        end
+        return true
+    end
+
+    function UIWController:CarryMembers()
+        local host = cleanName(self.CarryHostName)
+        local alts = altNames(self.CarryAlts)
+        local filtered = {}
+        for _, name in ipairs(alts) do
+            if not sameName(name, host) then table.insert(filtered, name) end
+        end
+        return host, filtered
+    end
+
+    function UIWController:CarryTarget()
+        if os.clock() < (self.CarryLevelReadyAt or 0) then
+            return nil, "Waiting for player levels to load"
+        end
+        local host, alts = self:CarryMembers()
+        if not host or #alts == 0 then return nil, "Set a host and at least one alt" end
+        local hostPlayer = playerNamed(host)
+        local hostLevel = playerLevel(hostPlayer)
+        if not hostLevel then return nil, "Waiting for host " .. host end
+        local lowest = math.huge
+        for _, name in ipairs(alts) do
+            local level = playerLevel(playerNamed(name))
+            if not level then return nil, "Waiting for alt " .. name end
+            if level > hostLevel then return nil, name .. " is higher level than the host" end
+            lowest = math.min(lowest, level)
+        end
+        local index = self.CarryMode == "Fixed"
+            and math.floor(math.clamp(tonumber(self.CarryFixedStage) or 1, 1, #CARRY_STAGES))
+            or stageForLevel(lowest)
+        local stage = CARRY_STAGES[index]
+        if hostLevel < stage.Level then return nil, "Host needs level " .. stage.Level end
+        if lowest < stage.Level then return nil, "Lowest alt needs level " .. stage.Level end
+        return index, nil, lowest
+    end
+
+    function UIWController:CarryNeedsLobby()
+        if not self.CarryEnabled then return false end
+        local host, alts = self:CarryMembers()
+        if not playerNamed(host) then return true end
+        for _, name in ipairs(alts) do
+            if not playerNamed(name) then return true end
+        end
+        local index = self:CarryTarget()
+        if not index then return false end
+        local runStage = tonumber(self.CarryRunStage)
+        if runStage and runStage ~= index then return true end
+        if not runStage then
+            local name = Workspace:FindFirstChild("dungeonName")
+            if name and name.Value ~= "" and name.Value ~= CARRY_STAGES[index].Name then
+                return true
+            end
+        end
+        if self.CarryMode == "Fixed" then
+            local name = Workspace:FindFirstChild("dungeonName")
+            return name and name.Value ~= "" and name.Value ~= CARRY_STAGES[index].Name
+        end
+        return false
+    end
+
+    function UIWController:SetCarryOption(key, value)
+        if key == "CarryHostName" then
+            self.CarryHostName = cleanName(value) or ""
+        elseif key == "CarryAlts" then
+            self.CarryAlts = string.sub(tostring(value or ""), 1, 10000)
+        elseif key == "CarryMode" then
+            self.CarryMode = value == "Fixed" and "Fixed" or "Auto"
+        elseif key == "CarryFixedStage" then
+            self.CarryFixedStage = math.floor(math.clamp(tonumber(value) or 1, 1, #CARRY_STAGES))
+        elseif key == "CarryHardcore" then
+            self.CarryHardcore = value == true
+        elseif key == "CarryEnabled" then
+            self.CarryEnabled = value == true
+            self.CarryLastActionAt = 0
+        else
+            return
+        end
+        self:WriteMeta()
+        if self.CarryEnabled then self:ConfigureAutoExecute() end
+        if self.HUD then self.HUD:RefreshControls() end
+    end
+
+    function UIWController:SetCarryRunStage(index)
+        if self.CarryRunStage == index then return end
+        self.CarryRunStage = index
+        self:WriteMeta()
+    end
+
+    function UIWController:CarryHostLobby(host, alts, index, lowest)
+        local stage = CARRY_STAGES[index]
+        local party = hostParty(host)
+        local mine = ownParty()
+        if mine and mine ~= party then
+            self.CarryStatus = "Leaving another party"
+            if os.clock() - (self.CarryLastActionAt or 0) > 5 then
+                self.CarryLastActionAt = os.clock()
+                Remotes.leaveGame:FireServer()
+            end
+            return
+        end
+        if party and stageForParty(party) ~= index then
+            self.CarryStatus = "Switching to " .. stage.Name .. " " .. stage.Difficulty
+            if os.clock() - (self.CarryLastActionAt or 0) > 5 then
+                self.CarryLastActionAt = os.clock()
+                Remotes.leaveGame:FireServer()
+            end
+            return
+        end
+        if not party then
+            self.CarryStatus = "Creating " .. stage.Name .. " " .. stage.Difficulty
+            if self.CarryBusy or os.clock() - (self.CarryLastActionAt or 0) < 8 then return end
+            self.CarryBusy = true
+            self.CarryLastActionAt = os.clock()
+            task.spawn(function()
+                local ok, result = pcall(function()
+                    return Remotes.createLobby:InvokeServer(
+                        stage.Name, stage.Difficulty, stage.Level,
+                        self.CarryHardcore == true, true, false
+                    )
+                end)
+                self.CarryBusy = false
+                if not ok or result ~= true then
+                    self.CarryStatus = "Create failed; retrying"
+                end
+            end)
+            return
+        end
+
+        self:SetCarryRunStage(index)
+        local private = party.mapName and party.mapName:FindFirstChild("private")
+        for _, name in ipairs(alts) do
+            local player = playerNamed(name)
+            local actualName = player and player.Name or name
+            if private and private.Value and not private:FindFirstChild(actualName) then
+                Remotes.addPlayerToWhitelist:FireServer(actualName)
+            end
+            if not party:FindFirstChild(actualName) then
+                self.CarryStatus = "Waiting for " .. actualName .. " to join"
+                return
+            end
+        end
+        self.CarryStatus = string.format("Starting %s %s | lowest level %d", stage.Name, stage.Difficulty, lowest)
+        if os.clock() - (self.CarryLastActionAt or 0) > 12 then
+            self.CarryLastActionAt = os.clock()
+            Remotes.startDungeon:FireServer()
+        end
+    end
+
+    function UIWController:CarryAltLobby(host)
+        local hostPlayer = playerNamed(host)
+        if not hostPlayer then
+            self.CarryStatus = "Following " .. host .. " to his lobby"
+            if os.clock() - (self.CarryLastActionAt or 0) < 15 then return end
+            self.CarryLastActionAt = os.clock()
+            if not self.CarryHostUserId then
+                task.spawn(function()
+                    local ok, id = pcall(function() return Players:GetUserIdFromNameAsync(host) end)
+                    if ok then self.CarryHostUserId = id end
+                end)
+            else
+                Remotes.teleportToFriend:FireServer(self.CarryHostUserId)
+            end
+            return
+        end
+        self.CarryHostUserId = hostPlayer.UserId
+        local party = hostParty(hostPlayer.Name)
+        if not party then
+            self.CarryStatus = "Waiting for " .. host .. " to create a party"
+            return
+        end
+        local mine = ownParty()
+        if mine == party then
+            local index = stageForParty(party)
+            if index then self:SetCarryRunStage(index) end
+            self.CarryStatus = "In " .. host .. "'s party; waiting for everyone"
+            return
+        end
+        if mine then
+            self.CarryStatus = "Leaving another party"
+            if os.clock() - (self.CarryLastActionAt or 0) > 5 then
+                self.CarryLastActionAt = os.clock()
+                Remotes.leaveGame:FireServer()
+            end
+            return
+        end
+        local private = party.mapName and party.mapName:FindFirstChild("private")
+        if private and private.Value and not private:FindFirstChild(LocalPlayer.Name) then
+            self.CarryStatus = "Waiting for host whitelist"
+            return
+        end
+        self.CarryStatus = "Joining " .. host .. "'s party"
+        if self.CarryBusy or os.clock() - (self.CarryLastActionAt or 0) < 5 then return end
+        self.CarryBusy = true
+        self.CarryLastActionAt = os.clock()
+        task.spawn(function()
+            local ok, result = pcall(function()
+                return Remotes.joinDungeon:InvokeServer(party.Name)
+            end)
+            self.CarryBusy = false
+            if ok and result == true then
+                local index = stageForParty(party)
+                if index then self:SetCarryRunStage(index) end
+            else
+                self.CarryStatus = "Join failed; retrying"
+            end
+        end)
+    end
+
+    function UIWController:CarryStep()
+        if not self.CarryEnabled or self.Destroyed then return end
+        local host, alts = self:CarryMembers()
+        if not host or #alts == 0 then
+            self.CarryStatus = "Enter the host and alt usernames"
+            return
+        end
+        local isHost = sameName(LocalPlayer.Name, host)
+        if not isHost then
+            local listed = false
+            for _, name in ipairs(alts) do
+                if sameName(LocalPlayer.Name, name) then listed = true break end
+            end
+            if not listed then
+                self.CarryStatus = "This account is not listed in the carry group"
+                return
+            end
+        end
+
+        if inLobby() then
+            if pressPlay() then
+                self.CarryStatus = "Skipping lobby intro"
+                return
+            end
+            local intro = LocalPlayer.PlayerGui:FindFirstChild("introGui")
+            if intro then
+                self.CarryStatus = "Waiting for Play button"
+                return
+            end
+            if isHost then
+                local index, reason, lowest = self:CarryTarget()
+                if not index then self.CarryStatus = reason return end
+                self:CarryHostLobby(playerNamed(host).Name, alts, index, lowest)
+            else
+                self:CarryAltLobby(host)
+            end
+            return
+        end
+
+        local dungeonName = Workspace:FindFirstChild("dungeonName")
+        if not dungeonName or dungeonName.Value == "" then
+            self.CarryStatus = "Waiting for lobby or dungeon"
+            return
+        end
+        local index, reason, lowest = self:CarryTarget()
+        local stage = index and CARRY_STAGES[index]
+        if dungeonFinished() and self:CarryRewardReady() then
+            local previous = CARRY_STAGES[tonumber(self.CarryRunStage) or 0]
+            self.CarryStatus = stage
+                and ((previous and previous ~= stage and "Upgrading to " or "Retrying ")
+                    .. stage.Name .. " " .. stage.Difficulty .. " via lobby")
+                or "Returning to lobby to regroup"
+            if os.clock() - (self.CarryLastActionAt or 0) > 10 then
+                self.CarryLastActionAt = os.clock()
+                Remotes.ReturnToLobbyEvent:FireServer()
+            end
+            return
+        end
+        if not index then
+            self.CarryStatus = reason
+            return
+        end
+        local nextStage = CARRY_STAGES[index + 1]
+        self.CarryStatus = string.format("%s %s | lowest %d%s", stage.Name, stage.Difficulty,
+            lowest, nextStage and (" -> " .. nextStage.Level) or " | latest dungeon")
+    end
+
+    function UIWController:StartCarry()
+        self.CarryStatus = self.CarryEnabled and "Starting carry" or "Carry off"
+        self.CarryLevelReadyAt = os.clock() + 6
+        self.CarryRewardAt = nil
+        local rewardRemote = Remotes:FindFirstChild("cloneRewardGui")
+        if rewardRemote then
+            self.Maid:Give(rewardRemote.OnClientEvent:Connect(function()
+                self.CarryRewardAt = os.clock()
+            end))
+        end
+        self.Maid:Give(RunService.Heartbeat:Connect(function()
+            if os.clock() - (self.CarryCheckAt or 0) < 1 then return end
+            self.CarryCheckAt = os.clock()
+            local ok, err = pcall(self.CarryStep, self)
+            if not ok then self.CarryStatus = "Carry error: " .. tostring(err) end
+            if self.HUD and self.HUD.RefreshCarry then self.HUD:RefreshCarry() end
+        end))
+    end
+
+    local oldStart = UIWController.Start
+    function UIWController:Start()
+        oldStart(self)
+        self:StartCarry()
+    end
+end
 
 local Controller = UIWController.new()
-Controller.Version = tostring(Controller.Version) .. "+streamtarget"
+Controller.Version = tostring(Controller.Version) .. "+streamtarget+carry6"
 
 getgenv().UIW = Controller
 getgenv().UNDERWORLD_AI = Controller

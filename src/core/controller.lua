@@ -30,6 +30,13 @@ function UIWController.new()
     self.FPSLimitEnabled = false
     self.FPSCap = 30
     self.BlackScreen = false
+    self.CarryEnabled = false
+    self.CarryHostName = ""
+    self.CarryAlts = ""
+    self.CarryMode = "Auto"
+    self.CarryFixedStage = 1
+    self.CarryHardcore = false
+    self.CarryRunStage = nil
     self.ActiveConfig = nil
     self.AutoLoadConfig = ""
 
@@ -100,6 +107,18 @@ function UIWController:ApplySettings(settings)
     self.FPSLimitEnabled = readBoolean("FPSLimitEnabled", self.FPSLimitEnabled)
     self.BlackScreen = readBoolean("BlackScreen", self.BlackScreen)
     self.FPSCap = validNumber(settings.FPSCap, 15, 120, self.FPSCap)
+    self.CarryEnabled = readBoolean("CarryEnabled", self.CarryEnabled)
+    if type(settings.CarryHostName) == "string" then
+        self.CarryHostName = string.sub(settings.CarryHostName, 1, 32)
+    end
+    if type(settings.CarryAlts) == "string" then
+        self.CarryAlts = string.sub(settings.CarryAlts, 1, 10000)
+    end
+    if settings.CarryMode == "Auto" or settings.CarryMode == "Fixed" then
+        self.CarryMode = settings.CarryMode
+    end
+    self.CarryFixedStage = math.floor(validNumber(settings.CarryFixedStage, 1, #CARRY_STAGES, self.CarryFixedStage))
+    self.CarryHardcore = readBoolean("CarryHardcore", self.CarryHardcore)
 
     CONFIG.WalkSpeed = validNumber(settings.WalkSpeed, 12, 40, CONFIG.WalkSpeed)
     CONFIG.DesiredCombatRange = validNumber(settings.DesiredCombatRange, 24, 60, CONFIG.DesiredCombatRange)
@@ -136,6 +155,12 @@ function UIWController:GetSettings()
         FPSLimitEnabled = self.FPSLimitEnabled,
         FPSCap = self.FPSCap,
         BlackScreen = self.BlackScreen,
+        CarryEnabled = self.CarryEnabled,
+        CarryHostName = self.CarryHostName,
+        CarryAlts = self.CarryAlts,
+        CarryMode = self.CarryMode,
+        CarryFixedStage = self.CarryFixedStage,
+        CarryHardcore = self.CarryHardcore,
         WalkSpeed = CONFIG.WalkSpeed,
         DesiredCombatRange = CONFIG.DesiredCombatRange,
         DamageCastRange = CONFIG.DamageCastRange,
@@ -217,6 +242,13 @@ function UIWController:WriteMeta()
     meta.ScriptPath = self:GetScriptPath()
     meta.BlackScreen = self.BlackScreen == true
     meta.RestoreFPSCap = tonumber(getgenv().UIW_OriginalFPSCap) or meta.RestoreFPSCap
+    meta.CarryEnabled = self.CarryEnabled == true
+    meta.CarryHostName = self.CarryHostName
+    meta.CarryAlts = self.CarryAlts
+    meta.CarryMode = self.CarryMode
+    meta.CarryFixedStage = self.CarryFixedStage
+    meta.CarryHardcore = self.CarryHardcore
+    meta.CarryRunStage = self.CarryRunStage
     return ConfigStore.WriteMeta(meta)
 end
 
@@ -235,12 +267,20 @@ function UIWController:InitConfigs()
     local meta = ConfigStore.ReadMeta()
     self.AutoExecuteOnTeleport = meta.AutoExecute
     self.AutoLoadConfig = meta.AutoLoad
+    self.CarryRunStage = meta.CarryRunStage
     if meta.BlackScreen and meta.RestoreFPSCap then
         getgenv().UIW_OriginalFPSCap = meta.RestoreFPSCap
     end
     if meta.BlackScreen ~= nil then
         self.BlackScreen = meta.BlackScreen
     end
+    self.CarryEnabled = meta.CarryEnabled
+    self.CarryHostName = meta.CarryHostName
+    self.CarryAlts = meta.CarryAlts
+    self.CarryMode = meta.CarryMode
+    self.CarryFixedStage = math.floor(math.clamp(meta.CarryFixedStage, 1, #CARRY_STAGES))
+    self.CarryHardcore = meta.CarryHardcore
+    self.CarryRunStage = meta.CarryRunStage
     if meta.AutoLoad ~= "" then
         local data = ConfigStore.Load(meta.AutoLoad)
         if data then
@@ -393,7 +433,7 @@ task.spawn(function()
         return HttpService:JSONDecode(readfile("UIW/accounts/" .. tostring(userId) .. "/uiw_meta.json"))
     end)
     if not okMeta or type(meta) ~= "table"
-        or (meta.AutoExecute ~= true and meta.BlackScreen ~= true)
+        or (meta.AutoExecute ~= true and meta.BlackScreen ~= true and meta.CarryEnabled ~= true)
     then
         return
     end
@@ -422,7 +462,7 @@ end)
 ]==]
 
 function UIWController:ConfigureAutoExecute(announce)
-    if not self.AutoExecuteOnTeleport and not self.BlackScreen then
+    if not self.AutoExecuteOnTeleport and not self.BlackScreen and not self.CarryEnabled then
         return false
     end
 
@@ -2096,7 +2136,13 @@ function UIWController:Start()
     end
 
     local function tryReplay()
-        if self.ReplayTriggered or not self.AutoRetryEnabled or self.Destroyed then
+        if self.ReplayTriggered or (not self.AutoRetryEnabled and not self.CarryEnabled) or self.Destroyed then
+            return
+        end
+        if self.CarryEnabled and string.lower(LocalPlayer.Name)
+            ~= string.lower(self.CarryHostName or "")
+        then
+            self.HUD:SetRetryStatus("carry: host controls replay", COLORS.Pathing)
             return
         end
 
@@ -2112,7 +2158,7 @@ function UIWController:Start()
         end
         local deadLongEnough = self.DeadSince and os.clock() - self.DeadSince >= CONFIG.ReplayOnDeathDelay
 
-        if not dungeonFinished() and not deadLongEnough then
+        if not dungeonFinished() and (self.CarryEnabled or not deadLongEnough) then
             self.CompletionSeenAt = nil
             if self.HUD and os.clock() - self.RunStartTime > 5 then
                 local fighting = readValue(
@@ -2127,8 +2173,21 @@ function UIWController:Start()
             return
         end
 
+
+        if self.CarryEnabled and not self:CarryRewardReady() then
+            self.HUD:SetRetryStatus("carry: waiting for reward and updated levels", COLORS.Pathing)
+            return
+        end
+
+        if self.CarryEnabled then
+            self.HUD:SetRetryStatus("carry: returning to lobby to retry or upgrade", COLORS.Pathing)
+            return
+        end
+
         self.CompletionSeenAt = self.CompletionSeenAt or os.clock()
-        local remaining = CONFIG.ReplayDelay - (os.clock() - self.CompletionSeenAt)
+        local delay = self.CarryEnabled and self.CarryMode == "Auto"
+            and math.max(CONFIG.ReplayDelay, 6) or CONFIG.ReplayDelay
+        local remaining = delay - (os.clock() - self.CompletionSeenAt)
 
         if remaining > 0 then
             if self.HUD then
@@ -2159,11 +2218,15 @@ function UIWController:Start()
 
         self.ReplayTriggered = true
         self.ReplayToken += 1
+        self.ReplaySourceJob = game.JobId
         local token = self.ReplayToken
 
         task.spawn(function()
             for attempt = 1, CONFIG.ReplayAttempts do
-                if token ~= self.ReplayToken or not self.AutoRetryEnabled or self.Destroyed then
+                if token ~= self.ReplayToken
+                    or (not self.AutoRetryEnabled and not self.CarryEnabled)
+                    or self.Destroyed or (self.CarryEnabled and self:CarryNeedsLobby())
+                then
                     return
                 end
 
@@ -2180,16 +2243,18 @@ function UIWController:Start()
                 if not ok then
                     warn("[UIW] replay request failed: " .. tostring(err))
                 end
+                if self.HUD then
+                    self.HUD:SetRetryStatus("replay sent • waiting for teleport", COLORS.Running)
+                end
 
-                task.wait(CONFIG.ReplayRetryInterval)
+                -- A successful request teleports the party asynchronously.
+                -- Multiple requests a few seconds apart can split the party
+                -- into different destination servers.
+                task.wait(12)
+                if self.Destroyed or game.JobId ~= self.ReplaySourceJob then return end
             end
 
-            if self.HUD then
-                self.HUD:SetRetryStatus("replay sent • waiting for teleport", COLORS.Running)
-            end
-
-            -- Still here after a while? Allow another round.
-            task.wait(10)
+            -- Still in this server after all attempts? Allow another round.
             if token == self.ReplayToken then
                 self.ReplayTriggered = false
                 self.CompletionSeenAt = nil

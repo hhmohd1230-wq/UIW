@@ -257,6 +257,13 @@ function ConfigStore.ReadMeta()
         ScriptPath = type(meta.ScriptPath) == "string" and meta.ScriptPath or nil,
         BlackScreen = blackScreen,
         RestoreFPSCap = restoreCap,
+        CarryEnabled = meta.CarryEnabled == true,
+        CarryHostName = type(meta.CarryHostName) == "string" and meta.CarryHostName or "",
+        CarryAlts = type(meta.CarryAlts) == "string" and meta.CarryAlts or "",
+        CarryMode = meta.CarryMode == "Fixed" and "Fixed" or "Auto",
+        CarryFixedStage = tonumber(meta.CarryFixedStage) or 1,
+        CarryHardcore = meta.CarryHardcore == true,
+        CarryRunStage = tonumber(meta.CarryRunStage),
     }
 end
 
@@ -268,6 +275,13 @@ function ConfigStore.WriteMeta(meta)
         ScriptPath = meta.ScriptPath,
         BlackScreen = meta.BlackScreen == true,
         RestoreFPSCap = meta.RestoreFPSCap,
+        CarryEnabled = meta.CarryEnabled == true,
+        CarryHostName = meta.CarryHostName or "",
+        CarryAlts = meta.CarryAlts or "",
+        CarryMode = meta.CarryMode == "Fixed" and "Fixed" or "Auto",
+        CarryFixedStage = meta.CarryFixedStage or 1,
+        CarryHardcore = meta.CarryHardcore == true,
+        CarryRunStage = meta.CarryRunStage,
     }, true)
 end
 

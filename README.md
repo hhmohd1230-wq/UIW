@@ -15,6 +15,21 @@ after a teleport when enabled.
 Map scenery clearing runs only in Northern Lands. Other dungeons keep their
 original map parts and collisions, including during boss fights.
 
+The **Carry** tab coordinates a host and any listed alt usernames. Enable it on
+each account, enter the same host and alt list, and leave **Fixed Dungeon** off
+for automatic progression. The host waits until every listed alt has loaded in
+the lobby, creates a private party at the highest difficulty the lowest alt can
+enter, whitelists the alts and starts when they have all joined. Alts use the
+game's friend join control if they land in another lobby. The lobby Play button
+is pressed automatically. After the dungeon finishes and rewards arrive, every
+account returns to the lobby. The host creates the same dungeon again until the
+lowest alt reaches the next level requirement, then creates the newly unlocked
+dungeon or difficulty. This lobby retry keeps every alt in the party. **Fixed
+Dungeon** instead keeps selecting the chosen dungeon and difficulty. Carry
+choices are saved per account and queue
+UIW after teleport while Carry is enabled. The game still controls party and
+server capacity.
+
 Base version: **v44.20** (from `UIW_v44.17.lua`). The split is lossless: building
 reproduces that file byte for byte.
 
@@ -110,6 +125,7 @@ Everything is in the **Configs** tab of the window.
 | `src/core/dodge_solver.lua` | `DodgeSolver` |
 | `src/core/combat.lua` | `CombatController` (Q/E casting) |
 | `src/core/controller.lua` | `UIWController` (targets, main loop) |
+| `src/carry/system.lua` | Host and alt party coordination, reward gated retry and stage selection |
 | `src/ui/hud.lua` | The hub window (tabs, cards, toasts, config page) |
 | `src/ui/*` | Hitbox ESP, path ESP, target health bar, tactical display |
 | `src/patches/*` | Version layers that extend the classes above (v42 ... v44.20) |
