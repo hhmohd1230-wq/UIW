@@ -108,6 +108,16 @@ do
         end
         local now = os.clock()
 
+        local dungeonStarted = workspace:FindFirstChild("dungeonStarted")
+        if not dungeonStarted or dungeonStarted.Value ~= true
+            or not (controller.Dungeon and controller.Dungeon.HasSeenEnemies)
+        then
+            state.Stuck, state.Until = 0, 0
+            state.Last, state.At = root.Position, now
+            ghost(model, false)
+            return
+        end
+
         -- an escape in progress owns the character until it is done
         if now < state.Until then
             local elapsed = now - state.Started

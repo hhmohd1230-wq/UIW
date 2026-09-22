@@ -3388,6 +3388,7 @@ function DungeonModel.new()
         LastKnownRoom = 1,
         EnemyCache = {},
         LastEnemyRefresh = 0,
+        HasSeenEnemies = false,
     }, DungeonModel)
 end
 
@@ -3464,6 +3465,10 @@ function DungeonModel:GetAliveEnemies(force)
                 end
             end
         end
+    end
+
+    if #self.EnemyCache > 0 then
+        self.HasSeenEnemies = true
     end
 
     return self.EnemyCache
@@ -3672,6 +3677,15 @@ function DungeonModel:GetNextReachableCheckpointTowardRoom(position, targetRoom,
 end
 
 function DungeonModel:GetProgressionGoal(position)
+    -- Underworld's first wave appears after the dungeon-start signal. Before
+    -- that, the only checkpoints are several locked rooms away.
+    local dungeonName = Workspace:FindFirstChild("dungeonName")
+    if not self.HasSeenEnemies
+        and (not dungeonName or dungeonName.Value == "The Underworld")
+    then
+        return nil
+    end
+
     for roomNumber = math.max(self.LastKnownRoom, 1), 9 do
         local room = self.Rooms[roomNumber]
 
@@ -3690,7 +3704,6 @@ function DungeonModel:GetProgressionGoal(position)
 
     return nil
 end
-
 local RoutePlanner = {}
 RoutePlanner.__index = RoutePlanner
 
@@ -20546,6 +20559,11 @@ function UIWController:Step()
             "COMBAT",
             "engaging " .. (self.CurrentEnemy and self.CurrentEnemy.Model.Name or "enemy")
         )
+    elseif not self.Dungeon.HasSeenEnemies
+        and Workspace:FindFirstChild("dungeonName")
+        and Workspace.dungeonName.Value == "The Underworld"
+    then
+        self.HUD:SetStatus("PATHING", "waiting for the first wave")
     elseif self.Route.Computing and #self.Route.Waypoints == 0 then
         self.HUD:SetStatus("PATHING", "calculating initial dungeon route")
     elseif self.ProgressionOverridePart and self.ProgressionOverridePart.Parent then
@@ -31320,6 +31338,16 @@ do
             return
         end
         local now = os.clock()
+
+        local dungeonStarted = workspace:FindFirstChild("dungeonStarted")
+        if not dungeonStarted or dungeonStarted.Value ~= true
+            or not (controller.Dungeon and controller.Dungeon.HasSeenEnemies)
+        then
+            state.Stuck, state.Until = 0, 0
+            state.Last, state.At = root.Position, now
+            ghost(model, false)
+            return
+        end
 
         -- an escape in progress owns the character until it is done
         if now < state.Until then

@@ -1788,6 +1788,11 @@ function UIWController:Step()
             "COMBAT",
             "engaging " .. (self.CurrentEnemy and self.CurrentEnemy.Model.Name or "enemy")
         )
+    elseif not self.Dungeon.HasSeenEnemies
+        and Workspace:FindFirstChild("dungeonName")
+        and Workspace.dungeonName.Value == "The Underworld"
+    then
+        self.HUD:SetStatus("PATHING", "waiting for the first wave")
     elseif self.Route.Computing and #self.Route.Waypoints == 0 then
         self.HUD:SetStatus("PATHING", "calculating initial dungeon route")
     elseif self.ProgressionOverridePart and self.ProgressionOverridePart.Parent then

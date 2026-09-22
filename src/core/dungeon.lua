@@ -8,6 +8,7 @@ function DungeonModel.new()
         LastKnownRoom = 1,
         EnemyCache = {},
         LastEnemyRefresh = 0,
+        HasSeenEnemies = false,
     }, DungeonModel)
 end
 
@@ -84,6 +85,10 @@ function DungeonModel:GetAliveEnemies(force)
                 end
             end
         end
+    end
+
+    if #self.EnemyCache > 0 then
+        self.HasSeenEnemies = true
     end
 
     return self.EnemyCache
@@ -292,6 +297,15 @@ function DungeonModel:GetNextReachableCheckpointTowardRoom(position, targetRoom,
 end
 
 function DungeonModel:GetProgressionGoal(position)
+    -- Underworld's first wave appears after the dungeon-start signal. Before
+    -- that, the only checkpoints are several locked rooms away.
+    local dungeonName = Workspace:FindFirstChild("dungeonName")
+    if not self.HasSeenEnemies
+        and (not dungeonName or dungeonName.Value == "The Underworld")
+    then
+        return nil
+    end
+
     for roomNumber = math.max(self.LastKnownRoom, 1), 9 do
         local room = self.Rooms[roomNumber]
 
@@ -310,4 +324,3 @@ function DungeonModel:GetProgressionGoal(position)
 
     return nil
 end
-
