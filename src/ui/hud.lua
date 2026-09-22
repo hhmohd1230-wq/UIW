@@ -1092,7 +1092,7 @@ function HUD.new(controller)
             controller.FPSCap = value
             controller:ApplyDisplaySettings()
         end, 15, 120, 5)
-    toggleRow(settingsPage, 6, "Black Screen", "Hides 3D and caps at 15 FPS; F8 shows the game",
+    toggleRow(settingsPage, 6, "Black Screen", "Hides 3D, caps at 15 FPS and resumes after teleport; F8 shows game",
         function() return controller.BlackScreen end,
         function(value) controller:SetBlackScreen(value) end)
 
@@ -1129,7 +1129,7 @@ function HUD.new(controller)
     -- Configs
     -----------------------------------------------------------------------
     local configsPage = newPage("Configs", true)
-    pageHeader(configsPage, 0, "Configs", "Save, load and delete your setups")
+    pageHeader(configsPage, 0, "Configs", "Saved separately for this Roblox account")
 
     -- save row
     local saveCard = UIKit.Card(configsPage, { Size = UDim2.new(1, 0, 0, 56), LayoutOrder = 1 })
@@ -1324,7 +1324,7 @@ function HUD.new(controller)
         function() return controller.AutoExecuteOnTeleport end,
         function(value) controller:SetAutoExecute(value) end, configSwitches)
 
-    local infoCard = UIKit.Card(configsPage, { Size = UDim2.new(1, 0, 0, 84), LayoutOrder = 5 })
+    local infoCard = UIKit.Card(configsPage, { Size = UDim2.new(1, 0, 0, 122), LayoutOrder = 5 })
     self.ScriptPathLabel = UIKit.Label(infoCard, {
         Position = UDim2.fromOffset(14, 8),
         Size = UDim2.new(1, -28, 0, 30),
@@ -1359,6 +1359,19 @@ function HUD.new(controller)
     UIKit.Corner(refreshButton, 8)
     refreshButton.MouseButton1Click:Connect(function()
         self:RefreshConfigs()
+    end)
+    local importButton = UIKit.Button(infoCard, {
+        Position = UDim2.new(0, 14, 0, 82),
+        Size = UDim2.new(0, 268, 0, 30),
+        BackgroundColor3 = T.Tile,
+        Font = UIKit.Fonts.Semi,
+        TextSize = 12,
+        Text = "Import old shared configs to this account",
+        ZIndex = 3,
+    })
+    UIKit.Corner(importButton, 8)
+    importButton.MouseButton1Click:Connect(function()
+        controller:ImportLegacyConfigs()
     end)
 
     table.insert(self.ConfigRefreshers, function()

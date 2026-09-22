@@ -1,8 +1,8 @@
--- EXPERIMENT (branch experiment-flatmap): flat boss arenas + sharper dodging.
+-- Northern Lands only: clear arena scenery locally and sharpen dodging.
 --
 -- In a boss fight the decoration around the arena (trees, rocks, bridges,
 -- railings) is switched off on this client only: collisions off and hidden.
--- The floor is never touched, so there is nothing to fall through. With the
+-- The floor is never touched. With the
 -- clutter gone every direction the dodge solver picks is actually walkable,
 -- the frame rate goes up, and the hazard tracker gets more time per frame.
 --
@@ -45,9 +45,13 @@ do
         return false
     end
 
-    local function deepMode()
+    local function inNorthernLands()
         local value = Workspace:FindFirstChild("dungeonName")
-        return CONFIG.FlatArenaDeep and value and value.Value == "Northern Lands"
+        return value and value.Value == "Northern Lands"
+    end
+
+    local function deepMode()
+        return CONFIG.FlatArenaDeep and inNorthernLands()
     end
 
     -- sharper reactions while the arena is flat
@@ -99,6 +103,10 @@ do
     end
 
     function FlatArena:Sweep(center)
+        if not inNorthernLands() then
+            self:Disable()
+            return
+        end
         local roots = self:MapRoots()
         if #roots == 0 then
             return
@@ -161,6 +169,7 @@ do
     end
 
     function FlatArena:Enable()
+        if not inNorthernLands() then return end
         if self.Active then
             return
         end
@@ -191,6 +200,10 @@ do
     end
 
     function FlatArena:Step(now)
+        if not inNorthernLands() then
+            self:Disable()
+            return
+        end
         if not self.Active then
             return
         end
@@ -208,16 +221,8 @@ do
     end
 
     ---------------------------------------------------------------------------
-    local function inNorthernLands()
-        local value = Workspace:FindFirstChild("dungeonName")
-        return value and value.Value == "Northern Lands"
-    end
-
     local function bossNearby(controller)
-        local dungeonName = Workspace:FindFirstChild("dungeonName")
-        if dungeonName and dungeonName.Value == "Steampunk Sewers" then
-            return false -- its final approach needs every original floor collision
-        end
+        if not inNorthernLands() then return false end
         local enemy = controller.CurrentEnemy
         local root = controller.Character.Root
         if not root or not enemy or not enemy.Root or not enemy.Root.Parent then
@@ -245,7 +250,7 @@ do
         local hud = self.HUD
         if hud and hud.AddToggleRow and hud.Pages and hud.Pages.Automation then
             hud.AddToggleRow(hud.Pages.Automation, 10, "Flat Arena (test)",
-                "In boss fights: hides and un-solids the scenery, sharper dodging",
+                "Northern Lands only: clears arena scenery and sharpens dodging",
                 function() return self.FlatArena ~= false end,
                 function(value)
                     self.FlatArena = value
@@ -261,6 +266,10 @@ do
     function UIWController:Step()
         oldStep(self)
         if self.Destroyed then
+            return
+        end
+        if not inNorthernLands() then
+            self.Flat:Disable()
             return
         end
         local now = os.clock()

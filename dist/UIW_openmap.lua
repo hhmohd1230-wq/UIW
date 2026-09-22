@@ -301,13 +301,15 @@ local DEFAULT_SETTINGS = {
     AutoRetryEnabled = true,
     ShowAura = true,
     ShowMobGroups = true,
+    FPSLimitEnabled = false,
+    FPSCap = 30,
+    BlackScreen = false,
     AutoExecuteOnTeleport = false,
     LowEffects = true,
     WalkSpeed = 16,
     DesiredCombatRange = 42,
     DamageCastRange = 64,
 }
-
 
 -- v44: crash-safe file access. Every call is protected, the UIW folder is
 -- created before writing, and a file is only rewritten when its content
@@ -428,13 +430,14 @@ function SafeFile.Delete(path)
 end
 
 ---------------------------------------------------------------------------
--- Named configs: UIW/configs/<name>.json
--- Script-wide switches (which config loads on start, auto execute, where
--- the script file is) live in UIW/uiw_meta.json.
+-- Each Roblox account owns its configs and startup choices. Do not silently
+-- import the old shared files: that would copy one account's settings to alts.
 ---------------------------------------------------------------------------
+local ACCOUNT_FOLDER = SETTINGS_FOLDER .. "/accounts/" .. tostring(LocalPlayer.UserId)
 local ConfigStore = {
-    Folder = SETTINGS_FOLDER .. "/configs",
-    MetaFile = SETTINGS_FOLDER .. "/uiw_meta.json",
+    AccountFolder = ACCOUNT_FOLDER,
+    Folder = ACCOUNT_FOLDER .. "/configs",
+    MetaFile = ACCOUNT_FOLDER .. "/uiw_meta.json",
     DefaultScriptPath = SETTINGS_FOLDER .. "/UIW.lua",
 }
 
@@ -458,15 +461,22 @@ function ConfigStore.PathFor(name)
     return ConfigStore.Folder .. "/" .. name .. ".json"
 end
 
-function ConfigStore.EnsureFolder()
+function ConfigStore.EnsureAccountFolder()
     SafeFile.EnsureFolder()
     if type(isfolder) ~= "function" or type(makefolder) ~= "function" then
         return
     end
-    local ok, exists = pcall(isfolder, ConfigStore.Folder)
-    if not (ok and exists) then
-        pcall(makefolder, ConfigStore.Folder)
+    for _, path in ipairs({ SETTINGS_FOLDER .. "/accounts", ConfigStore.AccountFolder }) do
+        local ok, exists = pcall(isfolder, path)
+        if not (ok and exists) then pcall(makefolder, path) end
     end
+end
+
+function ConfigStore.EnsureFolder()
+    ConfigStore.EnsureAccountFolder()
+    if type(isfolder) ~= "function" or type(makefolder) ~= "function" then return end
+    local ok, exists = pcall(isfolder, ConfigStore.Folder)
+    if not (ok and exists) then pcall(makefolder, ConfigStore.Folder) end
 end
 
 function ConfigStore.List()
@@ -523,39 +533,55 @@ function ConfigStore.Delete(name)
     return true, "Deleted config \"" .. name .. "\""
 end
 
+-- Legacy files had no account owner. Import them only when the player asks.
+function ConfigStore.ImportLegacy()
+    local copied = 0
+    local function copy(name, path)
+        if ConfigStore.CleanName(name) ~= name or ConfigStore.Exists(name) then return end
+        local data = SafeFile.ReadJson(path)
+        if data and ConfigStore.Save(name, data) then copied += 1 end
+    end
+    if type(listfiles) == "function" then
+        local ok, files = pcall(listfiles, SETTINGS_FOLDER .. "/configs")
+        if ok and type(files) == "table" then
+            for _, path in ipairs(files) do
+                local name = string.match(tostring(path), "([^/\\]+)%.json$")
+                if name then copy(name, path) end
+            end
+        end
+    end
+    copy("default", SETTINGS_FILE)
+    return copied
+end
+
 function ConfigStore.ReadMeta()
     local meta = SafeFile.ReadJson(ConfigStore.MetaFile) or {}
+    local blackScreen
+    if type(meta.BlackScreen) == "boolean" then
+        blackScreen = meta.BlackScreen
+    end
+    local restoreCap = tonumber(meta.RestoreFPSCap)
+    if not restoreCap or restoreCap < 1 or restoreCap > 10000 then
+        restoreCap = nil
+    end
     return {
         AutoLoad = type(meta.AutoLoad) == "string" and meta.AutoLoad or "",
         AutoExecute = meta.AutoExecute == true,
         ScriptPath = type(meta.ScriptPath) == "string" and meta.ScriptPath or nil,
+        BlackScreen = blackScreen,
+        RestoreFPSCap = restoreCap,
     }
 end
 
 function ConfigStore.WriteMeta(meta)
+    ConfigStore.EnsureAccountFolder()
     return SafeFile.WriteJson(ConfigStore.MetaFile, {
         AutoLoad = meta.AutoLoad or "",
         AutoExecute = meta.AutoExecute == true,
         ScriptPath = meta.ScriptPath,
+        BlackScreen = meta.BlackScreen == true,
+        RestoreFPSCap = meta.RestoreFPSCap,
     }, true)
-end
-
--- One-time move of the old single UIW/settings.json into the new layout.
-function ConfigStore.Migrate()
-    if SafeFile.IsFile(ConfigStore.MetaFile) or not SafeFile.IsFile(SETTINGS_FILE) then
-        return
-    end
-    local old = SafeFile.ReadJson(SETTINGS_FILE)
-    local meta = { AutoLoad = "", AutoExecute = false }
-    if old then
-        if ConfigStore.Save("default", old) then
-            meta.AutoLoad = "default"
-        end
-        meta.AutoExecute = old.AutoExecuteOnTeleport == true
-    end
-    if ConfigStore.WriteMeta(meta) then
-        SafeFile.Delete(SETTINGS_FILE)
-    end
 end
 
 local function validNumber(value, minimum, maximum, fallback)
@@ -563,7 +589,6 @@ local function validNumber(value, minimum, maximum, fallback)
     if not value then return fallback end
     return math.clamp(value, minimum, maximum)
 end
-
 
 local COLORS = {
     Idle = Color3.fromRGB(140, 143, 150),
@@ -17801,7 +17826,7 @@ function HUD.new(controller)
             controller.FPSCap = value
             controller:ApplyDisplaySettings()
         end, 15, 120, 5)
-    toggleRow(settingsPage, 6, "Black Screen", "Hides 3D and caps at 15 FPS; F8 shows the game",
+    toggleRow(settingsPage, 6, "Black Screen", "Hides 3D, caps at 15 FPS and resumes after teleport; F8 shows game",
         function() return controller.BlackScreen end,
         function(value) controller:SetBlackScreen(value) end)
 
@@ -17838,7 +17863,7 @@ function HUD.new(controller)
     -- Configs
     -----------------------------------------------------------------------
     local configsPage = newPage("Configs", true)
-    pageHeader(configsPage, 0, "Configs", "Save, load and delete your setups")
+    pageHeader(configsPage, 0, "Configs", "Saved separately for this Roblox account")
 
     -- save row
     local saveCard = UIKit.Card(configsPage, { Size = UDim2.new(1, 0, 0, 56), LayoutOrder = 1 })
@@ -18033,7 +18058,7 @@ function HUD.new(controller)
         function() return controller.AutoExecuteOnTeleport end,
         function(value) controller:SetAutoExecute(value) end, configSwitches)
 
-    local infoCard = UIKit.Card(configsPage, { Size = UDim2.new(1, 0, 0, 84), LayoutOrder = 5 })
+    local infoCard = UIKit.Card(configsPage, { Size = UDim2.new(1, 0, 0, 122), LayoutOrder = 5 })
     self.ScriptPathLabel = UIKit.Label(infoCard, {
         Position = UDim2.fromOffset(14, 8),
         Size = UDim2.new(1, -28, 0, 30),
@@ -18068,6 +18093,19 @@ function HUD.new(controller)
     UIKit.Corner(refreshButton, 8)
     refreshButton.MouseButton1Click:Connect(function()
         self:RefreshConfigs()
+    end)
+    local importButton = UIKit.Button(infoCard, {
+        Position = UDim2.new(0, 14, 0, 82),
+        Size = UDim2.new(0, 268, 0, 30),
+        BackgroundColor3 = T.Tile,
+        Font = UIKit.Fonts.Semi,
+        TextSize = 12,
+        Text = "Import old shared configs to this account",
+        ZIndex = 3,
+    })
+    UIKit.Corner(importButton, 8)
+    importButton.MouseButton1Click:Connect(function()
+        controller:ImportLegacyConfigs()
     end)
 
     table.insert(self.ConfigRefreshers, function()
@@ -19033,6 +19071,8 @@ end
 function UIWController:SetBlackScreen(enabled)
     self.BlackScreen = enabled == true
     self:ApplyDisplaySettings()
+    self:WriteMeta()
+    if self.BlackScreen then self:ConfigureAutoExecute() end
     if self.HUD then self.HUD:RefreshControls() end
 end
 
@@ -19050,6 +19090,8 @@ function UIWController:WriteMeta()
     meta.AutoLoad = self.AutoLoadConfig or ""
     meta.AutoExecute = self.AutoExecuteOnTeleport == true
     meta.ScriptPath = self:GetScriptPath()
+    meta.BlackScreen = self.BlackScreen == true
+    meta.RestoreFPSCap = tonumber(getgenv().UIW_OriginalFPSCap) or meta.RestoreFPSCap
     return ConfigStore.WriteMeta(meta)
 end
 
@@ -19065,10 +19107,15 @@ function UIWController:GetScriptPath()
 end
 
 function UIWController:InitConfigs()
-    pcall(ConfigStore.Migrate)
     local meta = ConfigStore.ReadMeta()
     self.AutoExecuteOnTeleport = meta.AutoExecute
     self.AutoLoadConfig = meta.AutoLoad
+    if meta.BlackScreen and meta.RestoreFPSCap then
+        getgenv().UIW_OriginalFPSCap = meta.RestoreFPSCap
+    end
+    if meta.BlackScreen ~= nil then
+        self.BlackScreen = meta.BlackScreen
+    end
     if meta.AutoLoad ~= "" then
         local data = ConfigStore.Load(meta.AutoLoad)
         if data then
@@ -19081,10 +19128,21 @@ function UIWController:InitConfigs()
             self:WriteMeta()
         end
     end
+    if meta.BlackScreen ~= nil then
+        self.BlackScreen = meta.BlackScreen
+    end
 end
 
 function UIWController:ListConfigs()
     return ConfigStore.List()
+end
+
+function UIWController:ImportLegacyConfigs()
+    local copied = ConfigStore.ImportLegacy()
+    self:Notify(copied > 0 and ("Imported " .. copied .. " old config(s) for this account")
+        or "No old configs to import", copied > 0 and "success" or "info")
+    if self.HUD then self.HUD:RefreshConfigs() end
+    return copied
 end
 
 function UIWController:SaveConfig(name)
@@ -19103,6 +19161,7 @@ function UIWController:LoadConfig(name)
     local ok = data ~= nil and self:ApplySettings(data)
     if ok then
         self.ActiveConfig = name
+        self:WriteMeta()
     end
     self:Notify(ok and ("Loaded config \"" .. name .. "\"") or message, ok and "success" or "error")
     if self.HUD then self.HUD:RefreshConfigs() end
@@ -19168,6 +19227,7 @@ end
 
 function UIWController:ResetSettings()
     self:ApplySettings(DEFAULT_SETTINGS)
+    self:WriteMeta()
     self:Notify("Switches and sliders reset to defaults (saved configs kept)", "info")
     if self.HUD then self.HUD:RefreshConfigs() end
 end
@@ -19186,8 +19246,8 @@ end
 
 ---------------------------------------------------------------------------
 -- Auto execute: the executor runs this code once after the next teleport.
--- It re-reads uiw_meta.json at that moment, so turning the switch off later
--- still stops it, and it loads the script file named in the meta file.
+-- It re-reads this account's meta file then, so disabling Auto Execute and
+-- Black Screen later stops it. Black Screen queues a continuation on its own.
 ---------------------------------------------------------------------------
 local AUTO_EXECUTE_CODE = [==[
 if getgenv().UIW_AUTOEXEC_STARTED then
@@ -19204,9 +19264,12 @@ task.spawn(function()
         return ok and result == true
     end
     local okMeta, meta = pcall(function()
-        return HttpService:JSONDecode(readfile("UIW/uiw_meta.json"))
+        local userId = game:GetService("Players").LocalPlayer.UserId
+        return HttpService:JSONDecode(readfile("UIW/accounts/" .. tostring(userId) .. "/uiw_meta.json"))
     end)
-    if not okMeta or type(meta) ~= "table" or meta.AutoExecute ~= true then
+    if not okMeta or type(meta) ~= "table"
+        or (meta.AutoExecute ~= true and meta.BlackScreen ~= true)
+    then
         return
     end
     task.wait(1)
@@ -19234,7 +19297,7 @@ end)
 ]==]
 
 function UIWController:ConfigureAutoExecute(announce)
-    if not self.AutoExecuteOnTeleport then
+    if not self.AutoExecuteOnTeleport and not self.BlackScreen then
         return false
     end
 
@@ -27773,11 +27836,11 @@ do
     end
 end
 
--- EXPERIMENT (branch experiment-flatmap): flat boss arenas + sharper dodging.
+-- Northern Lands only: clear arena scenery locally and sharpen dodging.
 --
 -- In a boss fight the decoration around the arena (trees, rocks, bridges,
 -- railings) is switched off on this client only: collisions off and hidden.
--- The floor is never touched, so there is nothing to fall through. With the
+-- The floor is never touched. With the
 -- clutter gone every direction the dodge solver picks is actually walkable,
 -- the frame rate goes up, and the hazard tracker gets more time per frame.
 --
@@ -27820,9 +27883,13 @@ do
         return false
     end
 
-    local function deepMode()
+    local function inNorthernLands()
         local value = Workspace:FindFirstChild("dungeonName")
-        return CONFIG.FlatArenaDeep and value and value.Value == "Northern Lands"
+        return value and value.Value == "Northern Lands"
+    end
+
+    local function deepMode()
+        return CONFIG.FlatArenaDeep and inNorthernLands()
     end
 
     -- sharper reactions while the arena is flat
@@ -27874,6 +27941,10 @@ do
     end
 
     function FlatArena:Sweep(center)
+        if not inNorthernLands() then
+            self:Disable()
+            return
+        end
         local roots = self:MapRoots()
         if #roots == 0 then
             return
@@ -27936,6 +28007,7 @@ do
     end
 
     function FlatArena:Enable()
+        if not inNorthernLands() then return end
         if self.Active then
             return
         end
@@ -27966,6 +28038,10 @@ do
     end
 
     function FlatArena:Step(now)
+        if not inNorthernLands() then
+            self:Disable()
+            return
+        end
         if not self.Active then
             return
         end
@@ -27983,16 +28059,8 @@ do
     end
 
     ---------------------------------------------------------------------------
-    local function inNorthernLands()
-        local value = Workspace:FindFirstChild("dungeonName")
-        return value and value.Value == "Northern Lands"
-    end
-
     local function bossNearby(controller)
-        local dungeonName = Workspace:FindFirstChild("dungeonName")
-        if dungeonName and dungeonName.Value == "Steampunk Sewers" then
-            return false -- its final approach needs every original floor collision
-        end
+        if not inNorthernLands() then return false end
         local enemy = controller.CurrentEnemy
         local root = controller.Character.Root
         if not root or not enemy or not enemy.Root or not enemy.Root.Parent then
@@ -28020,7 +28088,7 @@ do
         local hud = self.HUD
         if hud and hud.AddToggleRow and hud.Pages and hud.Pages.Automation then
             hud.AddToggleRow(hud.Pages.Automation, 10, "Flat Arena (test)",
-                "In boss fights: hides and un-solids the scenery, sharper dodging",
+                "Northern Lands only: clears arena scenery and sharpens dodging",
                 function() return self.FlatArena ~= false end,
                 function(value)
                     self.FlatArena = value
@@ -28036,6 +28104,10 @@ do
     function UIWController:Step()
         oldStep(self)
         if self.Destroyed then
+            return
+        end
+        if not inNorthernLands() then
+            self.Flat:Disable()
             return
         end
         local now = os.clock()

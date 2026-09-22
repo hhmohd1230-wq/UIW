@@ -259,10 +259,12 @@ local DEFAULT_SETTINGS = {
     AutoRetryEnabled = true,
     ShowAura = true,
     ShowMobGroups = true,
+    FPSLimitEnabled = false,
+    FPSCap = 30,
+    BlackScreen = false,
     AutoExecuteOnTeleport = false,
     LowEffects = true,
     WalkSpeed = 16,
     DesiredCombatRange = 42,
     DamageCastRange = 64,
 }
-

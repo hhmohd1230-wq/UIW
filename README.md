@@ -8,7 +8,12 @@ speed during a started dungeon, pausing while casting or in a peaceful area.
 
 The Settings tab has an FPS limiter (15-120 FPS) and Black Screen mode. Black
 Screen hides 3D rendering and caps the client at 15 FPS; press F8 or the on-screen
-button to return. Both choices can be saved in a named config.
+button to return. Both choices can be saved in a named config. Black Screen also
+remembers its on/off state for the same account and queues UIW to run again
+after a teleport when enabled.
+
+Map scenery clearing runs only in Northern Lands. Other dungeons keep their
+original map parts and collisions, including during boss fights.
 
 Base version: **v44.20** (from `UIW_v44.17.lua`). The split is lossless: building
 reproduces that file byte for byte.
@@ -20,8 +25,7 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/hhmohd1230-wq/UIW/mai
 ```
 
 The loader always takes the current build from GitHub, saves it next to the
-executor (`UIW/UIW_main.lua`, `UIW_flat.lua`, `UIW_stable.lua` — so Auto
-Execute still works after a teleport) and falls back to that saved copy only
+executor (`UIW/UIW.lua` — so Auto Execute still works after a teleport) and falls back to that saved copy only
 when GitHub cannot be reached. To pick another build, set one of these before
 the line above:
 
@@ -70,8 +74,8 @@ Everything is in the **Configs** tab of the window.
 
 | File (Volt `workspace/UIW/`) | What it holds |
 | --- | --- |
-| `configs/<name>.json` | One saved setup (switches + sliders) |
-| `uiw_meta.json` | Which config loads on start (`AutoLoad`), `AutoExecute`, `ScriptPath` |
+| `accounts/<RobloxUserId>/configs/<name>.json` | One saved setup (switches + sliders) for that account |
+| `accounts/<RobloxUserId>/uiw_meta.json` | That account's Auto Load, Auto Execute, script path and Black Screen state |
 
 * **Save** writes the current setup under the typed name. **Load** applies it.
 * **Delete** asks once more ("Sure?"). Deleting the config that is in use or
@@ -83,7 +87,10 @@ Everything is in the **Configs** tab of the window.
   `ScriptPath` (default `UIW/UIW.lua`, which `build.cmd -Volt` writes). To use
   another file, set `getgenv().UIW_SCRIPT_PATH = "UIW/other.lua"` before
   loading the script once.
-* An old `UIW/settings.json` is moved to `configs/default.json` on first start.
+* Old shared configs stay in `UIW/configs`. Use **Import old shared configs to
+  this account** on the Configs tab to copy them explicitly. Existing account
+  configs are never overwritten. Each account sets its own Auto Load and Auto
+  Execute choices.
 
 ## Layout
 

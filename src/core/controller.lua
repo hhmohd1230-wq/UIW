@@ -196,6 +196,8 @@ end
 function UIWController:SetBlackScreen(enabled)
     self.BlackScreen = enabled == true
     self:ApplyDisplaySettings()
+    self:WriteMeta()
+    if self.BlackScreen then self:ConfigureAutoExecute() end
     if self.HUD then self.HUD:RefreshControls() end
 end
 
@@ -213,6 +215,8 @@ function UIWController:WriteMeta()
     meta.AutoLoad = self.AutoLoadConfig or ""
     meta.AutoExecute = self.AutoExecuteOnTeleport == true
     meta.ScriptPath = self:GetScriptPath()
+    meta.BlackScreen = self.BlackScreen == true
+    meta.RestoreFPSCap = tonumber(getgenv().UIW_OriginalFPSCap) or meta.RestoreFPSCap
     return ConfigStore.WriteMeta(meta)
 end
 
@@ -228,10 +232,15 @@ function UIWController:GetScriptPath()
 end
 
 function UIWController:InitConfigs()
-    pcall(ConfigStore.Migrate)
     local meta = ConfigStore.ReadMeta()
     self.AutoExecuteOnTeleport = meta.AutoExecute
     self.AutoLoadConfig = meta.AutoLoad
+    if meta.BlackScreen and meta.RestoreFPSCap then
+        getgenv().UIW_OriginalFPSCap = meta.RestoreFPSCap
+    end
+    if meta.BlackScreen ~= nil then
+        self.BlackScreen = meta.BlackScreen
+    end
     if meta.AutoLoad ~= "" then
         local data = ConfigStore.Load(meta.AutoLoad)
         if data then
@@ -244,10 +253,21 @@ function UIWController:InitConfigs()
             self:WriteMeta()
         end
     end
+    if meta.BlackScreen ~= nil then
+        self.BlackScreen = meta.BlackScreen
+    end
 end
 
 function UIWController:ListConfigs()
     return ConfigStore.List()
+end
+
+function UIWController:ImportLegacyConfigs()
+    local copied = ConfigStore.ImportLegacy()
+    self:Notify(copied > 0 and ("Imported " .. copied .. " old config(s) for this account")
+        or "No old configs to import", copied > 0 and "success" or "info")
+    if self.HUD then self.HUD:RefreshConfigs() end
+    return copied
 end
 
 function UIWController:SaveConfig(name)
@@ -266,6 +286,7 @@ function UIWController:LoadConfig(name)
     local ok = data ~= nil and self:ApplySettings(data)
     if ok then
         self.ActiveConfig = name
+        self:WriteMeta()
     end
     self:Notify(ok and ("Loaded config \"" .. name .. "\"") or message, ok and "success" or "error")
     if self.HUD then self.HUD:RefreshConfigs() end
@@ -331,6 +352,7 @@ end
 
 function UIWController:ResetSettings()
     self:ApplySettings(DEFAULT_SETTINGS)
+    self:WriteMeta()
     self:Notify("Switches and sliders reset to defaults (saved configs kept)", "info")
     if self.HUD then self.HUD:RefreshConfigs() end
 end
@@ -349,8 +371,8 @@ end
 
 ---------------------------------------------------------------------------
 -- Auto execute: the executor runs this code once after the next teleport.
--- It re-reads uiw_meta.json at that moment, so turning the switch off later
--- still stops it, and it loads the script file named in the meta file.
+-- It re-reads this account's meta file then, so disabling Auto Execute and
+-- Black Screen later stops it. Black Screen queues a continuation on its own.
 ---------------------------------------------------------------------------
 local AUTO_EXECUTE_CODE = [==[
 if getgenv().UIW_AUTOEXEC_STARTED then
@@ -367,9 +389,12 @@ task.spawn(function()
         return ok and result == true
     end
     local okMeta, meta = pcall(function()
-        return HttpService:JSONDecode(readfile("UIW/uiw_meta.json"))
+        local userId = game:GetService("Players").LocalPlayer.UserId
+        return HttpService:JSONDecode(readfile("UIW/accounts/" .. tostring(userId) .. "/uiw_meta.json"))
     end)
-    if not okMeta or type(meta) ~= "table" or meta.AutoExecute ~= true then
+    if not okMeta or type(meta) ~= "table"
+        or (meta.AutoExecute ~= true and meta.BlackScreen ~= true)
+    then
         return
     end
     task.wait(1)
@@ -397,7 +422,7 @@ end)
 ]==]
 
 function UIWController:ConfigureAutoExecute(announce)
-    if not self.AutoExecuteOnTeleport then
+    if not self.AutoExecuteOnTeleport and not self.BlackScreen then
         return false
     end
 

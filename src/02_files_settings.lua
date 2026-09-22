@@ -117,13 +117,14 @@ function SafeFile.Delete(path)
 end
 
 ---------------------------------------------------------------------------
--- Named configs: UIW/configs/<name>.json
--- Script-wide switches (which config loads on start, auto execute, where
--- the script file is) live in UIW/uiw_meta.json.
+-- Each Roblox account owns its configs and startup choices. Do not silently
+-- import the old shared files: that would copy one account's settings to alts.
 ---------------------------------------------------------------------------
+local ACCOUNT_FOLDER = SETTINGS_FOLDER .. "/accounts/" .. tostring(LocalPlayer.UserId)
 local ConfigStore = {
-    Folder = SETTINGS_FOLDER .. "/configs",
-    MetaFile = SETTINGS_FOLDER .. "/uiw_meta.json",
+    AccountFolder = ACCOUNT_FOLDER,
+    Folder = ACCOUNT_FOLDER .. "/configs",
+    MetaFile = ACCOUNT_FOLDER .. "/uiw_meta.json",
     DefaultScriptPath = SETTINGS_FOLDER .. "/UIW.lua",
 }
 
@@ -147,15 +148,22 @@ function ConfigStore.PathFor(name)
     return ConfigStore.Folder .. "/" .. name .. ".json"
 end
 
-function ConfigStore.EnsureFolder()
+function ConfigStore.EnsureAccountFolder()
     SafeFile.EnsureFolder()
     if type(isfolder) ~= "function" or type(makefolder) ~= "function" then
         return
     end
-    local ok, exists = pcall(isfolder, ConfigStore.Folder)
-    if not (ok and exists) then
-        pcall(makefolder, ConfigStore.Folder)
+    for _, path in ipairs({ SETTINGS_FOLDER .. "/accounts", ConfigStore.AccountFolder }) do
+        local ok, exists = pcall(isfolder, path)
+        if not (ok and exists) then pcall(makefolder, path) end
     end
+end
+
+function ConfigStore.EnsureFolder()
+    ConfigStore.EnsureAccountFolder()
+    if type(isfolder) ~= "function" or type(makefolder) ~= "function" then return end
+    local ok, exists = pcall(isfolder, ConfigStore.Folder)
+    if not (ok and exists) then pcall(makefolder, ConfigStore.Folder) end
 end
 
 function ConfigStore.List()
@@ -212,39 +220,55 @@ function ConfigStore.Delete(name)
     return true, "Deleted config \"" .. name .. "\""
 end
 
+-- Legacy files had no account owner. Import them only when the player asks.
+function ConfigStore.ImportLegacy()
+    local copied = 0
+    local function copy(name, path)
+        if ConfigStore.CleanName(name) ~= name or ConfigStore.Exists(name) then return end
+        local data = SafeFile.ReadJson(path)
+        if data and ConfigStore.Save(name, data) then copied += 1 end
+    end
+    if type(listfiles) == "function" then
+        local ok, files = pcall(listfiles, SETTINGS_FOLDER .. "/configs")
+        if ok and type(files) == "table" then
+            for _, path in ipairs(files) do
+                local name = string.match(tostring(path), "([^/\\]+)%.json$")
+                if name then copy(name, path) end
+            end
+        end
+    end
+    copy("default", SETTINGS_FILE)
+    return copied
+end
+
 function ConfigStore.ReadMeta()
     local meta = SafeFile.ReadJson(ConfigStore.MetaFile) or {}
+    local blackScreen
+    if type(meta.BlackScreen) == "boolean" then
+        blackScreen = meta.BlackScreen
+    end
+    local restoreCap = tonumber(meta.RestoreFPSCap)
+    if not restoreCap or restoreCap < 1 or restoreCap > 10000 then
+        restoreCap = nil
+    end
     return {
         AutoLoad = type(meta.AutoLoad) == "string" and meta.AutoLoad or "",
         AutoExecute = meta.AutoExecute == true,
         ScriptPath = type(meta.ScriptPath) == "string" and meta.ScriptPath or nil,
+        BlackScreen = blackScreen,
+        RestoreFPSCap = restoreCap,
     }
 end
 
 function ConfigStore.WriteMeta(meta)
+    ConfigStore.EnsureAccountFolder()
     return SafeFile.WriteJson(ConfigStore.MetaFile, {
         AutoLoad = meta.AutoLoad or "",
         AutoExecute = meta.AutoExecute == true,
         ScriptPath = meta.ScriptPath,
+        BlackScreen = meta.BlackScreen == true,
+        RestoreFPSCap = meta.RestoreFPSCap,
     }, true)
-end
-
--- One-time move of the old single UIW/settings.json into the new layout.
-function ConfigStore.Migrate()
-    if SafeFile.IsFile(ConfigStore.MetaFile) or not SafeFile.IsFile(SETTINGS_FILE) then
-        return
-    end
-    local old = SafeFile.ReadJson(SETTINGS_FILE)
-    local meta = { AutoLoad = "", AutoExecute = false }
-    if old then
-        if ConfigStore.Save("default", old) then
-            meta.AutoLoad = "default"
-        end
-        meta.AutoExecute = old.AutoExecuteOnTeleport == true
-    end
-    if ConfigStore.WriteMeta(meta) then
-        SafeFile.Delete(SETTINGS_FILE)
-    end
 end
 
 local function validNumber(value, minimum, maximum, fallback)
@@ -252,4 +276,3 @@ local function validNumber(value, minimum, maximum, fallback)
     if not value then return fallback end
     return math.clamp(value, minimum, maximum)
 end
-
