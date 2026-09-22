@@ -264,6 +264,10 @@ function ConfigStore.ReadMeta()
         CarryFixedStage = tonumber(meta.CarryFixedStage) or 1,
         CarryHardcore = meta.CarryHardcore == true,
         CarryRunStage = tonumber(meta.CarryRunStage),
+        HealerEnabled = meta.HealerEnabled == true,
+        HealerTargetName = type(meta.HealerTargetName) == "string" and meta.HealerTargetName or "",
+        HealerAutoEquip = meta.HealerAutoEquip ~= false,
+        HealerFollowDistance = tonumber(meta.HealerFollowDistance) or 14,
     }
 end
 
@@ -282,6 +286,10 @@ function ConfigStore.WriteMeta(meta)
         CarryFixedStage = meta.CarryFixedStage or 1,
         CarryHardcore = meta.CarryHardcore == true,
         CarryRunStage = meta.CarryRunStage,
+        HealerEnabled = meta.HealerEnabled == true,
+        HealerTargetName = meta.HealerTargetName or "",
+        HealerAutoEquip = meta.HealerAutoEquip ~= false,
+        HealerFollowDistance = meta.HealerFollowDistance or 14,
     }, true)
 end
 

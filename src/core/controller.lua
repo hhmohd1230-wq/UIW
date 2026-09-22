@@ -37,6 +37,10 @@ function UIWController.new()
     self.CarryFixedStage = 1
     self.CarryHardcore = false
     self.CarryRunStage = nil
+    self.HealerEnabled = false
+    self.HealerTargetName = ""
+    self.HealerAutoEquip = true
+    self.HealerFollowDistance = 14
     self.ActiveConfig = nil
     self.AutoLoadConfig = ""
 
@@ -119,6 +123,12 @@ function UIWController:ApplySettings(settings)
     end
     self.CarryFixedStage = math.floor(validNumber(settings.CarryFixedStage, 1, #CARRY_STAGES, self.CarryFixedStage))
     self.CarryHardcore = readBoolean("CarryHardcore", self.CarryHardcore)
+    self.HealerEnabled = readBoolean("HealerEnabled", self.HealerEnabled)
+    if type(settings.HealerTargetName) == "string" then
+        self.HealerTargetName = string.sub(settings.HealerTargetName, 1, 32)
+    end
+    self.HealerAutoEquip = readBoolean("HealerAutoEquip", self.HealerAutoEquip)
+    self.HealerFollowDistance = validNumber(settings.HealerFollowDistance, 8, 35, self.HealerFollowDistance)
 
     CONFIG.WalkSpeed = validNumber(settings.WalkSpeed, 12, 40, CONFIG.WalkSpeed)
     CONFIG.DesiredCombatRange = validNumber(settings.DesiredCombatRange, 24, 60, CONFIG.DesiredCombatRange)
@@ -161,6 +171,10 @@ function UIWController:GetSettings()
         CarryMode = self.CarryMode,
         CarryFixedStage = self.CarryFixedStage,
         CarryHardcore = self.CarryHardcore,
+        HealerEnabled = self.HealerEnabled,
+        HealerTargetName = self.HealerTargetName,
+        HealerAutoEquip = self.HealerAutoEquip,
+        HealerFollowDistance = self.HealerFollowDistance,
         WalkSpeed = CONFIG.WalkSpeed,
         DesiredCombatRange = CONFIG.DesiredCombatRange,
         DamageCastRange = CONFIG.DamageCastRange,
@@ -249,6 +263,10 @@ function UIWController:WriteMeta()
     meta.CarryFixedStage = self.CarryFixedStage
     meta.CarryHardcore = self.CarryHardcore
     meta.CarryRunStage = self.CarryRunStage
+    meta.HealerEnabled = self.HealerEnabled == true
+    meta.HealerTargetName = self.HealerTargetName
+    meta.HealerAutoEquip = self.HealerAutoEquip ~= false
+    meta.HealerFollowDistance = self.HealerFollowDistance
     return ConfigStore.WriteMeta(meta)
 end
 
@@ -268,6 +286,10 @@ function UIWController:InitConfigs()
     self.AutoExecuteOnTeleport = meta.AutoExecute
     self.AutoLoadConfig = meta.AutoLoad
     self.CarryRunStage = meta.CarryRunStage
+    self.HealerEnabled = meta.HealerEnabled
+    self.HealerTargetName = meta.HealerTargetName
+    self.HealerAutoEquip = meta.HealerAutoEquip
+    self.HealerFollowDistance = math.clamp(tonumber(meta.HealerFollowDistance) or 14, 8, 35)
     if meta.BlackScreen and meta.RestoreFPSCap then
         getgenv().UIW_OriginalFPSCap = meta.RestoreFPSCap
     end
@@ -433,7 +455,8 @@ task.spawn(function()
         return HttpService:JSONDecode(readfile("UIW/accounts/" .. tostring(userId) .. "/uiw_meta.json"))
     end)
     if not okMeta or type(meta) ~= "table"
-        or (meta.AutoExecute ~= true and meta.BlackScreen ~= true and meta.CarryEnabled ~= true)
+        or (meta.AutoExecute ~= true and meta.BlackScreen ~= true
+            and meta.CarryEnabled ~= true and meta.HealerEnabled ~= true)
     then
         return
     end
@@ -462,7 +485,9 @@ end)
 ]==]
 
 function UIWController:ConfigureAutoExecute(announce)
-    if not self.AutoExecuteOnTeleport and not self.BlackScreen and not self.CarryEnabled then
+    if not self.AutoExecuteOnTeleport and not self.BlackScreen
+        and not self.CarryEnabled and not self.HealerEnabled
+    then
         return false
     end
 

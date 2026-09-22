@@ -30,6 +30,14 @@ choices are saved per account and queue
 UIW after teleport while Carry is enabled. The game still controls party and
 server capacity.
 
+The **Healer** tab follows one selected player while keeping Auto Dodge active.
+It stops offensive casts, faces the selected player and uses any equipped
+healing spell as soon as the target loses health. **Equip Maximum Heal Gear**
+selects the owned chest and helmet with the most spell power and equips the two
+best owned healing spells, favoring Revitalize, Universal Heal and Chain Heal.
+The target, follow distance and healer choices are saved per Roblox account and
+continue after dungeon teleports.
+
 Base version: **v44.20** (from `UIW_v44.17.lua`). The split is lossless: building
 reproduces that file byte for byte.
 
@@ -126,6 +134,7 @@ Everything is in the **Configs** tab of the window.
 | `src/core/combat.lua` | `CombatController` (Q/E casting) |
 | `src/core/controller.lua` | `UIWController` (targets, main loop) |
 | `src/carry/system.lua` | Host and alt party coordination, reward gated retry and stage selection |
+| `src/healer/system.lua` | Target following, healing casts and maximum spell power loadout |
 | `src/ui/hud.lua` | The hub window (tabs, cards, toasts, config page) |
 | `src/ui/*` | Hitbox ESP, path ESP, target health bar, tactical display |
 | `src/patches/*` | Version layers that extend the classes above (v42 ... v44.20) |

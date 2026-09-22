@@ -58,5 +58,6 @@ src/dungeons/northern_lands/v50_07_cycle.lua
 src/patches/v51_01_unwedge.lua
 src/dungeons/steampunk_sewers/v52_01_boss_entry.lua
 src/carry/system.lua
+src/healer/system.lua
 src/99_start.lua
 src/99_telemetry.lua

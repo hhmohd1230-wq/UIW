@@ -678,9 +678,10 @@ function HUD.new(controller)
     tabButton("Home", "⌂", 1)
     tabButton("Automation", "⚔", 2)
     tabButton("Carry", "♣", 3)
-    tabButton("Settings", "⚙", 4)
-    tabButton("Configs", "▤", 5)
-    tabButton("Inventory", "▦", 6)
+    tabButton("Healer", "+", 4)
+    tabButton("Settings", "⚙", 5)
+    tabButton("Configs", "▤", 6)
+    tabButton("Inventory", "▦", 7)
     local inventoryPage = newPage("Inventory", false)
     if UIKit.BuildInventoryPage then UIKit.BuildInventoryPage(self, inventoryPage, controller) end
 
@@ -1024,6 +1025,70 @@ function HUD.new(controller)
         end)
         self.CarryStageButtons[index] = button
     end
+
+    -----------------------------------------------------------------------
+    -- Healer
+    -----------------------------------------------------------------------
+    local healerPage = newPage("Healer", true)
+    pageHeader(healerPage, 0, "Healer", "Follow and continuously support one player")
+
+    local healerStatusCard = UIKit.Card(healerPage, { Size = UDim2.new(1, 0, 0, 108), LayoutOrder = 1 })
+    self.HealerStatusLabel = UIKit.Label(healerStatusCard, {
+        Position = UDim2.fromOffset(14, 9), Size = UDim2.new(1, -28, 0, 42),
+        Font = UIKit.Fonts.Semi, TextSize = 13, TextWrapped = true,
+        TextYAlignment = Enum.TextYAlignment.Top, Text = "Healer off", ZIndex = 3,
+    })
+    self.HealerLoadoutLabel = UIKit.Label(healerStatusCard, {
+        Position = UDim2.fromOffset(14, 54), Size = UDim2.new(1, -28, 0, 45),
+        TextSize = 10, TextColor3 = T.SubText, TextWrapped = true,
+        TextYAlignment = Enum.TextYAlignment.Top, Text = "Loadout: waiting", ZIndex = 3,
+    })
+
+    toggleRow(healerPage, 2, "Healer System", "Disables attacks, follows the target and forces Auto Dodge on",
+        function() return controller.HealerEnabled end,
+        function(value) controller:SetHealerOption("HealerEnabled", value) end)
+
+    local targetCard = UIKit.Card(healerPage, { Size = UDim2.new(1, 0, 0, 78), LayoutOrder = 3 })
+    UIKit.Label(targetCard, { Position = UDim2.fromOffset(14, 8), Size = UDim2.new(1, -28, 0, 18),
+        Font = UIKit.Fonts.Semi, TextSize = 13, Text = "Player to heal", ZIndex = 3 })
+    self.HealerTargetBox = UIKit.New("TextBox", {
+        Position = UDim2.fromOffset(14, 34), Size = UDim2.new(1, -28, 0, 32),
+        BackgroundColor3 = T.Tile, BorderSizePixel = 0, ClearTextOnFocus = false,
+        Font = UIKit.Fonts.Body, TextSize = 12, TextColor3 = T.Text,
+        PlaceholderText = "Roblox username", PlaceholderColor3 = T.Muted,
+        Text = controller.HealerTargetName, TextXAlignment = Enum.TextXAlignment.Left,
+        ZIndex = 3, Parent = targetCard,
+    })
+    UIKit.Corner(self.HealerTargetBox, 8)
+    UIKit.Padding(self.HealerTargetBox, 8, 0, 8, 0)
+    self.HealerTargetBox.FocusLost:Connect(function()
+        controller:SetHealerOption("HealerTargetName", self.HealerTargetBox.Text)
+        self.HealerTargetBox.Text = controller.HealerTargetName
+    end)
+
+    toggleRow(healerPage, 4, "Equip Maximum Heal Gear",
+        "Uses the owned chest and helmet with the highest spell power and equips two best healing spells",
+        function() return controller.HealerAutoEquip end,
+        function(value) controller:SetHealerOption("HealerAutoEquip", value) end)
+
+    local distanceCard = UIKit.Card(healerPage, { Size = UDim2.new(1, 0, 0, 80), LayoutOrder = 5 })
+    UIKit.Label(distanceCard, { Position = UDim2.fromOffset(14, 9), Size = UDim2.new(1, -110, 0, 18),
+        Font = UIKit.Fonts.Semi, TextSize = 13, Text = "Follow distance", ZIndex = 3 })
+    UIKit.Label(distanceCard, { Position = UDim2.fromOffset(14, 29), Size = UDim2.new(1, -110, 0, 35),
+        TextSize = 10, TextColor3 = T.SubText, TextWrapped = true,
+        Text = "Stay close enough for local healing spells while Dodge avoids hazards", ZIndex = 3 })
+    self.HealerDistanceBox = UIKit.New("TextBox", {
+        AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -14, 0.5, 0),
+        Size = UDim2.fromOffset(76, 34), BackgroundColor3 = T.Tile, BorderSizePixel = 0,
+        ClearTextOnFocus = false, Font = UIKit.Fonts.Semi, TextSize = 13,
+        TextColor3 = T.Text, Text = tostring(controller.HealerFollowDistance),
+        TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 3, Parent = distanceCard,
+    })
+    UIKit.Corner(self.HealerDistanceBox, 8)
+    self.HealerDistanceBox.FocusLost:Connect(function()
+        controller:SetHealerOption("HealerFollowDistance", self.HealerDistanceBox.Text)
+        self.HealerDistanceBox.Text = tostring(controller.HealerFollowDistance)
+    end)
 
     -----------------------------------------------------------------------
     -- Settings
@@ -1578,6 +1643,7 @@ function HUD.new(controller)
     self:RefreshControls()
     self:RefreshConfigs()
     self:RefreshCarry()
+    self:RefreshHealer()
     if controller.StartupNotice then
         task.delay(0.5, function()
             self:Notify(controller.StartupNotice, "success")
@@ -1756,6 +1822,20 @@ function HUD:RefreshCarry()
     for buttonIndex, button in ipairs(self.CarryStageButtons or {}) do
         button.BackgroundColor3 = buttonIndex == controller.CarryFixedStage
             and UIKit.Theme.Accent or UIKit.Theme.Tile
+    end
+end
+
+function HUD:RefreshHealer()
+    if not self.HealerStatusLabel then return end
+    local controller = self.Controller
+    self.HealerStatusLabel.Text = controller.HealerStatus
+        or (controller.HealerEnabled and "Starting healer" or "Healer off")
+    self.HealerLoadoutLabel.Text = "Loadout: " .. tostring(controller.HealerLoadout or "waiting")
+    if self.HealerTargetBox and not self.HealerTargetBox:IsFocused() then
+        self.HealerTargetBox.Text = controller.HealerTargetName or ""
+    end
+    if self.HealerDistanceBox and not self.HealerDistanceBox:IsFocused() then
+        self.HealerDistanceBox.Text = tostring(controller.HealerFollowDistance or 14)
     end
 end
 
