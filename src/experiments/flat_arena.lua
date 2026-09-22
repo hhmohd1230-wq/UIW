@@ -214,6 +214,10 @@ do
     end
 
     local function bossNearby(controller)
+        local dungeonName = Workspace:FindFirstChild("dungeonName")
+        if dungeonName and dungeonName.Value == "Steampunk Sewers" then
+            return false -- its final approach needs every original floor collision
+        end
         local enemy = controller.CurrentEnemy
         local root = controller.Character.Root
         if not root or not enemy or not enemy.Root or not enemy.Root.Parent then
@@ -293,4 +297,3 @@ do
         return settings
     end
 end
-

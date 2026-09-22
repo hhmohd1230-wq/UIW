@@ -17,6 +17,11 @@
 -- the ones a player has - walk, jump - plus turning our OWN collision off for
 -- a few seconds, which is the same trick the map layer uses and is reversible.
 do
+    local env = getgenv()
+    if type(env.UIW_UnwedgeCleanup) == "function" then
+        pcall(env.UIW_UnwedgeCleanup)
+    end
+
     CONFIG.Unwedge = true
     CONFIG.UnwedgeMoved = 2.5      -- studs in a second: less than this is stuck
     CONFIG.UnwedgeFor = 5          -- consecutive stuck seconds before we act
@@ -95,8 +100,21 @@ do
         end
     end
 
+    local connection
+    local function cleanup()
+        if connection then
+            connection:Disconnect()
+            connection = nil
+        end
+        ghost(nil, false)
+        if env.UIW_UnwedgeCleanup == cleanup then
+            env.UIW_UnwedgeCleanup = nil
+        end
+    end
+    env.UIW_UnwedgeCleanup = cleanup
+
     local jumpAt = 0
-    RunService.Heartbeat:Connect(function()
+    connection = RunService.Heartbeat:Connect(function()
         if not CONFIG.Unwedge then return end
         local controller = getgenv().UIW
         if not controller or controller.Destroyed or not controller.Enabled then return end
@@ -107,6 +125,16 @@ do
             return
         end
         local now = os.clock()
+
+        -- Steampunk's boss approach has a long drop below its walkway.
+        -- Turning off every character collision here can send us through it.
+        local dungeonName = workspace:FindFirstChild("dungeonName")
+        if dungeonName and dungeonName.Value == "Steampunk Sewers" then
+            state.Stuck, state.Until = 0, 0
+            state.Last, state.At = root.Position, now
+            ghost(model, false)
+            return
+        end
 
         local dungeonStarted = workspace:FindFirstChild("dungeonStarted")
         if not dungeonStarted or dungeonStarted.Value ~= true

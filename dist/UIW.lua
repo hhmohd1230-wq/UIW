@@ -17772,7 +17772,23 @@ function HUD.new(controller)
         function() return CONFIG.DamageCastRange end,
         function(value) CONFIG.DamageCastRange = value end, 30, 80, 1)
 
-    local keysCard = UIKit.Card(settingsPage, { Size = UDim2.new(1, 0, 0, 92), LayoutOrder = 4 })
+    toggleRow(settingsPage, 4, "FPS Limiter", "Caps frame rate while UIW runs",
+        function() return controller.FPSLimitEnabled end,
+        function(value)
+            controller.FPSLimitEnabled = value
+            controller:ApplyDisplaySettings()
+        end)
+    sliderRow(5, "FPS Limit", "Active when the limiter is on (15-120 FPS)",
+        function() return controller.FPSCap end,
+        function(value)
+            controller.FPSCap = value
+            controller:ApplyDisplaySettings()
+        end, 15, 120, 5)
+    toggleRow(settingsPage, 6, "Black Screen", "Hides 3D and caps at 15 FPS; F8 shows the game",
+        function() return controller.BlackScreen end,
+        function(value) controller:SetBlackScreen(value) end)
+
+    local keysCard = UIKit.Card(settingsPage, { Size = UDim2.new(1, 0, 0, 92), LayoutOrder = 7 })
     UIKit.Label(keysCard, { Position = UDim2.fromOffset(14, 8), Size = UDim2.new(1, -28, 0, 18),
         Font = UIKit.Fonts.Semi, TextSize = 13, Text = "Window", ZIndex = 3 })
     UIKit.Label(keysCard, { Position = UDim2.fromOffset(14, 26), Size = UDim2.new(1, -28, 0, 14),
@@ -18829,6 +18845,9 @@ function UIWController.new()
     self.ShowAura = true
     self.ShowMobGroups = true
     self.AutoExecuteOnTeleport = false
+    self.FPSLimitEnabled = false
+    self.FPSCap = 30
+    self.BlackScreen = false
     self.ActiveConfig = nil
     self.AutoLoadConfig = ""
 
@@ -18896,6 +18915,9 @@ function UIWController:ApplySettings(settings)
     self.AutoRetryEnabled = readBoolean("AutoRetryEnabled", self.AutoRetryEnabled)
     self.ShowAura = readBoolean("ShowAura", self.ShowAura)
     self.ShowMobGroups = readBoolean("ShowMobGroups", self.ShowMobGroups)
+    self.FPSLimitEnabled = readBoolean("FPSLimitEnabled", self.FPSLimitEnabled)
+    self.BlackScreen = readBoolean("BlackScreen", self.BlackScreen)
+    self.FPSCap = validNumber(settings.FPSCap, 15, 120, self.FPSCap)
 
     CONFIG.WalkSpeed = validNumber(settings.WalkSpeed, 12, 40, CONFIG.WalkSpeed)
     CONFIG.DesiredCombatRange = validNumber(settings.DesiredCombatRange, 24, 60, CONFIG.DesiredCombatRange)
@@ -18914,6 +18936,7 @@ function UIWController:ApplySettings(settings)
         end)
     end
 
+    if self.DisplayStarted then self:ApplyDisplaySettings() end
     if self.HUD then self.HUD:RefreshControls() end
     return true
 end
@@ -18928,10 +18951,70 @@ function UIWController:GetSettings()
         AutoRetryEnabled = self.AutoRetryEnabled,
         ShowAura = self.ShowAura,
         ShowMobGroups = self.ShowMobGroups,
+        FPSLimitEnabled = self.FPSLimitEnabled,
+        FPSCap = self.FPSCap,
+        BlackScreen = self.BlackScreen,
         WalkSpeed = CONFIG.WalkSpeed,
         DesiredCombatRange = CONFIG.DesiredCombatRange,
         DamageCastRange = CONFIG.DamageCastRange,
     }
+end
+
+function UIWController:ApplyDisplaySettings()
+    local env = getgenv()
+    if env.UIW_OriginalFPSCap == nil then
+        local ok, cap = pcall(function() return getfpscap() end)
+        env.UIW_OriginalFPSCap = ok and tonumber(cap) or 60
+    end
+
+    local cap = self.BlackScreen and 15
+        or (self.FPSLimitEnabled and self.FPSCap or env.UIW_OriginalFPSCap)
+    if type(setfpscap) == "function" then
+        pcall(setfpscap, cap)
+    end
+
+    if self.BlackScreen then
+        if not self.BlackScreenGui or not self.BlackScreenGui.Parent then
+            local gui = Instance.new("ScreenGui")
+            gui.Name = "UIW_BlackScreen"
+            gui.IgnoreGuiInset = true
+            gui.ResetOnSpawn = false
+            gui.DisplayOrder = 10000
+            gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+            local cover = Instance.new("Frame")
+            cover.Size = UDim2.fromScale(1, 1)
+            cover.BackgroundColor3 = Color3.new(0, 0, 0)
+            cover.BorderSizePixel = 0
+            cover.Parent = gui
+
+            local exit = Instance.new("TextButton")
+            exit.AnchorPoint = Vector2.new(1, 0)
+            exit.Position = UDim2.new(1, -16, 0, 16)
+            exit.Size = UDim2.fromOffset(170, 36)
+            exit.BackgroundColor3 = Color3.fromRGB(32, 32, 38)
+            exit.TextColor3 = Color3.new(1, 1, 1)
+            exit.Font = Enum.Font.GothamMedium
+            exit.TextSize = 13
+            exit.Text = "Show game (F8)"
+            exit.Parent = cover
+            exit.MouseButton1Click:Connect(function()
+                self:SetBlackScreen(false)
+            end)
+            self.BlackScreenGui = gui
+        end
+        pcall(function() RunService:Set3dRenderingEnabled(false) end)
+    else
+        pcall(function() RunService:Set3dRenderingEnabled(true) end)
+        safeDestroy(self.BlackScreenGui)
+        self.BlackScreenGui = nil
+    end
+end
+
+function UIWController:SetBlackScreen(enabled)
+    self.BlackScreen = enabled == true
+    self:ApplyDisplaySettings()
+    if self.HUD then self.HUD:RefreshControls() end
 end
 
 ---------------------------------------------------------------------------
@@ -20634,6 +20717,8 @@ end
 
 function UIWController:Start()
     self:RefreshWorld()
+    self.DisplayStarted = true
+    self:ApplyDisplaySettings()
 
     self.SelfAbilities:Start()
     self.Route:Start()
@@ -20969,6 +21054,8 @@ function UIWController:Start()
 
         if input.KeyCode == Enum.KeyCode.RightShift then
             self.HUD:Toggle()
+        elseif input.KeyCode == Enum.KeyCode.F8 and self.BlackScreen then
+            self:SetBlackScreen(false)
         end
     end))
 
@@ -20996,6 +21083,15 @@ function UIWController:Destroy()
     end
 
     self.Destroyed = true
+
+    local unwedgeCleanup = getgenv().UIW_UnwedgeCleanup
+    if type(unwedgeCleanup) == "function" then
+        pcall(unwedgeCleanup)
+    end
+
+    self.BlackScreen = false
+    self.FPSLimitEnabled = false
+    self:ApplyDisplaySettings()
 
     self:ClearDeathConnection()
 
@@ -27850,6 +27946,10 @@ do
     end
 
     local function bossNearby(controller)
+        local dungeonName = Workspace:FindFirstChild("dungeonName")
+        if dungeonName and dungeonName.Value == "Steampunk Sewers" then
+            return false -- its final approach needs every original floor collision
+        end
         local enemy = controller.CurrentEnemy
         local root = controller.Character.Root
         if not root or not enemy or not enemy.Root or not enemy.Root.Parent then
@@ -27929,7 +28029,6 @@ do
         return settings
     end
 end
-
 -- EXPERIMENT (branch experiment-flatmap): time-based escape field.
 --
 -- The old dodge asks "is this direction clear right now?" and throws away any
@@ -31279,6 +31378,11 @@ end
 -- the ones a player has - walk, jump - plus turning our OWN collision off for
 -- a few seconds, which is the same trick the map layer uses and is reversible.
 do
+    local env = getgenv()
+    if type(env.UIW_UnwedgeCleanup) == "function" then
+        pcall(env.UIW_UnwedgeCleanup)
+    end
+
     CONFIG.Unwedge = true
     CONFIG.UnwedgeMoved = 2.5      -- studs in a second: less than this is stuck
     CONFIG.UnwedgeFor = 5          -- consecutive stuck seconds before we act
@@ -31357,8 +31461,21 @@ do
         end
     end
 
+    local connection
+    local function cleanup()
+        if connection then
+            connection:Disconnect()
+            connection = nil
+        end
+        ghost(nil, false)
+        if env.UIW_UnwedgeCleanup == cleanup then
+            env.UIW_UnwedgeCleanup = nil
+        end
+    end
+    env.UIW_UnwedgeCleanup = cleanup
+
     local jumpAt = 0
-    RunService.Heartbeat:Connect(function()
+    connection = RunService.Heartbeat:Connect(function()
         if not CONFIG.Unwedge then return end
         local controller = getgenv().UIW
         if not controller or controller.Destroyed or not controller.Enabled then return end
@@ -31369,6 +31486,16 @@ do
             return
         end
         local now = os.clock()
+
+        -- Steampunk's boss approach has a long drop below its walkway.
+        -- Turning off every character collision here can send us through it.
+        local dungeonName = workspace:FindFirstChild("dungeonName")
+        if dungeonName and dungeonName.Value == "Steampunk Sewers" then
+            state.Stuck, state.Until = 0, 0
+            state.Last, state.At = root.Position, now
+            ghost(model, false)
+            return
+        end
 
         local dungeonStarted = workspace:FindFirstChild("dungeonStarted")
         if not dungeonStarted or dungeonStarted.Value ~= true
@@ -31428,6 +31555,67 @@ do
             beginEscape(controller, root)
         end
     end)
+end
+-- Keep the Steampunk boss approach on solid ground. Its last walkway can
+-- expose a long drop; a dodge or route direction must not step into the gap.
+do
+    local function groundAt(position, map)
+        local params = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Include
+        params.FilterDescendantsInstances = { map }
+        params.RespectCanCollide = true
+        local hit = Workspace:Raycast(
+            position + Vector3.new(0, 2, 0),
+            Vector3.new(0, -18, 0),
+            params
+        )
+        if hit and hit.Normal.Y >= 0.55 then
+            return hit.Position.Y
+        end
+        return nil
+    end
+
+    local oldStep = UIWController.Step
+    function UIWController:Step()
+        oldStep(self)
+        if self.Destroyed or not self.Enabled or not self.Character:IsAlive() then
+            return
+        end
+        local name = Workspace:FindFirstChild("dungeonName")
+        if not name or name.Value ~= "Steampunk Sewers" then return end
+
+        local root = self.Character.Root
+        if root.Position.X < 1320 or root.Position.X > 1460
+            or root.Position.Y < -65 or root.Position.Y > 15
+        then
+            return
+        end
+
+        local movement = flatten(self.LastCommandedMovement or Vector3.zero)
+        if movement.Magnitude < 0.25 then return end
+        local map = Workspace:FindFirstChild("Map") or Workspace:FindFirstChild("map")
+        if not map then return end
+
+        local currentGround = groundAt(root.Position, map)
+        local ahead = root.Position + movement.Unit * 6
+        local aheadGround = groundAt(ahead, map)
+        if not aheadGround or (currentGround and currentGround - aheadGround > 8) then
+            self.Character.Humanoid:Move(Vector3.zero, false)
+            self.LastCommandedMovement = Vector3.zero
+            if os.clock() - (self.SteamEdgeRepathAt or 0) > 1 then
+                self.SteamEdgeRepathAt = os.clock()
+                self.Route:InvalidateGoal()
+            end
+            self.HUD:SetStatus("PATHING", "boss walkway edge | finding safe ground")
+        end
+    end
+
+    local oldNew = UIWController.new
+    function UIWController.new()
+        local self = oldNew()
+        self.Version = tostring(self.Version) .. "+steamedge"
+        return self
+    end
 end
 
 local Controller = UIWController.new()

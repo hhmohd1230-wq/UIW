@@ -6,6 +6,10 @@ split by area; `dist/UIW.lua` is the joined, ready-to-run file.
 With Auto Combat enabled, UIW also swings the equipped weapon at its attack
 speed during a started dungeon, pausing while casting or in a peaceful area.
 
+The Settings tab has an FPS limiter (15-120 FPS) and Black Screen mode. Black
+Screen hides 3D rendering and caps the client at 15 FPS; press F8 or the on-screen
+button to return. Both choices can be saved in a named config.
+
 Base version: **v44.20** (from `UIW_v44.17.lua`). The split is lossless: building
 reproduces that file byte for byte.
 

@@ -56,5 +56,6 @@ src/patches/v49_05_cast_guard_and_escape.lua
 src/patches/v50_01_force_walkspeed.lua
 src/dungeons/northern_lands/v50_07_cycle.lua
 src/patches/v51_01_unwedge.lua
+src/dungeons/steampunk_sewers/v52_01_boss_entry.lua
 src/99_start.lua
 src/99_telemetry.lua

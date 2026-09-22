@@ -27,6 +27,9 @@ function UIWController.new()
     self.ShowAura = true
     self.ShowMobGroups = true
     self.AutoExecuteOnTeleport = false
+    self.FPSLimitEnabled = false
+    self.FPSCap = 30
+    self.BlackScreen = false
     self.ActiveConfig = nil
     self.AutoLoadConfig = ""
 
@@ -94,6 +97,9 @@ function UIWController:ApplySettings(settings)
     self.AutoRetryEnabled = readBoolean("AutoRetryEnabled", self.AutoRetryEnabled)
     self.ShowAura = readBoolean("ShowAura", self.ShowAura)
     self.ShowMobGroups = readBoolean("ShowMobGroups", self.ShowMobGroups)
+    self.FPSLimitEnabled = readBoolean("FPSLimitEnabled", self.FPSLimitEnabled)
+    self.BlackScreen = readBoolean("BlackScreen", self.BlackScreen)
+    self.FPSCap = validNumber(settings.FPSCap, 15, 120, self.FPSCap)
 
     CONFIG.WalkSpeed = validNumber(settings.WalkSpeed, 12, 40, CONFIG.WalkSpeed)
     CONFIG.DesiredCombatRange = validNumber(settings.DesiredCombatRange, 24, 60, CONFIG.DesiredCombatRange)
@@ -112,6 +118,7 @@ function UIWController:ApplySettings(settings)
         end)
     end
 
+    if self.DisplayStarted then self:ApplyDisplaySettings() end
     if self.HUD then self.HUD:RefreshControls() end
     return true
 end
@@ -126,10 +133,70 @@ function UIWController:GetSettings()
         AutoRetryEnabled = self.AutoRetryEnabled,
         ShowAura = self.ShowAura,
         ShowMobGroups = self.ShowMobGroups,
+        FPSLimitEnabled = self.FPSLimitEnabled,
+        FPSCap = self.FPSCap,
+        BlackScreen = self.BlackScreen,
         WalkSpeed = CONFIG.WalkSpeed,
         DesiredCombatRange = CONFIG.DesiredCombatRange,
         DamageCastRange = CONFIG.DamageCastRange,
     }
+end
+
+function UIWController:ApplyDisplaySettings()
+    local env = getgenv()
+    if env.UIW_OriginalFPSCap == nil then
+        local ok, cap = pcall(function() return getfpscap() end)
+        env.UIW_OriginalFPSCap = ok and tonumber(cap) or 60
+    end
+
+    local cap = self.BlackScreen and 15
+        or (self.FPSLimitEnabled and self.FPSCap or env.UIW_OriginalFPSCap)
+    if type(setfpscap) == "function" then
+        pcall(setfpscap, cap)
+    end
+
+    if self.BlackScreen then
+        if not self.BlackScreenGui or not self.BlackScreenGui.Parent then
+            local gui = Instance.new("ScreenGui")
+            gui.Name = "UIW_BlackScreen"
+            gui.IgnoreGuiInset = true
+            gui.ResetOnSpawn = false
+            gui.DisplayOrder = 10000
+            gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+            local cover = Instance.new("Frame")
+            cover.Size = UDim2.fromScale(1, 1)
+            cover.BackgroundColor3 = Color3.new(0, 0, 0)
+            cover.BorderSizePixel = 0
+            cover.Parent = gui
+
+            local exit = Instance.new("TextButton")
+            exit.AnchorPoint = Vector2.new(1, 0)
+            exit.Position = UDim2.new(1, -16, 0, 16)
+            exit.Size = UDim2.fromOffset(170, 36)
+            exit.BackgroundColor3 = Color3.fromRGB(32, 32, 38)
+            exit.TextColor3 = Color3.new(1, 1, 1)
+            exit.Font = Enum.Font.GothamMedium
+            exit.TextSize = 13
+            exit.Text = "Show game (F8)"
+            exit.Parent = cover
+            exit.MouseButton1Click:Connect(function()
+                self:SetBlackScreen(false)
+            end)
+            self.BlackScreenGui = gui
+        end
+        pcall(function() RunService:Set3dRenderingEnabled(false) end)
+    else
+        pcall(function() RunService:Set3dRenderingEnabled(true) end)
+        safeDestroy(self.BlackScreenGui)
+        self.BlackScreenGui = nil
+    end
+end
+
+function UIWController:SetBlackScreen(enabled)
+    self.BlackScreen = enabled == true
+    self:ApplyDisplaySettings()
+    if self.HUD then self.HUD:RefreshControls() end
 end
 
 ---------------------------------------------------------------------------
@@ -1832,6 +1899,8 @@ end
 
 function UIWController:Start()
     self:RefreshWorld()
+    self.DisplayStarted = true
+    self:ApplyDisplaySettings()
 
     self.SelfAbilities:Start()
     self.Route:Start()
@@ -2167,6 +2236,8 @@ function UIWController:Start()
 
         if input.KeyCode == Enum.KeyCode.RightShift then
             self.HUD:Toggle()
+        elseif input.KeyCode == Enum.KeyCode.F8 and self.BlackScreen then
+            self:SetBlackScreen(false)
         end
     end))
 
@@ -2194,6 +2265,15 @@ function UIWController:Destroy()
     end
 
     self.Destroyed = true
+
+    local unwedgeCleanup = getgenv().UIW_UnwedgeCleanup
+    if type(unwedgeCleanup) == "function" then
+        pcall(unwedgeCleanup)
+    end
+
+    self.BlackScreen = false
+    self.FPSLimitEnabled = false
+    self:ApplyDisplaySettings()
 
     self:ClearDeathConnection()
 

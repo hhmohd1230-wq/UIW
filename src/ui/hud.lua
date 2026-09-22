@@ -1080,7 +1080,23 @@ function HUD.new(controller)
         function() return CONFIG.DamageCastRange end,
         function(value) CONFIG.DamageCastRange = value end, 30, 80, 1)
 
-    local keysCard = UIKit.Card(settingsPage, { Size = UDim2.new(1, 0, 0, 92), LayoutOrder = 4 })
+    toggleRow(settingsPage, 4, "FPS Limiter", "Caps frame rate while UIW runs",
+        function() return controller.FPSLimitEnabled end,
+        function(value)
+            controller.FPSLimitEnabled = value
+            controller:ApplyDisplaySettings()
+        end)
+    sliderRow(5, "FPS Limit", "Active when the limiter is on (15-120 FPS)",
+        function() return controller.FPSCap end,
+        function(value)
+            controller.FPSCap = value
+            controller:ApplyDisplaySettings()
+        end, 15, 120, 5)
+    toggleRow(settingsPage, 6, "Black Screen", "Hides 3D and caps at 15 FPS; F8 shows the game",
+        function() return controller.BlackScreen end,
+        function(value) controller:SetBlackScreen(value) end)
+
+    local keysCard = UIKit.Card(settingsPage, { Size = UDim2.new(1, 0, 0, 92), LayoutOrder = 7 })
     UIKit.Label(keysCard, { Position = UDim2.fromOffset(14, 8), Size = UDim2.new(1, -28, 0, 18),
         Font = UIKit.Fonts.Semi, TextSize = 13, Text = "Window", ZIndex = 3 })
     UIKit.Label(keysCard, { Position = UDim2.fromOffset(14, 26), Size = UDim2.new(1, -28, 0, 14),
