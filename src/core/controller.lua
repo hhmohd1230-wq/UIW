@@ -41,6 +41,7 @@ function UIWController.new()
     self.HealerEnabled = false
     self.HealerTargetName = ""
     self.HealerAutoEquip = true
+    self.HealerAutoSpells = false
     self.HealerFollowDistance = 14
     self.HealerUseRecordedPath = false
     self.ShowRecordedPath = false
@@ -131,6 +132,7 @@ function UIWController:ApplySettings(settings)
         self.HealerTargetName = string.sub(settings.HealerTargetName, 1, 32)
     end
     self.HealerAutoEquip = readBoolean("HealerAutoEquip", self.HealerAutoEquip)
+    self.HealerAutoSpells = readBoolean("HealerAutoSpells", self.HealerAutoSpells)
     self.HealerFollowDistance = validNumber(settings.HealerFollowDistance, 8, 35, self.HealerFollowDistance)
     self.HealerUseRecordedPath = readBoolean("HealerUseRecordedPath", self.HealerUseRecordedPath)
     self.ShowRecordedPath = readBoolean("ShowRecordedPath", self.ShowRecordedPath)
@@ -179,6 +181,7 @@ function UIWController:GetSettings()
         HealerEnabled = self.HealerEnabled,
         HealerTargetName = self.HealerTargetName,
         HealerAutoEquip = self.HealerAutoEquip,
+        HealerAutoSpells = self.HealerAutoSpells,
         HealerFollowDistance = self.HealerFollowDistance,
         HealerUseRecordedPath = self.HealerUseRecordedPath,
         ShowRecordedPath = self.ShowRecordedPath,
@@ -273,6 +276,7 @@ function UIWController:WriteMeta()
     meta.HealerEnabled = self.HealerEnabled == true
     meta.HealerTargetName = self.HealerTargetName
     meta.HealerAutoEquip = self.HealerAutoEquip ~= false
+    meta.HealerAutoSpells = self.HealerAutoSpells == true
     meta.HealerFollowDistance = self.HealerFollowDistance
     meta.HealerUseRecordedPath = self.HealerUseRecordedPath == true
     meta.ShowRecordedPath = self.ShowRecordedPath == true
@@ -298,6 +302,7 @@ function UIWController:InitConfigs()
     self.HealerEnabled = meta.HealerEnabled
     self.HealerTargetName = meta.HealerTargetName
     self.HealerAutoEquip = meta.HealerAutoEquip
+    self.HealerAutoSpells = meta.HealerAutoSpells == true
     self.HealerFollowDistance = math.clamp(tonumber(meta.HealerFollowDistance) or 14, 8, 35)
     self.HealerUseRecordedPath = meta.HealerUseRecordedPath == true
     self.ShowRecordedPath = meta.ShowRecordedPath == true

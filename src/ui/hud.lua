@@ -1106,12 +1106,17 @@ function HUD.new(controller)
         self.HealerTargetBox.Text = controller.HealerTargetName
     end)
 
-    toggleRow(healerPage, 4, "Equip Maximum Heal Gear",
-        "Uses the owned chest and helmet with the highest spell power and equips two best healing spells",
+    toggleRow(healerPage, 4, "Auto Tank Armor",
+        "Equips the owned chest and helmet with the highest health; turn off for manual armor",
         function() return controller.HealerAutoEquip end,
         function(value) controller:SetHealerOption("HealerAutoEquip", value) end)
 
-    local distanceCard = UIKit.Card(healerPage, { Size = UDim2.new(1, 0, 0, 80), LayoutOrder = 5 })
+    toggleRow(healerPage, 5, "Auto Healing Spells",
+        "Equips the two best owned heals; turn off to keep your own Q and E spells",
+        function() return controller.HealerAutoSpells end,
+        function(value) controller:SetHealerOption("HealerAutoSpells", value) end)
+
+    local distanceCard = UIKit.Card(healerPage, { Size = UDim2.new(1, 0, 0, 80), LayoutOrder = 6 })
     UIKit.Label(distanceCard, { Position = UDim2.fromOffset(14, 9), Size = UDim2.new(1, -110, 0, 18),
         Font = UIKit.Fonts.Semi, TextSize = 13, Text = "Follow distance", ZIndex = 3 })
     UIKit.Label(distanceCard, { Position = UDim2.fromOffset(14, 29), Size = UDim2.new(1, -110, 0, 35),

@@ -130,14 +130,14 @@ do
         return false
     end
 
-    local function bestSpellPower(container, level)
-        local bestKey, bestItem, bestSpell, bestHealth = nil, nil, -1, -1
+    local function bestTankArmor(container, level)
+        local bestKey, bestItem, bestHealth, bestSpell = nil, nil, -1, -1
         for key, item in pairs(container or {}) do
             if type(item) == "table" and (tonumber(item.levelReq) or 0) <= level then
                 local spell = tonumber(item.spellPower) or 0
                 local health = tonumber(item.health) or 0
-                if spell > bestSpell or (spell == bestSpell and health > bestHealth) then
-                    bestKey, bestItem, bestSpell, bestHealth = key, item, spell, health
+                if health > bestHealth or (health == bestHealth and spell > bestSpell) then
+                    bestKey, bestItem, bestHealth, bestSpell = key, item, health, spell
                 end
             end
         end
@@ -186,6 +186,8 @@ do
             self.HealerTargetName = cleanName(value) or ""
         elseif key == "HealerAutoEquip" then
             self.HealerAutoEquip = value == true
+        elseif key == "HealerAutoSpells" then
+            self.HealerAutoSpells = value == true
         elseif key == "HealerFollowDistance" then
             self.HealerFollowDistance = math.clamp(tonumber(value) or 14, 8, 35)
         elseif key == "HealerUseRecordedPath" then
@@ -199,6 +201,13 @@ do
             return
         end
         self.HealerLastEquipAt = 0
+        if not self.HealerAutoEquip and not self.HealerAutoSpells then
+            self.HealerLoadout = "manual armor | manual spells"
+        elseif not self.HealerAutoEquip then
+            self.HealerLoadout = "manual armor | auto healing spells"
+        elseif not self.HealerAutoSpells then
+            self.HealerLoadout = "auto tank armor | manual spells"
+        end
         self.Route:InvalidateGoal()
         self:WriteMeta()
         if self.HealerEnabled then self:ConfigureAutoExecute() end
@@ -463,8 +472,21 @@ do
         end
     end
 
+    function UIWController:GetHealerLeadPosition(root)
+        if not root then return nil end
+        local velocity = flatten(root.AssemblyLinearVelocity or Vector3.zero)
+        local leadTime = velocity.Magnitude >= 12 and 0.65 or 0.4
+        local lead = velocity * leadTime
+        if lead.Magnitude > 18 then lead = lead.Unit * 18 end
+        return root.Position + lead
+    end
+
     function UIWController:EquipHealerLoadout()
-        if not self.HealerEnabled or not self.HealerAutoEquip or self.HealerEquipBusy then return end
+        if not self.HealerEnabled or (not self.HealerAutoEquip and not self.HealerAutoSpells)
+            or self.HealerEquipBusy
+        then
+            return
+        end
         self.HealerEquipBusy = true
         task.spawn(function()
             local ok, message = pcall(function()
@@ -481,29 +503,37 @@ do
                 local level = tonumber(levelValue and levelValue.Value) or 1
                 local equipped = {}
 
-                local chestKey, chest = bestSpellPower(inventory.chests, level)
-                local helmetKey, helmet = bestSpellPower(inventory.helmets, level)
-                if chestKey and not isEquipped(chest) then
-                    Remotes.equipItem:InvokeServer("chest", itemNumber(chestKey))
-                end
-                if helmetKey and not isEquipped(helmet) then
-                    Remotes.equipItem:InvokeServer("helmet", itemNumber(helmetKey))
-                end
-                if chest then table.insert(equipped, tostring(chest.name)) end
-                if helmet then table.insert(equipped, tostring(helmet.name)) end
-
-                local abilities = healingAbilities(inventory.abilities, level)
-                for index = 1, math.min(2, #abilities) do
-                    local chosen = abilities[index]
-                    local slot = index == 1 and "q" or "e"
-                    local slotEquipped = type(chosen.Item.equipped) == "table"
-                        and chosen.Item.equipped[slot] == true
-                    if not slotEquipped then
-                        Remotes.equipItem:InvokeServer("ability", itemNumber(chosen.Key), slot)
+                if self.HealerAutoEquip then
+                    local chestKey, chest = bestTankArmor(inventory.chests, level)
+                    local helmetKey, helmet = bestTankArmor(inventory.helmets, level)
+                    if chestKey and not isEquipped(chest) then
+                        Remotes.equipItem:InvokeServer("chest", itemNumber(chestKey))
                     end
-                    table.insert(equipped, tostring(chosen.Item.name))
+                    if helmetKey and not isEquipped(helmet) then
+                        Remotes.equipItem:InvokeServer("helmet", itemNumber(helmetKey))
+                    end
+                    if chest then table.insert(equipped, "Tank: " .. tostring(chest.name)) end
+                    if helmet then table.insert(equipped, tostring(helmet.name)) end
+                else
+                    table.insert(equipped, "manual armor")
                 end
-                if #abilities == 0 then table.insert(equipped, "no owned healing spell") end
+
+                if self.HealerAutoSpells then
+                    local abilities = healingAbilities(inventory.abilities, level)
+                    for index = 1, math.min(2, #abilities) do
+                        local chosen = abilities[index]
+                        local slot = index == 1 and "q" or "e"
+                        local slotEquipped = type(chosen.Item.equipped) == "table"
+                            and chosen.Item.equipped[slot] == true
+                        if not slotEquipped then
+                            Remotes.equipItem:InvokeServer("ability", itemNumber(chosen.Key), slot)
+                        end
+                        table.insert(equipped, tostring(chosen.Item.name))
+                    end
+                    if #abilities == 0 then table.insert(equipped, "no owned healing spell") end
+                else
+                    table.insert(equipped, "manual spells")
+                end
                 return table.concat(equipped, " | ")
             end)
             self.HealerEquipBusy = false
@@ -636,6 +666,11 @@ do
         self:HealerNavigationRecovery(root, distance)
         local health = humanoid.Health / math.max(humanoid.MaxHealth, 1) * 100
         local healerHumanoid = self.Character and self.Character.Humanoid
+        if healerHumanoid then
+            local hostSpeed = tonumber(humanoid.WalkSpeed) or CONFIG.WalkSpeed
+            local followSpeed = math.clamp(math.max(CONFIG.WalkSpeed, hostSpeed + 4, 24), 12, 40)
+            if healerHumanoid.WalkSpeed < followSpeed then healerHumanoid.WalkSpeed = followSpeed end
+        end
         local healerHealth = healerHumanoid and healerHumanoid.MaxHealth > 0
             and healerHumanoid.Health / healerHumanoid.MaxHealth * 100 or 0
         if not self:HealerCast(humanoid, distance) then
@@ -654,8 +689,11 @@ do
             if not root then return nil end
             local distance = (root.Position - self.Character.Root.Position).Magnitude
             if distance > (tonumber(self.HealerFollowDistance) or 14) then
-                local goal = self:GetHealerRecordedGoal(root.Position) or root.Position
-                self.RecordedRouteTraversalActive = self.HealerUseRecordedPath
+                local goal = self:GetHealerRecordedGoal(root.Position)
+                    or self:GetHealerLeadPosition(root) or root.Position
+                -- Healer following is always committed route travel. Nearby
+                -- dungeon enemies must not pull the healer away from its host.
+                self.RecordedRouteTraversalActive = true
                 self:UpdateHealerNavigation(goal)
                 return goal
             end
@@ -713,7 +751,8 @@ do
             if not ok then error(err) end
             return
         end
-        local combat, dodge = self.AutoCombat, self.AutoDodge
+        local master, combat, dodge = self.Enabled, self.AutoCombat, self.AutoDodge
+        self.Enabled = true
         local use3DGoalDistance = self.Route.Use3DGoalDistance
         self.AutoCombat = false
         self.AutoDodge = true
@@ -721,9 +760,10 @@ do
         local ok, err = pcall(oldStep, self)
         self.AutoCombat = combat
         self.AutoDodge = dodge
+        self.Enabled = master
         self.Route.Use3DGoalDistance = use3DGoalDistance
         if not ok then error(err) end
-        if self.Enabled and self.Character:IsAlive() then self:HealerUpdate() end
+        if self.Character:IsAlive() then self:HealerUpdate() end
     end
 
     function UIWController:StartHealer()
@@ -750,7 +790,9 @@ do
                 if self.HUD and self.HUD.RefreshHealer then self.HUD:RefreshHealer() end
             end
             if not self.HealerEnabled then return end
-            if self.HealerAutoEquip and now - (self.HealerLastEquipAt or 0) >= 12 then
+            if (self.HealerAutoEquip or self.HealerAutoSpells)
+                and now - (self.HealerLastEquipAt or 0) >= 12
+            then
                 self.HealerLastEquipAt = now
                 self:EquipHealerLoadout()
             end

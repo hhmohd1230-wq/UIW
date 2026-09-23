@@ -47,18 +47,22 @@ Both recorded and live paths commit through the full stair transition and keep
 moving briefly past the crest onto the platform edge before boss spacing takes
 control. Recorded combat handoff now occurs inside normal casting range.
 
-The **Healer** tab follows one selected player while keeping Auto Dodge active.
+The **Healer** tab follows one selected player and heals even when Master Auto
+is off, while keeping Smart Dodge active.
 When its target is blank, it automatically follows the configured Carry host.
 It stops offensive casts, faces the selected player and uses any equipped
 healing spell when either the target or the healer loses health. When two
 healing spells are equipped, a shared coverage timer spaces their casts so the
-second spell is preserved instead of being fired at the same moment. **Equip Maximum Heal Gear**
-selects the owned chest and helmet with the most spell power and equips the two
-best owned healing spells, favoring Revitalize, Universal Heal and Chain Heal.
+second spell is preserved instead of being fired at the same moment. **Auto
+Tank Armor** selects the owned chest and helmet with the highest health. Turn it
+off to keep manually equipped armor. **Auto Healing Spells** is separate and is
+off by default, so manually selected Q and E spells remain unchanged; turn it
+on to equip the two best owned healing spells.
 Map-wide healing can cast immediately; local heals wait until the healer has
 chased within that spell's effective range.
 The healer pathfinder treats vertical distance as real distance, jumps early on
-short climbs and forces a fresh route when movement stalls. A healer using the
+short climbs, predicts the moving host, runs at least four WalkSpeed faster than
+the host (up to 40), and forces a fresh route when movement stalls. A healer using the
 recorded route can traverse it in either direction to reach its selected host.
 The target, follow distance and healer choices are saved per Roblox account and
 continue after dungeon teleports.
