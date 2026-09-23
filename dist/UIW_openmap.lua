@@ -17753,6 +17753,41 @@ function HUD.new(controller)
             end
         end)
 
+    toggleRow(automationPage, 10, "Use Recorded Auto Route",
+        "For hosts, healers and alts: follows the saved path and pauses for combat",
+        function() return controller.HealerUseRecordedPath end,
+        function(value) controller:SetHealerOption("HealerUseRecordedPath", value) end)
+
+    local routeCard = UIKit.Card(automationPage, { Size = UDim2.new(1, 0, 0, 112), LayoutOrder = 11 })
+    self.HealerRouteStatusLabel = UIKit.Label(routeCard, {
+        Position = UDim2.fromOffset(14, 8), Size = UDim2.new(1, -28, 0, 38),
+        Font = UIKit.Fonts.Semi, TextSize = 11, TextWrapped = true,
+        TextYAlignment = Enum.TextYAlignment.Top,
+        Text = "No recorded route for this dungeon", ZIndex = 3,
+    })
+    self.HealerRecordButton = UIKit.Button(routeCard, {
+        Position = UDim2.fromOffset(14, 58), Size = UDim2.new(0.6, -18, 0, 38),
+        Text = "Start recording", ZIndex = 3,
+    })
+    local clearRouteButton = UIKit.Button(routeCard, {
+        Position = UDim2.new(0.6, 4, 0, 58), Size = UDim2.new(0.4, -18, 0, 38),
+        Text = "Clear", ZIndex = 3,
+    })
+    UIKit.Corner(self.HealerRecordButton, 8)
+    UIKit.Corner(clearRouteButton, 8)
+    self.HealerRecordButton.MouseButton1Click:Connect(function()
+        if controller.HealerRecording then
+            controller:StopHealerRouteRecording()
+        else
+            controller:StartHealerRouteRecording()
+        end
+        self:RefreshHealer()
+    end)
+    clearRouteButton.MouseButton1Click:Connect(function()
+        controller:ClearHealerRecordedPath()
+        self:RefreshHealer()
+    end)
+
     -----------------------------------------------------------------------
     -- Carry
     -----------------------------------------------------------------------
@@ -17900,41 +17935,6 @@ function HUD.new(controller)
     self.HealerDistanceBox.FocusLost:Connect(function()
         controller:SetHealerOption("HealerFollowDistance", self.HealerDistanceBox.Text)
         self.HealerDistanceBox.Text = tostring(controller.HealerFollowDistance)
-    end)
-
-    toggleRow(healerPage, 6, "Use Recorded Route",
-        "Follows your saved waypoints for stairs, climbs, drops and difficult corners",
-        function() return controller.HealerUseRecordedPath end,
-        function(value) controller:SetHealerOption("HealerUseRecordedPath", value) end)
-
-    local routeCard = UIKit.Card(healerPage, { Size = UDim2.new(1, 0, 0, 112), LayoutOrder = 7 })
-    self.HealerRouteStatusLabel = UIKit.Label(routeCard, {
-        Position = UDim2.fromOffset(14, 8), Size = UDim2.new(1, -28, 0, 38),
-        Font = UIKit.Fonts.Semi, TextSize = 11, TextWrapped = true,
-        TextYAlignment = Enum.TextYAlignment.Top,
-        Text = "No recorded route for this dungeon", ZIndex = 3,
-    })
-    self.HealerRecordButton = UIKit.Button(routeCard, {
-        Position = UDim2.fromOffset(14, 58), Size = UDim2.new(0.6, -18, 0, 38),
-        Text = "Start recording", ZIndex = 3,
-    })
-    local clearRouteButton = UIKit.Button(routeCard, {
-        Position = UDim2.new(0.6, 4, 0, 58), Size = UDim2.new(0.4, -18, 0, 38),
-        Text = "Clear", ZIndex = 3,
-    })
-    UIKit.Corner(self.HealerRecordButton, 8)
-    UIKit.Corner(clearRouteButton, 8)
-    self.HealerRecordButton.MouseButton1Click:Connect(function()
-        if controller.HealerRecording then
-            controller:StopHealerRouteRecording()
-        else
-            controller:StartHealerRouteRecording()
-        end
-        self:RefreshHealer()
-    end)
-    clearRouteButton.MouseButton1Click:Connect(function()
-        controller:ClearHealerRecordedPath()
-        self:RefreshHealer()
     end)
 
     -----------------------------------------------------------------------
@@ -32345,10 +32345,6 @@ do
         elseif key == "CarryEnabled" then
             self.CarryEnabled = value == true
             self.CarryLastActionAt = 0
-            if self.CarryEnabled then
-                self.Enabled = true
-                self.AutoDodge = true
-            end
         else
             return
         end
@@ -32576,13 +32572,6 @@ do
     end
 
     function UIWController:StartCarry()
-        if self.CarryEnabled then
-            -- Carry is an active automation mode. A saved config with Master
-            -- Auto off must not leave the host or an alt standing still after
-            -- a teleport.
-            self.Enabled = true
-            self.AutoDodge = true
-        end
         self.CarryStatus = self.CarryEnabled and "Starting carry" or "Carry off"
         self.CarryLevelReadyAt = os.clock() + 6
         self.CarryRewardAt = nil
@@ -32616,6 +32605,7 @@ do
     local ROUTE_SAMPLE_DISTANCE = 4
     local ROUTE_REACH_DISTANCE = 5
     local ROUTE_RESYNC_DISTANCE = 32
+    local ROUTE_COMBAT_PAUSE_DISTANCE = 100
 
     local function healerDungeonFinished()
         local dungeon = Workspace:FindFirstChild("dungeon")
@@ -32757,7 +32747,6 @@ do
         if key == "HealerEnabled" then
             self.HealerEnabled = value == true
             if self.HealerEnabled then
-                self.Enabled = true
                 self.AutoDodge = true
             end
         elseif key == "HealerTargetName" then
@@ -32769,6 +32758,7 @@ do
         elseif key == "HealerUseRecordedPath" then
             self.HealerUseRecordedPath = value == true
             self.HealerRouteIndex = nil
+            self.RecordedRouteCompleteKey = nil
             self.Route:InvalidateGoal()
         else
             return
@@ -32816,6 +32806,7 @@ do
             return false
         end
         self.HealerRecording = true
+        self.RecordedRouteCompleteKey = nil
         self.HealerRecordingKey = self:GetHealerRouteKey()
         self.HealerRecordingPoints = { routePoint(self.Character.Root.Position) }
         self.HealerRouteStatus = "Recording " .. self:GetHealerRouteName()
@@ -32855,6 +32846,7 @@ do
         self:LoadHealerRoutes()[self.HealerRecordingKey or self:GetHealerRouteKey()] = points
         local saved = self:SaveHealerRoutes()
         self.HealerRouteIndex = nil
+        self.RecordedRouteCompleteKey = nil
         local dungeonName = self:GetHealerRouteName()
         self.HealerRouteStatus = saved
             and string.format("%s %s route: %d points",
@@ -32869,6 +32861,7 @@ do
         local routes = self:LoadHealerRoutes()
         routes[self:GetHealerRouteKey()] = nil
         self.HealerRouteIndex = nil
+        self.RecordedRouteCompleteKey = nil
         local saved = self:SaveHealerRoutes()
         self.HealerRouteStatus = saved and ("Recorded route cleared for " .. self:GetHealerRouteName())
             or "Could not clear the recorded route"
@@ -32926,6 +32919,55 @@ do
         self.HealerRouteIndex = currentIndex
         self.HealerRouteStatus = string.format("Recorded route active • point %d/%d toward host", currentIndex, #points)
         return routeVector(points[currentIndex])
+    end
+
+    function UIWController:GetRecordedProgressGoal()
+        if not self.HealerUseRecordedPath or not self.Character:IsAlive() then return nil end
+        local key = self:GetHealerRouteKey()
+        if self.RecordedRouteCompleteKey == key then return nil end
+        local points = self:GetRecordedHealerRoute()
+        if not points or #points < 2 then
+            self.HealerRouteStatus = "Recorded route enabled • no route saved for "
+                .. self:GetHealerRouteName()
+            return nil
+        end
+
+        local position = self.Character.Root.Position
+        local index = tonumber(self.HealerRouteIndex)
+        local point = index and routeVector(points[index])
+        if not point or (point - position).Magnitude > ROUTE_RESYNC_DISTANCE then
+            local nearestIndex, nearestDistance = 1, math.huge
+            local firstCandidate = index and math.max(1, index) or 1
+            local lastCandidate = index and math.min(#points, index + 80) or #points
+            for candidateIndex = firstCandidate, lastCandidate do
+                local candidate = points[candidateIndex]
+                local vector = routeVector(candidate)
+                if vector then
+                    local distance = (vector - position).Magnitude
+                    if distance < nearestDistance then
+                        nearestIndex, nearestDistance = candidateIndex, distance
+                    end
+                end
+            end
+            index = nearestIndex
+            point = routeVector(points[index])
+        end
+
+        if point and (point - position).Magnitude <= ROUTE_REACH_DISTANCE then
+            if index >= #points then
+                self.RecordedRouteCompleteKey = key
+                self.HealerRouteStatus = "Recorded " .. self:GetHealerRouteName()
+                    .. " route completed"
+                return nil
+            end
+            index += 1
+            point = routeVector(points[index])
+        end
+
+        self.HealerRouteIndex = index
+        self.HealerRouteStatus = string.format("Auto route active • %s • point %d/%d",
+            self:GetHealerRouteName(), index, #points)
+        return point
     end
 
     function UIWController:UpdateHealerNavigation(goal)
@@ -33135,6 +33177,22 @@ do
             end
             return nil
         end
+        if self.HealerUseRecordedPath then
+            local mechanicGoal = self:GetPriorityMechanicGoal()
+            if mechanicGoal then return oldGetGoal(self) end
+            local enemy = self.CurrentEnemy
+            local enemyDistance = enemy and enemy.Root and enemy.Root.Parent
+                and (enemy.Root.Position - self.Character.Root.Position).Magnitude or math.huge
+            if enemyDistance > ROUTE_COMBAT_PAUSE_DISTANCE then
+                local routeGoal = self:GetRecordedProgressGoal()
+                if routeGoal then
+                    self:UpdateHealerNavigation(routeGoal)
+                    return routeGoal
+                end
+            else
+                self.HealerRouteStatus = string.format("Auto route paused for combat • %.0f studs", enemyDistance)
+            end
+        end
         return oldGetGoal(self)
     end
 
@@ -33156,7 +33214,15 @@ do
             self.Character:ReleaseAutomationFacing()
             return
         end
-        if not self.HealerEnabled then return oldStep(self) end
+        if not self.HealerEnabled then
+            if not self.HealerUseRecordedPath then return oldStep(self) end
+            local dodge = self.AutoDodge
+            self.AutoDodge = true
+            local ok, err = pcall(oldStep, self)
+            self.AutoDodge = dodge
+            if not ok then error(err) end
+            return
+        end
         local combat, dodge = self.AutoCombat, self.AutoDodge
         local use3DGoalDistance = self.Route.Use3DGoalDistance
         self.AutoCombat = false
@@ -33177,7 +33243,6 @@ do
             and string.format("Saved %s route: %d points", self:GetHealerRouteName(), #savedRoute)
             or ("No recorded route for " .. self:GetHealerRouteName())
         if self.HealerEnabled then
-            self.Enabled = true
             self.AutoDodge = true
         end
         self.HealerStatus = self.HealerEnabled and "Starting healer" or "Healer off"
@@ -33211,7 +33276,7 @@ end
 
 
 local Controller = UIWController.new()
-Controller.Version = tostring(Controller.Version) .. "+streamtarget+carry11+healer7"
+Controller.Version = tostring(Controller.Version) .. "+streamtarget+carry12+route3+healer7"
 
 getgenv().UIW = Controller
 getgenv().UNDERWORLD_AI = Controller

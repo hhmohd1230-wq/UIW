@@ -191,10 +191,6 @@ do
         elseif key == "CarryEnabled" then
             self.CarryEnabled = value == true
             self.CarryLastActionAt = 0
-            if self.CarryEnabled then
-                self.Enabled = true
-                self.AutoDodge = true
-            end
         else
             return
         end
@@ -422,13 +418,6 @@ do
     end
 
     function UIWController:StartCarry()
-        if self.CarryEnabled then
-            -- Carry is an active automation mode. A saved config with Master
-            -- Auto off must not leave the host or an alt standing still after
-            -- a teleport.
-            self.Enabled = true
-            self.AutoDodge = true
-        end
         self.CarryStatus = self.CarryEnabled and "Starting carry" or "Carry off"
         self.CarryLevelReadyAt = os.clock() + 6
         self.CarryRewardAt = nil

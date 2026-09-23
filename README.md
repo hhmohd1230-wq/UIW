@@ -27,9 +27,17 @@ requirement. The group returns to the lobby only when the next dungeon or
 difficulty unlocks, then creates that newly unlocked stage. **Fixed Dungeon**
 keeps retrying the chosen dungeon and difficulty. Carry
 choices are saved per account and queue
-UIW after teleport while Carry is enabled. Carry restores Master Auto and Smart
-Dodge after every teleport so a saved paused config cannot strand an account at
-the dungeon entrance. The game still controls party and server capacity.
+UIW after teleport while Carry is enabled. Master Auto remains in the state
+chosen on each account. The game still controls party and server capacity.
+
+**Use Recorded Auto Route** is available on the Automation tab for hosts,
+healers and ordinary alts. Start recording, manually walk the full dungeon
+route, and let completion auto-save it (or press **Stop & save**). On later
+runs, the account follows the saved waypoints until an enemy group, boss or map
+mechanic needs attention. It pauses the route for combat while keeping Smart
+Dodge active, then resumes from the nearest saved waypoint after the fight.
+Each account and dungeon has its own route. Turning Master Auto off always
+leaves that account paused; Carry and Healer do not turn it back on.
 
 The **Healer** tab follows one selected player while keeping Auto Dodge active.
 When its target is blank, it automatically follows the configured Carry host.
@@ -42,12 +50,8 @@ best owned healing spells, favoring Revitalize, Universal Heal and Chain Heal.
 Map-wide healing can cast immediately; local heals wait until the healer has
 chased within that spell's effective range.
 The healer pathfinder treats vertical distance as real distance, jumps early on
-short climbs and forces a fresh route when movement stalls. For difficult map
-sections, press **Start recording** and manually walk the full dungeon route.
-The route saves automatically when the dungeon is completed; **Stop & save** is
-also available for a manual save. Enable **Use Recorded Route** to reuse those
-account and dungeon specific waypoints on later runs, including reverse
-movement toward a host behind the healer. Each dungeon owns a separate route.
+short climbs and forces a fresh route when movement stalls. A healer using the
+recorded route can traverse it in either direction to reach its selected host.
 The target, follow distance and healer choices are saved per Roblox account and
 continue after dungeon teleports.
 

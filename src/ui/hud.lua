@@ -941,6 +941,41 @@ function HUD.new(controller)
             end
         end)
 
+    toggleRow(automationPage, 10, "Use Recorded Auto Route",
+        "For hosts, healers and alts: follows the saved path and pauses for combat",
+        function() return controller.HealerUseRecordedPath end,
+        function(value) controller:SetHealerOption("HealerUseRecordedPath", value) end)
+
+    local routeCard = UIKit.Card(automationPage, { Size = UDim2.new(1, 0, 0, 112), LayoutOrder = 11 })
+    self.HealerRouteStatusLabel = UIKit.Label(routeCard, {
+        Position = UDim2.fromOffset(14, 8), Size = UDim2.new(1, -28, 0, 38),
+        Font = UIKit.Fonts.Semi, TextSize = 11, TextWrapped = true,
+        TextYAlignment = Enum.TextYAlignment.Top,
+        Text = "No recorded route for this dungeon", ZIndex = 3,
+    })
+    self.HealerRecordButton = UIKit.Button(routeCard, {
+        Position = UDim2.fromOffset(14, 58), Size = UDim2.new(0.6, -18, 0, 38),
+        Text = "Start recording", ZIndex = 3,
+    })
+    local clearRouteButton = UIKit.Button(routeCard, {
+        Position = UDim2.new(0.6, 4, 0, 58), Size = UDim2.new(0.4, -18, 0, 38),
+        Text = "Clear", ZIndex = 3,
+    })
+    UIKit.Corner(self.HealerRecordButton, 8)
+    UIKit.Corner(clearRouteButton, 8)
+    self.HealerRecordButton.MouseButton1Click:Connect(function()
+        if controller.HealerRecording then
+            controller:StopHealerRouteRecording()
+        else
+            controller:StartHealerRouteRecording()
+        end
+        self:RefreshHealer()
+    end)
+    clearRouteButton.MouseButton1Click:Connect(function()
+        controller:ClearHealerRecordedPath()
+        self:RefreshHealer()
+    end)
+
     -----------------------------------------------------------------------
     -- Carry
     -----------------------------------------------------------------------
@@ -1088,41 +1123,6 @@ function HUD.new(controller)
     self.HealerDistanceBox.FocusLost:Connect(function()
         controller:SetHealerOption("HealerFollowDistance", self.HealerDistanceBox.Text)
         self.HealerDistanceBox.Text = tostring(controller.HealerFollowDistance)
-    end)
-
-    toggleRow(healerPage, 6, "Use Recorded Route",
-        "Follows your saved waypoints for stairs, climbs, drops and difficult corners",
-        function() return controller.HealerUseRecordedPath end,
-        function(value) controller:SetHealerOption("HealerUseRecordedPath", value) end)
-
-    local routeCard = UIKit.Card(healerPage, { Size = UDim2.new(1, 0, 0, 112), LayoutOrder = 7 })
-    self.HealerRouteStatusLabel = UIKit.Label(routeCard, {
-        Position = UDim2.fromOffset(14, 8), Size = UDim2.new(1, -28, 0, 38),
-        Font = UIKit.Fonts.Semi, TextSize = 11, TextWrapped = true,
-        TextYAlignment = Enum.TextYAlignment.Top,
-        Text = "No recorded route for this dungeon", ZIndex = 3,
-    })
-    self.HealerRecordButton = UIKit.Button(routeCard, {
-        Position = UDim2.fromOffset(14, 58), Size = UDim2.new(0.6, -18, 0, 38),
-        Text = "Start recording", ZIndex = 3,
-    })
-    local clearRouteButton = UIKit.Button(routeCard, {
-        Position = UDim2.new(0.6, 4, 0, 58), Size = UDim2.new(0.4, -18, 0, 38),
-        Text = "Clear", ZIndex = 3,
-    })
-    UIKit.Corner(self.HealerRecordButton, 8)
-    UIKit.Corner(clearRouteButton, 8)
-    self.HealerRecordButton.MouseButton1Click:Connect(function()
-        if controller.HealerRecording then
-            controller:StopHealerRouteRecording()
-        else
-            controller:StartHealerRouteRecording()
-        end
-        self:RefreshHealer()
-    end)
-    clearRouteButton.MouseButton1Click:Connect(function()
-        controller:ClearHealerRecordedPath()
-        self:RefreshHealer()
     end)
 
     -----------------------------------------------------------------------

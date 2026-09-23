@@ -6,6 +6,7 @@ do
     local ROUTE_SAMPLE_DISTANCE = 4
     local ROUTE_REACH_DISTANCE = 5
     local ROUTE_RESYNC_DISTANCE = 32
+    local ROUTE_COMBAT_PAUSE_DISTANCE = 100
 
     local function healerDungeonFinished()
         local dungeon = Workspace:FindFirstChild("dungeon")
@@ -147,7 +148,6 @@ do
         if key == "HealerEnabled" then
             self.HealerEnabled = value == true
             if self.HealerEnabled then
-                self.Enabled = true
                 self.AutoDodge = true
             end
         elseif key == "HealerTargetName" then
@@ -159,6 +159,7 @@ do
         elseif key == "HealerUseRecordedPath" then
             self.HealerUseRecordedPath = value == true
             self.HealerRouteIndex = nil
+            self.RecordedRouteCompleteKey = nil
             self.Route:InvalidateGoal()
         else
             return
@@ -206,6 +207,7 @@ do
             return false
         end
         self.HealerRecording = true
+        self.RecordedRouteCompleteKey = nil
         self.HealerRecordingKey = self:GetHealerRouteKey()
         self.HealerRecordingPoints = { routePoint(self.Character.Root.Position) }
         self.HealerRouteStatus = "Recording " .. self:GetHealerRouteName()
@@ -245,6 +247,7 @@ do
         self:LoadHealerRoutes()[self.HealerRecordingKey or self:GetHealerRouteKey()] = points
         local saved = self:SaveHealerRoutes()
         self.HealerRouteIndex = nil
+        self.RecordedRouteCompleteKey = nil
         local dungeonName = self:GetHealerRouteName()
         self.HealerRouteStatus = saved
             and string.format("%s %s route: %d points",
@@ -259,6 +262,7 @@ do
         local routes = self:LoadHealerRoutes()
         routes[self:GetHealerRouteKey()] = nil
         self.HealerRouteIndex = nil
+        self.RecordedRouteCompleteKey = nil
         local saved = self:SaveHealerRoutes()
         self.HealerRouteStatus = saved and ("Recorded route cleared for " .. self:GetHealerRouteName())
             or "Could not clear the recorded route"
@@ -316,6 +320,55 @@ do
         self.HealerRouteIndex = currentIndex
         self.HealerRouteStatus = string.format("Recorded route active • point %d/%d toward host", currentIndex, #points)
         return routeVector(points[currentIndex])
+    end
+
+    function UIWController:GetRecordedProgressGoal()
+        if not self.HealerUseRecordedPath or not self.Character:IsAlive() then return nil end
+        local key = self:GetHealerRouteKey()
+        if self.RecordedRouteCompleteKey == key then return nil end
+        local points = self:GetRecordedHealerRoute()
+        if not points or #points < 2 then
+            self.HealerRouteStatus = "Recorded route enabled • no route saved for "
+                .. self:GetHealerRouteName()
+            return nil
+        end
+
+        local position = self.Character.Root.Position
+        local index = tonumber(self.HealerRouteIndex)
+        local point = index and routeVector(points[index])
+        if not point or (point - position).Magnitude > ROUTE_RESYNC_DISTANCE then
+            local nearestIndex, nearestDistance = 1, math.huge
+            local firstCandidate = index and math.max(1, index) or 1
+            local lastCandidate = index and math.min(#points, index + 80) or #points
+            for candidateIndex = firstCandidate, lastCandidate do
+                local candidate = points[candidateIndex]
+                local vector = routeVector(candidate)
+                if vector then
+                    local distance = (vector - position).Magnitude
+                    if distance < nearestDistance then
+                        nearestIndex, nearestDistance = candidateIndex, distance
+                    end
+                end
+            end
+            index = nearestIndex
+            point = routeVector(points[index])
+        end
+
+        if point and (point - position).Magnitude <= ROUTE_REACH_DISTANCE then
+            if index >= #points then
+                self.RecordedRouteCompleteKey = key
+                self.HealerRouteStatus = "Recorded " .. self:GetHealerRouteName()
+                    .. " route completed"
+                return nil
+            end
+            index += 1
+            point = routeVector(points[index])
+        end
+
+        self.HealerRouteIndex = index
+        self.HealerRouteStatus = string.format("Auto route active • %s • point %d/%d",
+            self:GetHealerRouteName(), index, #points)
+        return point
     end
 
     function UIWController:UpdateHealerNavigation(goal)
@@ -525,6 +578,22 @@ do
             end
             return nil
         end
+        if self.HealerUseRecordedPath then
+            local mechanicGoal = self:GetPriorityMechanicGoal()
+            if mechanicGoal then return oldGetGoal(self) end
+            local enemy = self.CurrentEnemy
+            local enemyDistance = enemy and enemy.Root and enemy.Root.Parent
+                and (enemy.Root.Position - self.Character.Root.Position).Magnitude or math.huge
+            if enemyDistance > ROUTE_COMBAT_PAUSE_DISTANCE then
+                local routeGoal = self:GetRecordedProgressGoal()
+                if routeGoal then
+                    self:UpdateHealerNavigation(routeGoal)
+                    return routeGoal
+                end
+            else
+                self.HealerRouteStatus = string.format("Auto route paused for combat • %.0f studs", enemyDistance)
+            end
+        end
         return oldGetGoal(self)
     end
 
@@ -546,7 +615,15 @@ do
             self.Character:ReleaseAutomationFacing()
             return
         end
-        if not self.HealerEnabled then return oldStep(self) end
+        if not self.HealerEnabled then
+            if not self.HealerUseRecordedPath then return oldStep(self) end
+            local dodge = self.AutoDodge
+            self.AutoDodge = true
+            local ok, err = pcall(oldStep, self)
+            self.AutoDodge = dodge
+            if not ok then error(err) end
+            return
+        end
         local combat, dodge = self.AutoCombat, self.AutoDodge
         local use3DGoalDistance = self.Route.Use3DGoalDistance
         self.AutoCombat = false
@@ -567,7 +644,6 @@ do
             and string.format("Saved %s route: %d points", self:GetHealerRouteName(), #savedRoute)
             or ("No recorded route for " .. self:GetHealerRouteName())
         if self.HealerEnabled then
-            self.Enabled = true
             self.AutoDodge = true
         end
         self.HealerStatus = self.HealerEnabled and "Starting healer" or "Healer off"
