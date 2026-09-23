@@ -2,6 +2,10 @@
 -- equips the best owned spell-power armor and casts owned healing abilities.
 do
     local Remotes = game:GetService("ReplicatedStorage"):WaitForChild("remotes")
+    local HEALER_ROUTE_FILE = ConfigStore.AccountFolder .. "/healer_routes.json"
+    local ROUTE_SAMPLE_DISTANCE = 4
+    local ROUTE_REACH_DISTANCE = 5
+    local ROUTE_RESYNC_DISTANCE = 32
 
     local HEAL_SCORE = {
         ["revitalize"] = 900,
@@ -56,6 +60,19 @@ do
         for _, player in ipairs(Players:GetPlayers()) do
             if normalized(player.Name) == name then return player end
         end
+    end
+
+    local function routeVector(point)
+        if type(point) ~= "table" then return nil end
+        local x, y, z = tonumber(point.X or point.x or point[1]),
+            tonumber(point.Y or point.y or point[2]),
+            tonumber(point.Z or point.z or point[3])
+        if not x or not y or not z then return nil end
+        return Vector3.new(x, y, z)
+    end
+
+    local function routePoint(position)
+        return { X = position.X, Y = position.Y, Z = position.Z }
     end
 
     local function itemNumber(key)
@@ -131,6 +148,10 @@ do
             self.HealerAutoEquip = value == true
         elseif key == "HealerFollowDistance" then
             self.HealerFollowDistance = math.clamp(tonumber(value) or 14, 8, 35)
+        elseif key == "HealerUseRecordedPath" then
+            self.HealerUseRecordedPath = value == true
+            self.HealerRouteIndex = nil
+            self.Route:InvalidateGoal()
         else
             return
         end
@@ -141,6 +162,155 @@ do
         if self.HUD then
             self.HUD:RefreshControls()
             if self.HUD.RefreshHealer then self.HUD:RefreshHealer() end
+        end
+    end
+
+    function UIWController:GetHealerRouteKey()
+        local dungeon = Workspace:FindFirstChild("dungeonName")
+        local name = dungeon and dungeon:IsA("ValueBase") and tostring(dungeon.Value or "") or ""
+        if name == "" then name = "place_" .. tostring(game.PlaceId) end
+        return string.lower(string.gsub(name, "[^%w]+", "_"))
+    end
+
+    function UIWController:LoadHealerRoutes()
+        if self.HealerRecordedRoutes then return self.HealerRecordedRoutes end
+        local saved = SafeFile.ReadJson(HEALER_ROUTE_FILE)
+        self.HealerRecordedRoutes = type(saved) == "table" and saved or {}
+        return self.HealerRecordedRoutes
+    end
+
+    function UIWController:SaveHealerRoutes()
+        ConfigStore.EnsureAccountFolder()
+        return SafeFile.WriteJson(HEALER_ROUTE_FILE, self:LoadHealerRoutes(), true)
+    end
+
+    function UIWController:GetRecordedHealerRoute()
+        local route = self:LoadHealerRoutes()[self:GetHealerRouteKey()]
+        return type(route) == "table" and route or nil
+    end
+
+    function UIWController:StartHealerRouteRecording()
+        if not self.Character:IsAlive() then
+            self.HealerRouteStatus = "Cannot record until the character has spawned"
+            return false
+        end
+        self.HealerRecording = true
+        self.HealerRecordingKey = self:GetHealerRouteKey()
+        self.HealerRecordingPoints = { routePoint(self.Character.Root.Position) }
+        self.HealerRouteStatus = "Recording route: 1 point • walk the full dungeon path"
+        self.Character:ReleaseAutomationFacing()
+        self.Route:Reset()
+        if self.HUD and self.HUD.RefreshHealer then self.HUD:RefreshHealer() end
+        return true
+    end
+
+    function UIWController:SampleHealerRoute(force)
+        if not self.HealerRecording or not self.Character:IsAlive() then return end
+        local points = self.HealerRecordingPoints
+        local position = self.Character.Root.Position
+        local previous = points and routeVector(points[#points])
+        local delta = previous and position - previous or Vector3.zero
+        if not previous
+            or flatten(delta).Magnitude >= ROUTE_SAMPLE_DISTANCE
+            or math.abs(delta.Y) >= 2
+            or (force and delta.Magnitude >= 0.5)
+        then
+            if #points < 800 then table.insert(points, routePoint(position)) end
+            self.HealerRouteStatus = string.format("Recording route: %d points • walk the full dungeon path", #points)
+        end
+    end
+
+    function UIWController:StopHealerRouteRecording()
+        if not self.HealerRecording then return false end
+        self:SampleHealerRoute(true)
+        self.HealerRecording = false
+        local points = self.HealerRecordingPoints or {}
+        if #points < 2 then
+            self.HealerRouteStatus = "Recording discarded: walk farther before saving"
+            return false
+        end
+        self:LoadHealerRoutes()[self.HealerRecordingKey or self:GetHealerRouteKey()] = points
+        local saved = self:SaveHealerRoutes()
+        self.HealerRouteIndex = nil
+        self.HealerRouteStatus = saved
+            and string.format("Saved route: %d points", #points)
+            or "Could not save route in the executor workspace"
+        if self.HUD and self.HUD.RefreshHealer then self.HUD:RefreshHealer() end
+        return saved
+    end
+
+    function UIWController:ClearHealerRecordedPath()
+        if self.HealerRecording then self.HealerRecording = false end
+        local routes = self:LoadHealerRoutes()
+        routes[self:GetHealerRouteKey()] = nil
+        self.HealerRouteIndex = nil
+        local saved = self:SaveHealerRoutes()
+        self.HealerRouteStatus = saved and "Recorded route cleared for this dungeon"
+            or "Could not clear the recorded route"
+        self.Route:Reset()
+        if self.HUD and self.HUD.RefreshHealer then self.HUD:RefreshHealer() end
+        return saved
+    end
+
+    function UIWController:GetHealerRecordedGoal(targetPosition)
+        if not self.HealerUseRecordedPath then return nil end
+        local points = self:GetRecordedHealerRoute()
+        if not points or #points < 2 or not self.Character:IsAlive() then
+            self.HealerRouteStatus = "Recorded route enabled • no route saved for this dungeon"
+            return nil
+        end
+
+        local currentPosition = self.Character.Root.Position
+        local function nearest(position)
+            local bestIndex, bestDistance = nil, math.huge
+            for index, point in ipairs(points) do
+                local vector = routeVector(point)
+                if vector then
+                    local distance = (vector - position).Magnitude
+                    if distance < bestDistance then
+                        bestIndex, bestDistance = index, distance
+                    end
+                end
+            end
+            return bestIndex, bestDistance
+        end
+
+        local currentIndex = tonumber(self.HealerRouteIndex)
+        local currentPoint = currentIndex and routeVector(points[currentIndex])
+        if not currentPoint or (currentPoint - currentPosition).Magnitude > ROUTE_RESYNC_DISTANCE then
+            currentIndex = nearest(currentPosition)
+        end
+        local targetIndex, targetDistance = nearest(targetPosition)
+        if not currentIndex or not targetIndex or targetDistance > 55 then
+            self.HealerRouteStatus = "Recorded route unavailable near the host • using live pathfinder"
+            self.HealerRouteIndex = nil
+            return nil
+        end
+
+        local direction = targetIndex > currentIndex and 1 or targetIndex < currentIndex and -1 or 0
+        if direction == 0 then
+            self.HealerRouteIndex = currentIndex
+            self.HealerRouteStatus = string.format("Recorded route active • point %d/%d", currentIndex, #points)
+            return nil
+        end
+
+        currentPoint = routeVector(points[currentIndex])
+        if currentPoint and (currentPoint - currentPosition).Magnitude <= ROUTE_REACH_DISTANCE then
+            currentIndex = math.clamp(currentIndex + direction, 1, #points)
+        end
+        self.HealerRouteIndex = currentIndex
+        self.HealerRouteStatus = string.format("Recorded route active • point %d/%d toward host", currentIndex, #points)
+        return routeVector(points[currentIndex])
+    end
+
+    function UIWController:UpdateHealerNavigation(goal)
+        if not goal then return end
+        local previous = self.HealerNavigationGoal
+        if not previous or flatten(goal - previous).Magnitude >= 5
+            or math.abs(goal.Y - previous.Y) >= 2.5
+        then
+            self.HealerNavigationGoal = goal
+            self.Route:InvalidateGoal()
         end
     end
 
@@ -253,6 +423,56 @@ do
         return ok
     end
 
+    function UIWController:HealerNavigationRecovery(targetRoot, distance)
+        if not targetRoot or not self.Character:IsAlive()
+            or distance <= (tonumber(self.HealerFollowDistance) or 14)
+        then
+            self.HealerProgressPosition = self.Character.Root and self.Character.Root.Position or nil
+            self.HealerProgressAt = os.clock()
+            return
+        end
+
+        local now = os.clock()
+        local position = self.Character.Root.Position
+        local goal = self.HealerNavigationGoal or targetRoot.Position
+        local delta = goal - position
+        local horizontal = flatten(delta).Magnitude
+        local humanoid = self.Character.Humanoid
+
+        -- Give climbing and short upward transitions an early jump instead of
+        -- waiting for the generic stuck detector to complete its full cycle.
+        if delta.Y >= 2 and horizontal <= 11 and humanoid
+            and humanoid.FloorMaterial ~= Enum.Material.Air
+            and now - (self.HealerLastClimbJumpAt or 0) >= 0.7
+        then
+            self.HealerLastClimbJumpAt = now
+            humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+        end
+
+        if not self.HealerProgressPosition then
+            self.HealerProgressPosition = position
+            self.HealerProgressAt = now
+            return
+        end
+        if (position - self.HealerProgressPosition).Magnitude >= 2 then
+            self.HealerProgressPosition = position
+            self.HealerProgressAt = now
+            return
+        end
+        if now - (self.HealerProgressAt or now) >= 1.25
+            and now - (self.HealerLastForcedRepathAt or 0) >= 1.25
+        then
+            self.HealerLastForcedRepathAt = now
+            self.HealerProgressAt = now
+            self.Route:ClearPath()
+            self.Route:ForceRepath(goal)
+            if humanoid and humanoid.FloorMaterial ~= Enum.Material.Air then
+                humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+            end
+            self.HealerRouteStatus = "Live pathfinder repathing around an obstacle"
+        end
+    end
+
     function UIWController:HealerUpdate()
         if not self.HealerEnabled or self.Destroyed then return end
         local target, _, humanoid, root, requested = self:GetHealerTarget()
@@ -264,6 +484,7 @@ do
             return
         end
         local distance = (root.Position - self.Character.Root.Position).Magnitude
+        self:HealerNavigationRecovery(root, distance)
         local health = humanoid.Health / math.max(humanoid.MaxHealth, 1) * 100
         local healerHumanoid = self.Character and self.Character.Humanoid
         local healerHealth = healerHumanoid and healerHumanoid.MaxHealth > 0
@@ -281,8 +502,12 @@ do
             if mechanicGoal then return oldGetGoal(self) end
             local _, _, _, root = self:GetHealerTarget()
             if not root then return nil end
-            local distance = flatten(root.Position - self.Character.Root.Position).Magnitude
-            if distance > (tonumber(self.HealerFollowDistance) or 14) then return root.Position end
+            local distance = (root.Position - self.Character.Root.Position).Magnitude
+            if distance > (tonumber(self.HealerFollowDistance) or 14) then
+                local goal = self:GetHealerRecordedGoal(root.Position) or root.Position
+                self:UpdateHealerNavigation(goal)
+                return goal
+            end
             return nil
         end
         return oldGetGoal(self)
@@ -302,6 +527,10 @@ do
 
     local oldStep = UIWController.Step
     function UIWController:Step()
+        if self.HealerRecording then
+            self.Character:ReleaseAutomationFacing()
+            return
+        end
         if not self.HealerEnabled then return oldStep(self) end
         local combat, dodge = self.AutoCombat, self.AutoDodge
         self.AutoCombat = false
@@ -314,21 +543,29 @@ do
     end
 
     function UIWController:StartHealer()
+        self:LoadHealerRoutes()
+        local savedRoute = self:GetRecordedHealerRoute()
+        self.HealerRouteStatus = savedRoute and string.format("Saved route: %d points", #savedRoute)
+            or "No recorded route for this dungeon"
         if self.HealerEnabled then
             self.Enabled = true
             self.AutoDodge = true
         end
         self.HealerStatus = self.HealerEnabled and "Starting healer" or "Healer off"
         self.Maid:Give(RunService.Heartbeat:Connect(function()
-            if not self.HealerEnabled then return end
             local now = os.clock()
-            if self.HealerAutoEquip and now - (self.HealerLastEquipAt or 0) >= 12 then
-                self.HealerLastEquipAt = now
-                self:EquipHealerLoadout()
+            if self.HealerRecording and now - (self.HealerLastRecordSampleAt or 0) >= 0.15 then
+                self.HealerLastRecordSampleAt = now
+                self:SampleHealerRoute(false)
             end
             if now - (self.HealerHUDAt or 0) >= 0.5 then
                 self.HealerHUDAt = now
                 if self.HUD and self.HUD.RefreshHealer then self.HUD:RefreshHealer() end
+            end
+            if not self.HealerEnabled then return end
+            if self.HealerAutoEquip and now - (self.HealerLastEquipAt or 0) >= 12 then
+                self.HealerLastEquipAt = now
+                self:EquipHealerLoadout()
             end
         end))
     end

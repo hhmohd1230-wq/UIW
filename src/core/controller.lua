@@ -41,6 +41,7 @@ function UIWController.new()
     self.HealerTargetName = ""
     self.HealerAutoEquip = true
     self.HealerFollowDistance = 14
+    self.HealerUseRecordedPath = false
     self.ActiveConfig = nil
     self.AutoLoadConfig = ""
 
@@ -129,6 +130,7 @@ function UIWController:ApplySettings(settings)
     end
     self.HealerAutoEquip = readBoolean("HealerAutoEquip", self.HealerAutoEquip)
     self.HealerFollowDistance = validNumber(settings.HealerFollowDistance, 8, 35, self.HealerFollowDistance)
+    self.HealerUseRecordedPath = readBoolean("HealerUseRecordedPath", self.HealerUseRecordedPath)
 
     CONFIG.WalkSpeed = validNumber(settings.WalkSpeed, 12, 40, CONFIG.WalkSpeed)
     CONFIG.DesiredCombatRange = validNumber(settings.DesiredCombatRange, 24, 60, CONFIG.DesiredCombatRange)
@@ -175,6 +177,7 @@ function UIWController:GetSettings()
         HealerTargetName = self.HealerTargetName,
         HealerAutoEquip = self.HealerAutoEquip,
         HealerFollowDistance = self.HealerFollowDistance,
+        HealerUseRecordedPath = self.HealerUseRecordedPath,
         WalkSpeed = CONFIG.WalkSpeed,
         DesiredCombatRange = CONFIG.DesiredCombatRange,
         DamageCastRange = CONFIG.DamageCastRange,
@@ -267,6 +270,7 @@ function UIWController:WriteMeta()
     meta.HealerTargetName = self.HealerTargetName
     meta.HealerAutoEquip = self.HealerAutoEquip ~= false
     meta.HealerFollowDistance = self.HealerFollowDistance
+    meta.HealerUseRecordedPath = self.HealerUseRecordedPath == true
     return ConfigStore.WriteMeta(meta)
 end
 
@@ -290,6 +294,7 @@ function UIWController:InitConfigs()
     self.HealerTargetName = meta.HealerTargetName
     self.HealerAutoEquip = meta.HealerAutoEquip
     self.HealerFollowDistance = math.clamp(tonumber(meta.HealerFollowDistance) or 14, 8, 35)
+    self.HealerUseRecordedPath = meta.HealerUseRecordedPath == true
     if meta.BlackScreen and meta.RestoreFPSCap then
         getgenv().UIW_OriginalFPSCap = meta.RestoreFPSCap
     end

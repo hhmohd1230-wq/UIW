@@ -1158,10 +1158,13 @@ function RoutePlanner:GetRawDirection(goal, reachDistance)
     end
 
     local root = character.Root
-    local goalDelta = flatten(goal - root.Position)
+    local fullGoalDelta = goal - root.Position
+    local goalDelta = flatten(fullGoalDelta)
     local effectiveReachDistance = tonumber(reachDistance) or CONFIG.PathGoalReachDistance
 
-    if goalDelta.Magnitude <= effectiveReachDistance then
+    -- Height matters for stairs, ramps, ladders and drops. Treating only X/Z
+    -- as distance made a goal directly above or below look already reached.
+    if fullGoalDelta.Magnitude <= effectiveReachDistance then
         self.CachedSafeDirection = Vector3.zero
         return Vector3.zero
     end
@@ -1228,4 +1231,3 @@ end
 function RoutePlanner:GetSafeDirection(goal, targetYaw, reachDistance)
     return self:GetRawDirection(goal, reachDistance)
 end
-
