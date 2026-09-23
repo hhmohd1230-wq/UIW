@@ -76,6 +76,12 @@ do
         end
     end
 
+    function UIWController:GetHealerApproachDistance()
+        -- Every supported local heal reaches at least 24 studs. Holding within
+        -- 14 leaves enough margin for a moving host and network replication.
+        return math.min(tonumber(self.HealerFollowDistance) or 14, 14)
+    end
+
     local function routeVector(point)
         if type(point) ~= "table" then return nil end
         local x, y, z = tonumber(point.X or point.x or point[1]),
@@ -609,7 +615,7 @@ do
 
     function UIWController:HealerMobilityCast(distance, targetHumanoid)
         distance = tonumber(distance) or 0
-        local followDistance = tonumber(self.HealerFollowDistance) or 14
+        local followDistance = self:GetHealerApproachDistance()
         local hostIsBoosted = targetHumanoid
             and (tonumber(targetHumanoid.WalkSpeed) or 0) > 20
         local longCatchup = distance >= 45
@@ -664,7 +670,7 @@ do
 
     function UIWController:HealerNavigationRecovery(targetRoot, distance)
         if not targetRoot or not self.Character:IsAlive()
-            or distance <= (tonumber(self.HealerFollowDistance) or 14)
+            or distance <= self:GetHealerApproachDistance()
         then
             self.HealerProgressPosition = self.Character.Root and self.Character.Root.Position or nil
             self.HealerProgressAt = os.clock()
@@ -712,6 +718,87 @@ do
         end
     end
 
+    function UIWController:SetHealerNoclip(enabled)
+        local character = self.Character and self.Character.Character
+        if not enabled or not character or not character.Parent then
+            for part, wasCollidable in pairs(self.HealerNoclipParts or {}) do
+                if part.Parent then part.CanCollide = wasCollidable end
+            end
+            self.HealerNoclipParts = nil
+            self.HealerNoclipCharacter = nil
+            return
+        end
+
+        if self.HealerNoclipCharacter ~= character then
+            self:SetHealerNoclip(false)
+            self.HealerNoclipCharacter = character
+            self.HealerNoclipParts = {}
+        end
+        for _, part in ipairs(character:GetDescendants()) do
+            if part:IsA("BasePart") and part.CanCollide then
+                if self.HealerNoclipParts[part] == nil then
+                    self.HealerNoclipParts[part] = true
+                end
+                part.CanCollide = false
+            end
+        end
+        -- Other local scripts may restore collision each frame.
+        for part in pairs(self.HealerNoclipParts) do
+            if part.Parent then part.CanCollide = false end
+        end
+    end
+
+    function UIWController:UpdateHealerNoclip(targetRoot, distance)
+        local approach = self:GetHealerApproachDistance()
+        if not self.HealerEnabled or not targetRoot or not self.Character:IsAlive()
+            or distance <= approach
+        then
+            self.HealerNoclipUntil = 0
+            self:SetHealerNoclip(false)
+            return
+        end
+
+        local now = os.clock()
+        if now < (self.HealerNoclipUntil or 0) then
+            self:SetHealerNoclip(true)
+            local delta = flatten(targetRoot.Position - self.Character.Root.Position)
+            if delta.Magnitude > 0.1 then
+                self.Character.Humanoid:Move(delta.Unit, false)
+            end
+            return
+        end
+        self:SetHealerNoclip(false)
+        if now < (self.HealerNoclipCooldownUntil or 0) then return end
+
+        local delta = flatten(targetRoot.Position - self.Character.Root.Position)
+        local blocked = false
+        if delta.Magnitude > 0.1 then
+            local params = RaycastParams.new()
+            params.FilterType = Enum.RaycastFilterType.Exclude
+            params.FilterDescendantsInstances = {
+                self.Character.Character,
+                targetRoot.Parent,
+            }
+            params.IgnoreWater = true
+            local hit = Workspace:Raycast(self.Character.Root.Position,
+                delta.Unit * math.min(delta.Magnitude, 6), params)
+            blocked = hit ~= nil and hit.Instance.CanCollide
+        end
+        local stalled = now - (self.HealerProgressAt or now) >= 0.8
+        if not blocked and not stalled then return end
+
+        -- Short pulses pass a wall or prop without leaving collision disabled
+        -- long enough for the character to fall through a floor.
+        self.HealerNoclipUntil = now + (blocked and 0.3 or 0.45)
+        self.HealerNoclipCooldownUntil = self.HealerNoclipUntil + 0.15
+        self:SetHealerNoclip(true)
+        self.Route:ClearPath()
+        self.Route:ForceRepath(targetRoot.Position)
+        self.HealerRouteStatus = blocked
+            and "Healer collision recovery • passing obstacle"
+            or "Healer collision recovery • escaping stuck point"
+    end
+
     function UIWController:HealerUpdate()
         if not self.HealerEnabled or self.Destroyed then return end
         local target, _, humanoid, root, requested = self:GetHealerTarget()
@@ -724,6 +811,7 @@ do
         end
         local distance = (root.Position - self.Character.Root.Position).Magnitude
         self:HealerNavigationRecovery(root, distance)
+        self:UpdateHealerNoclip(root, distance)
         local health = humanoid.Health / math.max(humanoid.MaxHealth, 1) * 100
         local healerHumanoid = self.Character and self.Character.Humanoid
         local healerHealth = healerHumanoid and healerHumanoid.MaxHealth > 0
@@ -745,7 +833,7 @@ do
             local _, _, _, root = self:GetHealerTarget()
             if not root then return nil end
             local distance = (root.Position - self.Character.Root.Position).Magnitude
-            if distance > (tonumber(self.HealerFollowDistance) or 14) then
+            if distance > self:GetHealerApproachDistance() then
                 local goal = self:GetHealerRecordedGoal(root.Position)
                     or self:GetHealerLeadPosition(root) or root.Position
                 -- Healer following is always committed route travel. Nearby
@@ -796,10 +884,12 @@ do
     local oldStep = UIWController.Step
     function UIWController:Step()
         if self.HealerRecording then
+            self:SetHealerNoclip(false)
             self.Character:ReleaseAutomationFacing()
             return
         end
         if not self.HealerEnabled then
+            self:SetHealerNoclip(false)
             if not self.HealerUseRecordedPath then return oldStep(self) end
             local dodge = self.AutoDodge
             self.AutoDodge = true
@@ -842,6 +932,7 @@ do
             self.AutoDodge = true
         end
         self.HealerStatus = self.HealerEnabled and "Starting healer" or "Healer off"
+        self.Maid:Give(function() self:SetHealerNoclip(false) end)
         self.Maid:Give(RunService.Heartbeat:Connect(function()
             local now = os.clock()
             if self.HealerRecording and now - (self.HealerLastRecordSampleAt or 0) >= 0.15 then

@@ -67,6 +67,9 @@ studs away, it uses an available Life Dash or Revitalize movement buff. If the
 host activates a speed buff while ahead of the healer, the healer mirrors it
 with Revitalize. These casts use the same shared healing timer. A healer using the
 recorded route can traverse it in either direction to reach its selected host.
+The healer holds within 14 studs so every supported local heal has range. When
+a wall, prop or stuck point blocks that approach, short collision-free recovery
+pulses pass the obstruction and restore character collision immediately after.
 The target, follow distance and healer choices are saved per Roblox account and
 continue after dungeon teleports.
 
