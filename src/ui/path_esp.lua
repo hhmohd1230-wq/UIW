@@ -1,14 +1,16 @@
 local PathESP = {}
 PathESP.__index = PathESP
 
-function PathESP.new()
+function PathESP.new(folderName, color, maxSegments)
     local folder = Instance.new("Folder")
-    folder.Name = "UIW_PathESP"
+    folder.Name = folderName or "UIW_PathESP"
     folder.Parent = Workspace
 
     return setmetatable({
         Folder = folder,
         LastUpdate = 0,
+        Color = color or Color3.fromRGB(240, 195, 55),
+        MaxSegments = math.max(1, tonumber(maxSegments) or 24),
     }, PathESP)
 end
 
@@ -30,7 +32,7 @@ function PathESP:GetSegment(index)
     part.CanTouch = false
     part.CastShadow = false
     part.Material = Enum.Material.Neon
-    part.Color = Color3.fromRGB(240, 195, 55)
+    part.Color = self.Color
     part.Transparency = 1
     part.Parent = self.Folder
     self.Pool[index] = part
@@ -61,7 +63,7 @@ function PathESP:Update(waypoints, currentIndex, rootPosition)
 
     local points = {rootPosition}
     for i = currentIndex, #waypoints do
-        if #points > PATH_ESP_MAX_SEGMENTS then break end
+        if #points > (self.MaxSegments or PATH_ESP_MAX_SEGMENTS) then break end
         if waypoints[i] then
             table.insert(points, waypoints[i].Position)
         end
@@ -96,4 +98,3 @@ function PathESP:Destroy()
         self.Folder:Destroy()
     end
 end
-

@@ -269,6 +269,7 @@ function ConfigStore.ReadMeta()
         HealerAutoEquip = meta.HealerAutoEquip ~= false,
         HealerFollowDistance = tonumber(meta.HealerFollowDistance) or 14,
         HealerUseRecordedPath = meta.HealerUseRecordedPath == true,
+        ShowRecordedPath = meta.ShowRecordedPath == true,
     }
 end
 
@@ -292,6 +293,7 @@ function ConfigStore.WriteMeta(meta)
         HealerAutoEquip = meta.HealerAutoEquip ~= false,
         HealerFollowDistance = meta.HealerFollowDistance or 14,
         HealerUseRecordedPath = meta.HealerUseRecordedPath == true,
+        ShowRecordedPath = meta.ShowRecordedPath == true,
     }, true)
 end
 

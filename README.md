@@ -38,6 +38,11 @@ mechanic needs attention. It pauses the route for combat while keeping Smart
 Dodge active, then resumes from the nearest saved waypoint after the fight.
 Each account and dungeon has its own route. Turning Master Auto off always
 leaves that account paused; Carry and Healer do not turn it back on.
+Recorded routes are compacted to remove redundant samples and use visible
+forward lookahead, reducing path computations and keeping movement smooth.
+**Show Recorded Route** draws the saved path in blue alongside the live yellow
+path. When an enemy is above or below the account, the saved route continues to
+the correct floor before combat takes over.
 
 The **Healer** tab follows one selected player while keeping Auto Dodge active.
 When its target is blank, it automatically follows the configured Carry host.

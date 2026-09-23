@@ -84,6 +84,38 @@ do
         return { X = position.X, Y = position.Y, Z = position.Z }
     end
 
+    local function optimizeRoute(points)
+        if type(points) ~= "table" then return {} end
+        local valid = {}
+        for _, point in ipairs(points) do
+            local vector = routeVector(point)
+            if vector then table.insert(valid, routePoint(vector)) end
+        end
+        if #valid <= 2 then return valid end
+
+        local optimized = { valid[1] }
+        for index = 2, #valid - 1 do
+            local previous = routeVector(optimized[#optimized])
+            local current = routeVector(valid[index])
+            local following = routeVector(valid[index + 1])
+            local fromPrevious = current - previous
+            local toFollowing = following - current
+            local horizontalA = flatten(fromPrevious)
+            local horizontalB = flatten(toFollowing)
+            local turn = 1
+            if horizontalA.Magnitude > 0.05 and horizontalB.Magnitude > 0.05 then
+                turn = horizontalA.Unit:Dot(horizontalB.Unit)
+            end
+            local keep = fromPrevious.Magnitude >= 8
+                or math.abs(fromPrevious.Y) >= 2.5
+                or math.abs(toFollowing.Y) >= 2.5
+                or turn < 0.93
+            if keep then table.insert(optimized, valid[index]) end
+        end
+        table.insert(optimized, valid[#valid])
+        return optimized
+    end
+
     local function itemNumber(key)
         return tonumber(string.match(tostring(key or ""), "(%d+)$"))
     end
@@ -161,6 +193,8 @@ do
             self.HealerRouteIndex = nil
             self.RecordedRouteCompleteKey = nil
             self.Route:InvalidateGoal()
+        elseif key == "ShowRecordedPath" then
+            self.ShowRecordedPath = value == true
         else
             return
         end
@@ -197,8 +231,32 @@ do
     end
 
     function UIWController:GetRecordedHealerRoute()
-        local route = self:LoadHealerRoutes()[self:GetHealerRouteKey()]
-        return type(route) == "table" and route or nil
+        local key = self:GetHealerRouteKey()
+        local route = self:LoadHealerRoutes()[key]
+        if type(route) ~= "table" then return nil end
+        self.HealerOptimizedRoutes = self.HealerOptimizedRoutes or {}
+        local cached = self.HealerOptimizedRoutes[key]
+        if cached and cached.Source == route then return cached.Points end
+        local points = optimizeRoute(route)
+        self.HealerOptimizedRoutes[key] = { Source = route, Points = points }
+        self.RecordedPathVisualCache = nil
+        return points
+    end
+
+    function UIWController:GetRecordedPathVisual()
+        local route = self:GetRecordedHealerRoute()
+        if not route or #route < 2 then return nil, 1 end
+        local cache = self.RecordedPathVisualCache
+        if not cache or cache.Route ~= route then
+            local waypoints = {}
+            for _, point in ipairs(route) do
+                local position = routeVector(point)
+                if position then table.insert(waypoints, { Position = position }) end
+            end
+            cache = { Route = route, Waypoints = waypoints }
+            self.RecordedPathVisualCache = cache
+        end
+        return cache.Waypoints, math.clamp(tonumber(self.HealerRouteIndex) or 1, 1, #cache.Waypoints)
     end
 
     function UIWController:StartHealerRouteRecording()
@@ -239,12 +297,15 @@ do
         if not self.HealerRecording then return false end
         self:SampleHealerRoute(true)
         self.HealerRecording = false
-        local points = self.HealerRecordingPoints or {}
+        local points = optimizeRoute(self.HealerRecordingPoints or {})
+        self.HealerRecordingPoints = points
         if #points < 2 then
             self.HealerRouteStatus = "Recording discarded: walk farther before saving"
             return false
         end
         self:LoadHealerRoutes()[self.HealerRecordingKey or self:GetHealerRouteKey()] = points
+        self.HealerOptimizedRoutes = nil
+        self.RecordedPathVisualCache = nil
         local saved = self:SaveHealerRoutes()
         self.HealerRouteIndex = nil
         self.RecordedRouteCompleteKey = nil
@@ -261,6 +322,8 @@ do
         if self.HealerRecording then self.HealerRecording = false end
         local routes = self:LoadHealerRoutes()
         routes[self:GetHealerRouteKey()] = nil
+        self.HealerOptimizedRoutes = nil
+        self.RecordedPathVisualCache = nil
         self.HealerRouteIndex = nil
         self.RecordedRouteCompleteKey = nil
         local saved = self:SaveHealerRoutes()
@@ -364,6 +427,24 @@ do
             index += 1
             point = routeVector(points[index])
         end
+
+        -- Look ahead over a few straight, visible points. This removes the
+        -- stop-and-recompute pause at every dense recorder sample while still
+        -- preserving corners, stairs and large height changes.
+        local lookahead = index
+        for candidateIndex = math.min(#points, index + 3), index + 1, -1 do
+            local candidate = routeVector(points[candidateIndex])
+            local delta = candidate and candidate - position
+            local horizontal = delta and flatten(delta).Magnitude or 0
+            if candidate and horizontal > 0.1 and math.abs(delta.Y) <= 4
+                and self.Geometry:IsDirectionClear(delta, horizontal)
+            then
+                lookahead = candidateIndex
+                point = candidate
+                break
+            end
+        end
+        index = lookahead
 
         self.HealerRouteIndex = index
         self.HealerRouteStatus = string.format("Auto route active • %s • point %d/%d",
@@ -584,7 +665,10 @@ do
             local enemy = self.CurrentEnemy
             local enemyDistance = enemy and enemy.Root and enemy.Root.Parent
                 and (enemy.Root.Position - self.Character.Root.Position).Magnitude or math.huge
-            if enemyDistance > ROUTE_COMBAT_PAUSE_DISTANCE then
+            local enemyHeight = enemy and enemy.Root and enemy.Root.Parent
+                and math.abs(enemy.Root.Position.Y - self.Character.Root.Position.Y) or 0
+            local readyForCombat = enemyDistance <= ROUTE_COMBAT_PAUSE_DISTANCE and enemyHeight <= 7
+            if not readyForCombat then
                 local routeGoal = self:GetRecordedProgressGoal()
                 if routeGoal then
                     self:UpdateHealerNavigation(routeGoal)

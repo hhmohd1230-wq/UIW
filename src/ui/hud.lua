@@ -946,7 +946,12 @@ function HUD.new(controller)
         function() return controller.HealerUseRecordedPath end,
         function(value) controller:SetHealerOption("HealerUseRecordedPath", value) end)
 
-    local routeCard = UIKit.Card(automationPage, { Size = UDim2.new(1, 0, 0, 112), LayoutOrder = 11 })
+    toggleRow(automationPage, 11, "Show Recorded Route",
+        "Draws the saved route in blue without hiding the live yellow path",
+        function() return controller.ShowRecordedPath end,
+        function(value) controller:SetHealerOption("ShowRecordedPath", value) end)
+
+    local routeCard = UIKit.Card(automationPage, { Size = UDim2.new(1, 0, 0, 112), LayoutOrder = 12 })
     self.HealerRouteStatusLabel = UIKit.Label(routeCard, {
         Position = UDim2.fromOffset(14, 8), Size = UDim2.new(1, -28, 0, 38),
         Font = UIKit.Fonts.Semi, TextSize = 11, TextWrapped = true,
