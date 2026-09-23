@@ -42,10 +42,11 @@ Map-wide healing can cast immediately; local heals wait until the healer has
 chased within that spell's effective range.
 The healer pathfinder treats vertical distance as real distance, jumps early on
 short climbs and forces a fresh route when movement stalls. For difficult map
-sections, press **Start recording**, manually walk the full dungeon route, then
-press **Stop & save**. Enable **Use Recorded Route** to reuse those account and
-dungeon specific waypoints on later runs, including reverse movement toward a
-host behind the healer.
+sections, press **Start recording** and manually walk the full dungeon route.
+The route saves automatically when the dungeon is completed; **Stop & save** is
+also available for a manual save. Enable **Use Recorded Route** to reuse those
+account and dungeon specific waypoints on later runs, including reverse
+movement toward a host behind the healer. Each dungeon owns a separate route.
 The target, follow distance and healer choices are saved per Roblox account and
 continue after dungeon teleports.
 

@@ -32545,6 +32545,14 @@ do
     local ROUTE_REACH_DISTANCE = 5
     local ROUTE_RESYNC_DISTANCE = 32
 
+    local function healerDungeonFinished()
+        local dungeon = Workspace:FindFirstChild("dungeon")
+        local bossRoom = dungeon and dungeon:FindFirstChild("bossRoom")
+        local flag = bossRoom and bossRoom:FindFirstChild("dungeonFinished")
+        return (flag and flag:IsA("ValueBase") and flag.Value == true)
+            or (dungeon and dungeon:GetAttribute("dungeonFinished") == true)
+    end
+
     local HEAL_SCORE = {
         ["revitalize"] = 900,
         ["universal heal"] = 860,
@@ -32703,11 +32711,14 @@ do
         end
     end
 
-    function UIWController:GetHealerRouteKey()
+    function UIWController:GetHealerRouteName()
         local dungeon = Workspace:FindFirstChild("dungeonName")
         local name = dungeon and dungeon:IsA("ValueBase") and tostring(dungeon.Value or "") or ""
-        if name == "" then name = "place_" .. tostring(game.PlaceId) end
-        return string.lower(string.gsub(name, "[^%w]+", "_"))
+        return name ~= "" and name or ("Place " .. tostring(game.PlaceId))
+    end
+
+    function UIWController:GetHealerRouteKey()
+        return string.lower(string.gsub(self:GetHealerRouteName(), "[^%w]+", "_"))
     end
 
     function UIWController:LoadHealerRoutes()
@@ -32735,7 +32746,8 @@ do
         self.HealerRecording = true
         self.HealerRecordingKey = self:GetHealerRouteKey()
         self.HealerRecordingPoints = { routePoint(self.Character.Root.Position) }
-        self.HealerRouteStatus = "Recording route: 1 point • walk the full dungeon path"
+        self.HealerRouteStatus = "Recording " .. self:GetHealerRouteName()
+            .. " route: 1 point • saves automatically when complete"
         self.Character:ReleaseAutomationFacing()
         self.Route:Reset()
         if self.HUD and self.HUD.RefreshHealer then self.HUD:RefreshHealer() end
@@ -32754,11 +32766,12 @@ do
             or (force and delta.Magnitude >= 0.5)
         then
             if #points < 800 then table.insert(points, routePoint(position)) end
-            self.HealerRouteStatus = string.format("Recording route: %d points • walk the full dungeon path", #points)
+            self.HealerRouteStatus = string.format("Recording %s route: %d points • auto-saves when complete",
+                self:GetHealerRouteName(), #points)
         end
     end
 
-    function UIWController:StopHealerRouteRecording()
+    function UIWController:StopHealerRouteRecording(automatic)
         if not self.HealerRecording then return false end
         self:SampleHealerRoute(true)
         self.HealerRecording = false
@@ -32770,8 +32783,10 @@ do
         self:LoadHealerRoutes()[self.HealerRecordingKey or self:GetHealerRouteKey()] = points
         local saved = self:SaveHealerRoutes()
         self.HealerRouteIndex = nil
+        local dungeonName = self:GetHealerRouteName()
         self.HealerRouteStatus = saved
-            and string.format("Saved route: %d points", #points)
+            and string.format("%s %s route: %d points",
+                automatic and "Auto-saved" or "Saved", dungeonName, #points)
             or "Could not save route in the executor workspace"
         if self.HUD and self.HUD.RefreshHealer then self.HUD:RefreshHealer() end
         return saved
@@ -32783,7 +32798,7 @@ do
         routes[self:GetHealerRouteKey()] = nil
         self.HealerRouteIndex = nil
         local saved = self:SaveHealerRoutes()
-        self.HealerRouteStatus = saved and "Recorded route cleared for this dungeon"
+        self.HealerRouteStatus = saved and ("Recorded route cleared for " .. self:GetHealerRouteName())
             or "Could not clear the recorded route"
         self.Route:Reset()
         if self.HUD and self.HUD.RefreshHealer then self.HUD:RefreshHealer() end
@@ -33083,8 +33098,9 @@ do
     function UIWController:StartHealer()
         self:LoadHealerRoutes()
         local savedRoute = self:GetRecordedHealerRoute()
-        self.HealerRouteStatus = savedRoute and string.format("Saved route: %d points", #savedRoute)
-            or "No recorded route for this dungeon"
+        self.HealerRouteStatus = savedRoute
+            and string.format("Saved %s route: %d points", self:GetHealerRouteName(), #savedRoute)
+            or ("No recorded route for " .. self:GetHealerRouteName())
         if self.HealerEnabled then
             self.Enabled = true
             self.AutoDodge = true
@@ -33095,6 +33111,9 @@ do
             if self.HealerRecording and now - (self.HealerLastRecordSampleAt or 0) >= 0.15 then
                 self.HealerLastRecordSampleAt = now
                 self:SampleHealerRoute(false)
+                if healerDungeonFinished() then
+                    self:StopHealerRouteRecording(true)
+                end
             end
             if now - (self.HealerHUDAt or 0) >= 0.5 then
                 self.HealerHUDAt = now
@@ -33116,7 +33135,7 @@ do
 end
 
 local Controller = UIWController.new()
-Controller.Version = tostring(Controller.Version) .. "+streamtarget+carry10+healer5"
+Controller.Version = tostring(Controller.Version) .. "+streamtarget+carry10+healer6"
 
 getgenv().UIW = Controller
 getgenv().UNDERWORLD_AI = Controller
