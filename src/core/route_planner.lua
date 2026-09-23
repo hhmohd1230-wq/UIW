@@ -29,6 +29,7 @@ function RoutePlanner.new(characterService, geometry, hazards, dungeon)
         LastNoPathGoal = nil,
         ConsecutiveNoPath = 0,
         LastHeavyFallbackAt = 0,
+        Use3DGoalDistance = false,
         FrontierCacheGoal = nil,
         FrontierCacheResult = nil,
         FrontierCacheAt = 0,
@@ -1162,9 +1163,11 @@ function RoutePlanner:GetRawDirection(goal, reachDistance)
     local goalDelta = flatten(fullGoalDelta)
     local effectiveReachDistance = tonumber(reachDistance) or CONFIG.PathGoalReachDistance
 
-    -- Height matters for stairs, ramps, ladders and drops. Treating only X/Z
-    -- as distance made a goal directly above or below look already reached.
-    if fullGoalDelta.Magnitude <= effectiveReachDistance then
+    -- Healer following needs true 3D distance for stairs, ladders and drops.
+    -- Combat navigation intentionally uses horizontal distance because enemy
+    -- root heights and animation offsets are not walkable destinations.
+    local reachDelta = self.Use3DGoalDistance and fullGoalDelta or goalDelta
+    if reachDelta.Magnitude <= effectiveReachDistance then
         self.CachedSafeDirection = Vector3.zero
         return Vector3.zero
     end

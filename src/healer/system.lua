@@ -548,11 +548,14 @@ do
         end
         if not self.HealerEnabled then return oldStep(self) end
         local combat, dodge = self.AutoCombat, self.AutoDodge
+        local use3DGoalDistance = self.Route.Use3DGoalDistance
         self.AutoCombat = false
         self.AutoDodge = true
+        self.Route.Use3DGoalDistance = true
         local ok, err = pcall(oldStep, self)
         self.AutoCombat = combat
         self.AutoDodge = dodge
+        self.Route.Use3DGoalDistance = use3DGoalDistance
         if not ok then error(err) end
         if self.Enabled and self.Character:IsAlive() then self:HealerUpdate() end
     end

@@ -3874,6 +3874,7 @@ function RoutePlanner.new(characterService, geometry, hazards, dungeon)
         LastNoPathGoal = nil,
         ConsecutiveNoPath = 0,
         LastHeavyFallbackAt = 0,
+        Use3DGoalDistance = false,
         FrontierCacheGoal = nil,
         FrontierCacheResult = nil,
         FrontierCacheAt = 0,
@@ -5007,9 +5008,11 @@ function RoutePlanner:GetRawDirection(goal, reachDistance)
     local goalDelta = flatten(fullGoalDelta)
     local effectiveReachDistance = tonumber(reachDistance) or CONFIG.PathGoalReachDistance
 
-    -- Height matters for stairs, ramps, ladders and drops. Treating only X/Z
-    -- as distance made a goal directly above or below look already reached.
-    if fullGoalDelta.Magnitude <= effectiveReachDistance then
+    -- Healer following needs true 3D distance for stairs, ladders and drops.
+    -- Combat navigation intentionally uses horizontal distance because enemy
+    -- root heights and animation offsets are not walkable destinations.
+    local reachDelta = self.Use3DGoalDistance and fullGoalDelta or goalDelta
+    if reachDelta.Magnitude <= effectiveReachDistance then
         self.CachedSafeDirection = Vector3.zero
         return Vector3.zero
     end
@@ -32342,6 +32345,10 @@ do
         elseif key == "CarryEnabled" then
             self.CarryEnabled = value == true
             self.CarryLastActionAt = 0
+            if self.CarryEnabled then
+                self.Enabled = true
+                self.AutoDodge = true
+            end
         else
             return
         end
@@ -32569,6 +32576,13 @@ do
     end
 
     function UIWController:StartCarry()
+        if self.CarryEnabled then
+            -- Carry is an active automation mode. A saved config with Master
+            -- Auto off must not leave the host or an alt standing still after
+            -- a teleport.
+            self.Enabled = true
+            self.AutoDodge = true
+        end
         self.CarryStatus = self.CarryEnabled and "Starting carry" or "Carry off"
         self.CarryLevelReadyAt = os.clock() + 6
         self.CarryRewardAt = nil
@@ -33144,11 +33158,14 @@ do
         end
         if not self.HealerEnabled then return oldStep(self) end
         local combat, dodge = self.AutoCombat, self.AutoDodge
+        local use3DGoalDistance = self.Route.Use3DGoalDistance
         self.AutoCombat = false
         self.AutoDodge = true
+        self.Route.Use3DGoalDistance = true
         local ok, err = pcall(oldStep, self)
         self.AutoCombat = combat
         self.AutoDodge = dodge
+        self.Route.Use3DGoalDistance = use3DGoalDistance
         if not ok then error(err) end
         if self.Enabled and self.Character:IsAlive() then self:HealerUpdate() end
     end
@@ -33194,7 +33211,7 @@ end
 
 
 local Controller = UIWController.new()
-Controller.Version = tostring(Controller.Version) .. "+streamtarget+carry10+healer6"
+Controller.Version = tostring(Controller.Version) .. "+streamtarget+carry11+healer7"
 
 getgenv().UIW = Controller
 getgenv().UNDERWORLD_AI = Controller

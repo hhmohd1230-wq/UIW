@@ -27,8 +27,9 @@ requirement. The group returns to the lobby only when the next dungeon or
 difficulty unlocks, then creates that newly unlocked stage. **Fixed Dungeon**
 keeps retrying the chosen dungeon and difficulty. Carry
 choices are saved per account and queue
-UIW after teleport while Carry is enabled. The game still controls party and
-server capacity.
+UIW after teleport while Carry is enabled. Carry restores Master Auto and Smart
+Dodge after every teleport so a saved paused config cannot strand an account at
+the dungeon entrance. The game still controls party and server capacity.
 
 The **Healer** tab follows one selected player while keeping Auto Dodge active.
 When its target is blank, it automatically follows the configured Carry host.
