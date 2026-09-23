@@ -96,7 +96,7 @@ do
 
     function UIWController:CarryRewardReady()
         return self.CarryRewardAt ~= nil
-            and os.clock() - self.CarryRewardAt >= 5
+            and os.clock() - self.CarryRewardAt >= 1
     end
 
     local function pressPlay()
@@ -369,17 +369,36 @@ do
             self.CarryStatus = "Waiting for lobby or dungeon"
             return
         end
-        local index, reason, lowest = self:CarryTarget()
-        local stage = index and CARRY_STAGES[index]
-        if dungeonFinished() and self:CarryRewardReady() then
-            local previous = CARRY_STAGES[tonumber(self.CarryRunStage) or 0]
-            self.CarryStatus = stage
-                and ((previous and previous ~= stage and "Upgrading to " or "Retrying ")
-                    .. stage.Name .. " " .. stage.Difficulty .. " via lobby")
-                or "Returning to lobby to regroup"
-            if os.clock() - (self.CarryLastActionAt or 0) > 10 then
+        if not isHost and not playerNamed(host) and dungeonFinished() and self:CarryRewardReady() then
+            self.CarryHostMissingAt = self.CarryHostMissingAt or os.clock()
+            local waited = os.clock() - self.CarryHostMissingAt
+            self.CarryStatus = string.format("Host is teleporting; waiting for party retry (%.0fs)",
+                math.max(0, 18 - waited))
+            if waited >= 18 and os.clock() - (self.CarryLastActionAt or 0) > 10 then
+                -- The host used Return to Lobby for a newly unlocked stage, or
+                -- this alt missed the party teleport. Rejoin only after giving
+                -- the native Retry ample time to carry the whole party.
                 self.CarryLastActionAt = os.clock()
                 Remotes.ReturnToLobbyEvent:FireServer()
+            end
+            return
+        end
+        self.CarryHostMissingAt = nil
+        local index, reason, lowest = self:CarryTarget()
+        local stage = index and CARRY_STAGES[index]
+        local runStage = tonumber(self.CarryRunStage)
+        local stageChanged = index and runStage and index ~= runStage
+        if dungeonFinished() and self:CarryRewardReady() and stageChanged then
+            if isHost then
+                self.CarryStatus = stage
+                    and ("Level reached; returning for " .. stage.Name .. " " .. stage.Difficulty)
+                    or "Level reached; returning to lobby"
+                if os.clock() - (self.CarryLastActionAt or 0) > 10 then
+                    self.CarryLastActionAt = os.clock()
+                    Remotes.ReturnToLobbyEvent:FireServer()
+                end
+            else
+                self.CarryStatus = "Reward claimed; host controls the next stage"
             end
             return
         end
@@ -388,8 +407,14 @@ do
             return
         end
         local nextStage = CARRY_STAGES[index + 1]
-        self.CarryStatus = string.format("%s %s | lowest %d%s", stage.Name, stage.Difficulty,
-            lowest, nextStage and (" -> " .. nextStage.Level) or " | latest dungeon")
+        if dungeonFinished() and self:CarryRewardReady() then
+            self.CarryStatus = string.format("Reward claimed; retrying %s %s | lowest %d%s",
+                stage.Name, stage.Difficulty, lowest,
+                nextStage and (" -> " .. nextStage.Level) or " | latest dungeon")
+        else
+            self.CarryStatus = string.format("%s %s | lowest %d%s", stage.Name, stage.Difficulty,
+                lowest, nextStage and (" -> " .. nextStage.Level) or " | latest dungeon")
+        end
     end
 
     function UIWController:StartCarry()

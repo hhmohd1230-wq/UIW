@@ -17843,7 +17843,7 @@ function HUD.new(controller)
         Position = UDim2.fromOffset(14, 34), Size = UDim2.new(1, -28, 0, 32),
         BackgroundColor3 = T.Tile, BorderSizePixel = 0, ClearTextOnFocus = false,
         Font = UIKit.Fonts.Body, TextSize = 12, TextColor3 = T.Text,
-        PlaceholderText = "Roblox username", PlaceholderColor3 = T.Muted,
+        PlaceholderText = "Blank = Carry host", PlaceholderColor3 = T.Muted,
         Text = controller.HealerTargetName, TextXAlignment = Enum.TextXAlignment.Left,
         ZIndex = 3, Parent = targetCard,
     })
@@ -21318,14 +21318,15 @@ function UIWController:Start()
             return
         end
 
-        if self.CarryEnabled then
-            self.HUD:SetRetryStatus("carry: returning to lobby to retry or upgrade", COLORS.Pathing)
+        if self.CarryEnabled and self:CarryNeedsLobby() then
+            self.HUD:SetRetryStatus("carry: next level reached; returning to lobby", COLORS.Pathing)
             return
         end
 
         self.CompletionSeenAt = self.CompletionSeenAt or os.clock()
-        local delay = self.CarryEnabled and self.CarryMode == "Auto"
-            and math.max(CONFIG.ReplayDelay, 6) or CONFIG.ReplayDelay
+        -- Carry has only a short window before the completed server sends the
+        -- party back to the lobby. RewardReady already waited for level data.
+        local delay = self.CarryEnabled and 0.25 or CONFIG.ReplayDelay
         local remaining = delay - (os.clock() - self.CompletionSeenAt)
 
         if remaining > 0 then
@@ -21361,7 +21362,8 @@ function UIWController:Start()
         local token = self.ReplayToken
 
         task.spawn(function()
-            for attempt = 1, CONFIG.ReplayAttempts do
+            local attemptLimit = self.CarryEnabled and 1 or CONFIG.ReplayAttempts
+            for attempt = 1, attemptLimit do
                 if token ~= self.ReplayToken
                     or (not self.AutoRetryEnabled and not self.CarryEnabled)
                     or self.Destroyed or (self.CarryEnabled and self:CarryNeedsLobby())
@@ -21371,7 +21373,7 @@ function UIWController:Start()
 
                 if self.HUD then
                     self.HUD:SetRetryStatus(
-                        string.format("replaying %s • request %d/%d", data.dungeonName, attempt, CONFIG.ReplayAttempts),
+                        string.format("replaying %s • request %d/%d", data.dungeonName, attempt, attemptLimit),
                         COLORS.Pathing
                     )
                 end
@@ -21389,7 +21391,7 @@ function UIWController:Start()
                 -- A successful request teleports the party asynchronously.
                 -- Multiple requests a few seconds apart can split the party
                 -- into different destination servers.
-                task.wait(12)
+                task.wait(self.CarryEnabled and 30 or 12)
                 if self.Destroyed or game.JobId ~= self.ReplaySourceJob then return end
             end
 
@@ -32135,7 +32137,7 @@ do
 
     function UIWController:CarryRewardReady()
         return self.CarryRewardAt ~= nil
-            and os.clock() - self.CarryRewardAt >= 5
+            and os.clock() - self.CarryRewardAt >= 1
     end
 
     local function pressPlay()
@@ -32408,17 +32410,36 @@ do
             self.CarryStatus = "Waiting for lobby or dungeon"
             return
         end
-        local index, reason, lowest = self:CarryTarget()
-        local stage = index and CARRY_STAGES[index]
-        if dungeonFinished() and self:CarryRewardReady() then
-            local previous = CARRY_STAGES[tonumber(self.CarryRunStage) or 0]
-            self.CarryStatus = stage
-                and ((previous and previous ~= stage and "Upgrading to " or "Retrying ")
-                    .. stage.Name .. " " .. stage.Difficulty .. " via lobby")
-                or "Returning to lobby to regroup"
-            if os.clock() - (self.CarryLastActionAt or 0) > 10 then
+        if not isHost and not playerNamed(host) and dungeonFinished() and self:CarryRewardReady() then
+            self.CarryHostMissingAt = self.CarryHostMissingAt or os.clock()
+            local waited = os.clock() - self.CarryHostMissingAt
+            self.CarryStatus = string.format("Host is teleporting; waiting for party retry (%.0fs)",
+                math.max(0, 18 - waited))
+            if waited >= 18 and os.clock() - (self.CarryLastActionAt or 0) > 10 then
+                -- The host used Return to Lobby for a newly unlocked stage, or
+                -- this alt missed the party teleport. Rejoin only after giving
+                -- the native Retry ample time to carry the whole party.
                 self.CarryLastActionAt = os.clock()
                 Remotes.ReturnToLobbyEvent:FireServer()
+            end
+            return
+        end
+        self.CarryHostMissingAt = nil
+        local index, reason, lowest = self:CarryTarget()
+        local stage = index and CARRY_STAGES[index]
+        local runStage = tonumber(self.CarryRunStage)
+        local stageChanged = index and runStage and index ~= runStage
+        if dungeonFinished() and self:CarryRewardReady() and stageChanged then
+            if isHost then
+                self.CarryStatus = stage
+                    and ("Level reached; returning for " .. stage.Name .. " " .. stage.Difficulty)
+                    or "Level reached; returning to lobby"
+                if os.clock() - (self.CarryLastActionAt or 0) > 10 then
+                    self.CarryLastActionAt = os.clock()
+                    Remotes.ReturnToLobbyEvent:FireServer()
+                end
+            else
+                self.CarryStatus = "Reward claimed; host controls the next stage"
             end
             return
         end
@@ -32427,8 +32448,14 @@ do
             return
         end
         local nextStage = CARRY_STAGES[index + 1]
-        self.CarryStatus = string.format("%s %s | lowest %d%s", stage.Name, stage.Difficulty,
-            lowest, nextStage and (" -> " .. nextStage.Level) or " | latest dungeon")
+        if dungeonFinished() and self:CarryRewardReady() then
+            self.CarryStatus = string.format("Reward claimed; retrying %s %s | lowest %d%s",
+                stage.Name, stage.Difficulty, lowest,
+                nextStage and (" -> " .. nextStage.Level) or " | latest dungeon")
+        else
+            self.CarryStatus = string.format("%s %s | lowest %d%s", stage.Name, stage.Difficulty,
+                lowest, nextStage and (" -> " .. nextStage.Level) or " | latest dungeon")
+        end
     end
 
     function UIWController:StartCarry()
@@ -32471,6 +32498,18 @@ do
         ["rejuvenating spray"] = 580,
         ["holy circle"] = 520,
         ["redemption"] = 420,
+    }
+
+    local HEAL_RANGE = {
+        ["universal heal"] = math.huge,
+        ["chain heal"] = 55,
+        ["revitalize"] = 32,
+        ["life pulse"] = 30,
+        ["life dash"] = 34,
+        ["aura of life"] = 28,
+        ["rejuvenating spray"] = 36,
+        ["holy circle"] = 28,
+        ["redemption"] = 24,
     }
 
     local function normalized(value)
@@ -32537,19 +32576,24 @@ do
 
     function UIWController:GetHealerTarget()
         if not self.HealerEnabled then return nil end
-        local target = playerNamed(self.HealerTargetName)
+        local requested = cleanName(self.HealerTargetName)
+        if not requested or requested == "" then requested = cleanName(self.CarryHostName) end
+        local target = playerNamed(requested)
         if target == LocalPlayer then return nil end
         local character = target and target.Character
         local humanoid = character and character:FindFirstChildOfClass("Humanoid")
         local root = character and character:FindFirstChild("HumanoidRootPart")
         if not humanoid or not root or humanoid.Health <= 0 then return nil end
-        return target, character, humanoid, root
+        return target, character, humanoid, root, requested
     end
 
     function UIWController:SetHealerOption(key, value)
         if key == "HealerEnabled" then
             self.HealerEnabled = value == true
-            if self.HealerEnabled then self.AutoDodge = true end
+            if self.HealerEnabled then
+                self.Enabled = true
+                self.AutoDodge = true
+            end
         elseif key == "HealerTargetName" then
             self.HealerTargetName = cleanName(value) or ""
         elseif key == "HealerAutoEquip" then
@@ -32629,10 +32673,14 @@ do
         for _, container in ipairs({ LocalPlayer.Backpack, LocalPlayer.Character }) do
             if container then
                 for _, tool in ipairs(container:GetChildren()) do
-                    local score = tool:IsA("Tool") and HEAL_SCORE[normalized(tool.Name)]
+                    local spellName = tool:IsA("Tool") and normalized(tool.Name)
+                    local score = spellName and HEAL_SCORE[spellName]
                     local cooldown = tool:FindFirstChild("cooldown")
                     local event = tool:FindFirstChild("localEvent")
-                    if score and event and (not cooldown or (tonumber(cooldown.Value) or 0) <= 0) then
+                    local inRange = distance <= (HEAL_RANGE[spellName] or 0)
+                    if score and inRange and event
+                        and (not cooldown or (tonumber(cooldown.Value) or 0) <= 0)
+                    then
                         table.insert(ready, { Tool = tool, Event = event, Score = score })
                     end
                 end
@@ -32646,8 +32694,10 @@ do
         local ok = pcall(function() chosen.Event:Fire() end)
         if ok then
             self.HealerLastSpell = chosen.Tool.Name
+            local healingName = cleanName(self.HealerTargetName)
+                or cleanName(self.CarryHostName) or "target"
             self.HealerStatus = string.format("Healing %s with %s | %.0f%% HP | %.0f studs",
-                self.HealerTargetName, chosen.Tool.Name,
+                healingName, chosen.Tool.Name,
                 targetHumanoid.Health / targetHumanoid.MaxHealth * 100, distance or 0)
         end
         return ok
@@ -32655,18 +32705,19 @@ do
 
     function UIWController:HealerUpdate()
         if not self.HealerEnabled or self.Destroyed then return end
-        local target, _, humanoid, root = self:GetHealerTarget()
+        local target, _, humanoid, root, requested = self:GetHealerTarget()
         if not target then
-            self.HealerStatus = self.HealerTargetName == ""
-                and "Enter the player username to heal"
-                or ("Waiting for " .. self.HealerTargetName)
+            local fallback = cleanName(self.HealerTargetName) or cleanName(self.CarryHostName)
+            self.HealerStatus = fallback
+                and ("Waiting for " .. fallback)
+                or "Enter a player or configure a Carry host"
             return
         end
         local distance = (root.Position - self.Character.Root.Position).Magnitude
         local health = humanoid.Health / math.max(humanoid.MaxHealth, 1) * 100
         if not self:HealerCast(humanoid, distance) then
             self.HealerStatus = string.format("Following %s | %.0f%% HP | %.0f studs",
-                target.Name, health, distance)
+                requested or target.Name, health, distance)
         end
     end
 
@@ -32710,6 +32761,10 @@ do
     end
 
     function UIWController:StartHealer()
+        if self.HealerEnabled then
+            self.Enabled = true
+            self.AutoDodge = true
+        end
         self.HealerStatus = self.HealerEnabled and "Starting healer" or "Healer off"
         self.Maid:Give(RunService.Heartbeat:Connect(function()
             if not self.HealerEnabled then return end
@@ -32733,7 +32788,7 @@ do
 end
 
 local Controller = UIWController.new()
-Controller.Version = tostring(Controller.Version) .. "+streamtarget+carry6+healer1"
+Controller.Version = tostring(Controller.Version) .. "+streamtarget+carry10+healer3"
 
 getgenv().UIW = Controller
 getgenv().UNDERWORLD_AI = Controller

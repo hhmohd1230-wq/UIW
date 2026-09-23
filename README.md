@@ -21,20 +21,23 @@ for automatic progression. The host waits until every listed alt has loaded in
 the lobby, creates a private party at the highest difficulty the lowest alt can
 enter, whitelists the alts and starts when they have all joined. Alts use the
 game's friend join control if they land in another lobby. The lobby Play button
-is pressed automatically. After the dungeon finishes and rewards arrive, every
-account returns to the lobby. The host creates the same dungeon again until the
-lowest alt reaches the next level requirement, then creates the newly unlocked
-dungeon or difficulty. This lobby retry keeps every alt in the party. **Fixed
-Dungeon** instead keeps selecting the chosen dungeon and difficulty. Carry
+is pressed automatically. After the dungeon finishes and rewards arrive, the
+host uses the in-dungeon Retry while the lowest alt remains below the next level
+requirement. The group returns to the lobby only when the next dungeon or
+difficulty unlocks, then creates that newly unlocked stage. **Fixed Dungeon**
+keeps retrying the chosen dungeon and difficulty. Carry
 choices are saved per account and queue
 UIW after teleport while Carry is enabled. The game still controls party and
 server capacity.
 
 The **Healer** tab follows one selected player while keeping Auto Dodge active.
+When its target is blank, it automatically follows the configured Carry host.
 It stops offensive casts, faces the selected player and uses any equipped
 healing spell as soon as the target loses health. **Equip Maximum Heal Gear**
 selects the owned chest and helmet with the most spell power and equips the two
 best owned healing spells, favoring Revitalize, Universal Heal and Chain Heal.
+Map-wide healing can cast immediately; local heals wait until the healer has
+chased within that spell's effective range.
 The target, follow distance and healer choices are saved per Roblox account and
 continue after dungeon teleports.
 

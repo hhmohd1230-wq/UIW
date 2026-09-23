@@ -15,6 +15,18 @@ do
         ["redemption"] = 420,
     }
 
+    local HEAL_RANGE = {
+        ["universal heal"] = math.huge,
+        ["chain heal"] = 55,
+        ["revitalize"] = 32,
+        ["life pulse"] = 30,
+        ["life dash"] = 34,
+        ["aura of life"] = 28,
+        ["rejuvenating spray"] = 36,
+        ["holy circle"] = 28,
+        ["redemption"] = 24,
+    }
+
     local function normalized(value)
         return string.lower(string.match(tostring(value or ""), "^%s*(.-)%s*$"))
     end
@@ -79,19 +91,24 @@ do
 
     function UIWController:GetHealerTarget()
         if not self.HealerEnabled then return nil end
-        local target = playerNamed(self.HealerTargetName)
+        local requested = cleanName(self.HealerTargetName)
+        if not requested or requested == "" then requested = cleanName(self.CarryHostName) end
+        local target = playerNamed(requested)
         if target == LocalPlayer then return nil end
         local character = target and target.Character
         local humanoid = character and character:FindFirstChildOfClass("Humanoid")
         local root = character and character:FindFirstChild("HumanoidRootPart")
         if not humanoid or not root or humanoid.Health <= 0 then return nil end
-        return target, character, humanoid, root
+        return target, character, humanoid, root, requested
     end
 
     function UIWController:SetHealerOption(key, value)
         if key == "HealerEnabled" then
             self.HealerEnabled = value == true
-            if self.HealerEnabled then self.AutoDodge = true end
+            if self.HealerEnabled then
+                self.Enabled = true
+                self.AutoDodge = true
+            end
         elseif key == "HealerTargetName" then
             self.HealerTargetName = cleanName(value) or ""
         elseif key == "HealerAutoEquip" then
@@ -171,10 +188,14 @@ do
         for _, container in ipairs({ LocalPlayer.Backpack, LocalPlayer.Character }) do
             if container then
                 for _, tool in ipairs(container:GetChildren()) do
-                    local score = tool:IsA("Tool") and HEAL_SCORE[normalized(tool.Name)]
+                    local spellName = tool:IsA("Tool") and normalized(tool.Name)
+                    local score = spellName and HEAL_SCORE[spellName]
                     local cooldown = tool:FindFirstChild("cooldown")
                     local event = tool:FindFirstChild("localEvent")
-                    if score and event and (not cooldown or (tonumber(cooldown.Value) or 0) <= 0) then
+                    local inRange = distance <= (HEAL_RANGE[spellName] or 0)
+                    if score and inRange and event
+                        and (not cooldown or (tonumber(cooldown.Value) or 0) <= 0)
+                    then
                         table.insert(ready, { Tool = tool, Event = event, Score = score })
                     end
                 end
@@ -188,8 +209,10 @@ do
         local ok = pcall(function() chosen.Event:Fire() end)
         if ok then
             self.HealerLastSpell = chosen.Tool.Name
+            local healingName = cleanName(self.HealerTargetName)
+                or cleanName(self.CarryHostName) or "target"
             self.HealerStatus = string.format("Healing %s with %s | %.0f%% HP | %.0f studs",
-                self.HealerTargetName, chosen.Tool.Name,
+                healingName, chosen.Tool.Name,
                 targetHumanoid.Health / targetHumanoid.MaxHealth * 100, distance or 0)
         end
         return ok
@@ -197,18 +220,19 @@ do
 
     function UIWController:HealerUpdate()
         if not self.HealerEnabled or self.Destroyed then return end
-        local target, _, humanoid, root = self:GetHealerTarget()
+        local target, _, humanoid, root, requested = self:GetHealerTarget()
         if not target then
-            self.HealerStatus = self.HealerTargetName == ""
-                and "Enter the player username to heal"
-                or ("Waiting for " .. self.HealerTargetName)
+            local fallback = cleanName(self.HealerTargetName) or cleanName(self.CarryHostName)
+            self.HealerStatus = fallback
+                and ("Waiting for " .. fallback)
+                or "Enter a player or configure a Carry host"
             return
         end
         local distance = (root.Position - self.Character.Root.Position).Magnitude
         local health = humanoid.Health / math.max(humanoid.MaxHealth, 1) * 100
         if not self:HealerCast(humanoid, distance) then
             self.HealerStatus = string.format("Following %s | %.0f%% HP | %.0f studs",
-                target.Name, health, distance)
+                requested or target.Name, health, distance)
         end
     end
 
@@ -252,6 +276,10 @@ do
     end
 
     function UIWController:StartHealer()
+        if self.HealerEnabled then
+            self.Enabled = true
+            self.AutoDodge = true
+        end
         self.HealerStatus = self.HealerEnabled and "Starting healer" or "Healer off"
         self.Maid:Give(RunService.Heartbeat:Connect(function()
             if not self.HealerEnabled then return end

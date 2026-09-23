@@ -1055,7 +1055,7 @@ function HUD.new(controller)
         Position = UDim2.fromOffset(14, 34), Size = UDim2.new(1, -28, 0, 32),
         BackgroundColor3 = T.Tile, BorderSizePixel = 0, ClearTextOnFocus = false,
         Font = UIKit.Fonts.Body, TextSize = 12, TextColor3 = T.Text,
-        PlaceholderText = "Roblox username", PlaceholderColor3 = T.Muted,
+        PlaceholderText = "Blank = Carry host", PlaceholderColor3 = T.Muted,
         Text = controller.HealerTargetName, TextXAlignment = Enum.TextXAlignment.Left,
         ZIndex = 3, Parent = targetCard,
     })

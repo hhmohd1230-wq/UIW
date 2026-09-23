@@ -2204,14 +2204,15 @@ function UIWController:Start()
             return
         end
 
-        if self.CarryEnabled then
-            self.HUD:SetRetryStatus("carry: returning to lobby to retry or upgrade", COLORS.Pathing)
+        if self.CarryEnabled and self:CarryNeedsLobby() then
+            self.HUD:SetRetryStatus("carry: next level reached; returning to lobby", COLORS.Pathing)
             return
         end
 
         self.CompletionSeenAt = self.CompletionSeenAt or os.clock()
-        local delay = self.CarryEnabled and self.CarryMode == "Auto"
-            and math.max(CONFIG.ReplayDelay, 6) or CONFIG.ReplayDelay
+        -- Carry has only a short window before the completed server sends the
+        -- party back to the lobby. RewardReady already waited for level data.
+        local delay = self.CarryEnabled and 0.25 or CONFIG.ReplayDelay
         local remaining = delay - (os.clock() - self.CompletionSeenAt)
 
         if remaining > 0 then
@@ -2247,7 +2248,8 @@ function UIWController:Start()
         local token = self.ReplayToken
 
         task.spawn(function()
-            for attempt = 1, CONFIG.ReplayAttempts do
+            local attemptLimit = self.CarryEnabled and 1 or CONFIG.ReplayAttempts
+            for attempt = 1, attemptLimit do
                 if token ~= self.ReplayToken
                     or (not self.AutoRetryEnabled and not self.CarryEnabled)
                     or self.Destroyed or (self.CarryEnabled and self:CarryNeedsLobby())
@@ -2257,7 +2259,7 @@ function UIWController:Start()
 
                 if self.HUD then
                     self.HUD:SetRetryStatus(
-                        string.format("replaying %s • request %d/%d", data.dungeonName, attempt, CONFIG.ReplayAttempts),
+                        string.format("replaying %s • request %d/%d", data.dungeonName, attempt, attemptLimit),
                         COLORS.Pathing
                     )
                 end
@@ -2275,7 +2277,7 @@ function UIWController:Start()
                 -- A successful request teleports the party asynchronously.
                 -- Multiple requests a few seconds apart can split the party
                 -- into different destination servers.
-                task.wait(12)
+                task.wait(self.CarryEnabled and 30 or 12)
                 if self.Destroyed or game.JobId ~= self.ReplaySourceJob then return end
             end
 
