@@ -27,6 +27,22 @@ do
         ["redemption"] = 24,
     }
 
+    -- Most heals apply over time or leave an area behind. This shared coverage
+    -- window prevents the second equipped spell from firing immediately after
+    -- the first one. Critical health shortens the wait, but still separates
+    -- the casts so both heals are not wasted on the same instant of damage.
+    local HEAL_COVERAGE = {
+        ["revitalize"] = 4.0,
+        ["universal heal"] = 2.5,
+        ["chain heal"] = 2.0,
+        ["life pulse"] = 4.0,
+        ["life dash"] = 2.5,
+        ["aura of life"] = 4.0,
+        ["rejuvenating spray"] = 1.5,
+        ["holy circle"] = 4.0,
+        ["redemption"] = 2.0,
+    }
+
     local function normalized(value)
         return string.lower(string.match(tostring(value or ""), "^%s*(.-)%s*$"))
     end
@@ -177,12 +193,26 @@ do
     end
 
     function UIWController:HealerCast(targetHumanoid, distance)
-        if not targetHumanoid or targetHumanoid.MaxHealth <= 0
-            or targetHumanoid.Health + 1 >= targetHumanoid.MaxHealth
-        then
+        local healerHumanoid = self.Character and self.Character.Humanoid
+        local targetMissingHealth = targetHumanoid and targetHumanoid.MaxHealth > 0
+            and targetHumanoid.Health + 1 < targetHumanoid.MaxHealth
+        local healerMissingHealth = healerHumanoid and healerHumanoid.MaxHealth > 0
+            and healerHumanoid.Health > 0
+            and healerHumanoid.Health + 1 < healerHumanoid.MaxHealth
+        if not targetMissingHealth and not healerMissingHealth then
             return false
         end
-        if os.clock() - (self.HealerLastCastAt or 0) < 0.3 then return false end
+
+        local targetPercent = targetHumanoid and targetHumanoid.MaxHealth > 0
+            and targetHumanoid.Health / targetHumanoid.MaxHealth * 100 or 100
+        local healerPercent = healerHumanoid and healerHumanoid.MaxHealth > 0
+            and healerHumanoid.Health / healerHumanoid.MaxHealth * 100 or 100
+        local lowestPercent = math.min(targetMissingHealth and targetPercent or 100,
+            healerMissingHealth and healerPercent or 100)
+        local now = os.clock()
+        local minimumGap = lowestPercent <= 50 and 0.9 or 1.25
+        if now - (self.HealerLastCastAt or 0) < minimumGap then return false end
+        if lowestPercent > 50 and now < (self.HealerHealCoveredUntil or 0) then return false end
 
         local ready = {}
         for _, container in ipairs({ LocalPlayer.Backpack, LocalPlayer.Character }) do
@@ -192,7 +222,11 @@ do
                     local score = spellName and HEAL_SCORE[spellName]
                     local cooldown = tool:FindFirstChild("cooldown")
                     local event = tool:FindFirstChild("localEvent")
-                    local inRange = distance <= (HEAL_RANGE[spellName] or 0)
+                    -- A wounded healer may use a local spell for themselves.
+                    -- A wounded host still requires the spell to reach them.
+                    local reachesTarget = targetMissingHealth
+                        and distance <= (HEAL_RANGE[spellName] or 0)
+                    local inRange = healerMissingHealth or reachesTarget
                     if score and inRange and event
                         and (not cooldown or (tonumber(cooldown.Value) or 0) <= 0)
                     then
@@ -205,15 +239,16 @@ do
         local chosen = ready[1]
         if not chosen then return false end
 
-        self.HealerLastCastAt = os.clock()
+        self.HealerLastCastAt = now
         local ok = pcall(function() chosen.Event:Fire() end)
         if ok then
             self.HealerLastSpell = chosen.Tool.Name
+            self.HealerHealCoveredUntil = now + (HEAL_COVERAGE[normalized(chosen.Tool.Name)] or 2)
             local healingName = cleanName(self.HealerTargetName)
                 or cleanName(self.CarryHostName) or "target"
-            self.HealerStatus = string.format("Healing %s with %s | %.0f%% HP | %.0f studs",
+            self.HealerStatus = string.format("Healing %s with %s | host %.0f%% • healer %.0f%% | %.0f studs",
                 healingName, chosen.Tool.Name,
-                targetHumanoid.Health / targetHumanoid.MaxHealth * 100, distance or 0)
+                targetPercent, healerPercent, distance or 0)
         end
         return ok
     end
@@ -230,9 +265,12 @@ do
         end
         local distance = (root.Position - self.Character.Root.Position).Magnitude
         local health = humanoid.Health / math.max(humanoid.MaxHealth, 1) * 100
+        local healerHumanoid = self.Character and self.Character.Humanoid
+        local healerHealth = healerHumanoid and healerHumanoid.MaxHealth > 0
+            and healerHumanoid.Health / healerHumanoid.MaxHealth * 100 or 0
         if not self:HealerCast(humanoid, distance) then
-            self.HealerStatus = string.format("Following %s | %.0f%% HP | %.0f studs",
-                requested or target.Name, health, distance)
+            self.HealerStatus = string.format("Following %s | host %.0f%% • healer %.0f%% | %.0f studs",
+                requested or target.Name, health, healerHealth, distance)
         end
     end
 

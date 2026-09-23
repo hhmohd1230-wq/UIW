@@ -33,7 +33,9 @@ server capacity.
 The **Healer** tab follows one selected player while keeping Auto Dodge active.
 When its target is blank, it automatically follows the configured Carry host.
 It stops offensive casts, faces the selected player and uses any equipped
-healing spell as soon as the target loses health. **Equip Maximum Heal Gear**
+healing spell when either the target or the healer loses health. When two
+healing spells are equipped, a shared coverage timer spaces their casts so the
+second spell is preserved instead of being fired at the same moment. **Equip Maximum Heal Gear**
 selects the owned chest and helmet with the most spell power and equips the two
 best owned healing spells, favoring Revitalize, Universal Heal and Chain Heal.
 Map-wide healing can cast immediately; local heals wait until the healer has
