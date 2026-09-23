@@ -43,6 +43,9 @@ forward lookahead, reducing path computations and keeping movement smooth.
 **Show Recorded Route** draws the saved path in blue alongside the live yellow
 path. When an enemy is above or below the account, the saved route continues to
 the correct floor before combat takes over.
+Both recorded and live paths commit through the full stair transition and keep
+moving briefly past the crest onto the platform edge before boss spacing takes
+control. Recorded combat handoff now occurs inside normal casting range.
 
 The **Healer** tab follows one selected player while keeping Auto Dodge active.
 When its target is blank, it automatically follows the configured Carry host.

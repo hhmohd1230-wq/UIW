@@ -1234,3 +1234,16 @@ end
 function RoutePlanner:GetSafeDirection(goal, targetYaw, reachDistance)
     return self:GetRawDirection(goal, reachDistance)
 end
+
+function RoutePlanner:HasPendingVerticalTransition()
+    if not self.CharacterService:IsAlive() or #self.Waypoints == 0 then return false end
+    local rootY = self.CharacterService.Root.Position.Y
+    local last = math.min(#self.Waypoints, self.WaypointIndex + 8)
+    for index = self.WaypointIndex, last do
+        local waypoint = self.Waypoints[index]
+        if waypoint and math.abs(waypoint.Position.Y - rootY) >= 3 then
+            return true
+        end
+    end
+    return false
+end

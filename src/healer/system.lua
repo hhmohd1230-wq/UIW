@@ -6,7 +6,7 @@ do
     local ROUTE_SAMPLE_DISTANCE = 4
     local ROUTE_REACH_DISTANCE = 5
     local ROUTE_RESYNC_DISTANCE = 32
-    local ROUTE_COMBAT_PAUSE_DISTANCE = 100
+    local ROUTE_COMBAT_PAUSE_DISTANCE = 64
 
     local function healerDungeonFinished()
         local dungeon = Workspace:FindFirstChild("dungeon")
@@ -647,6 +647,7 @@ do
     local oldGetGoal = UIWController.GetGoal
     function UIWController:GetGoal()
         if self.HealerEnabled then
+            self.RecordedRouteTraversalActive = false
             local mechanicGoal = self:GetPriorityMechanicGoal()
             if mechanicGoal then return oldGetGoal(self) end
             local _, _, _, root = self:GetHealerTarget()
@@ -654,12 +655,14 @@ do
             local distance = (root.Position - self.Character.Root.Position).Magnitude
             if distance > (tonumber(self.HealerFollowDistance) or 14) then
                 local goal = self:GetHealerRecordedGoal(root.Position) or root.Position
+                self.RecordedRouteTraversalActive = self.HealerUseRecordedPath
                 self:UpdateHealerNavigation(goal)
                 return goal
             end
             return nil
         end
         if self.HealerUseRecordedPath then
+            self.RecordedRouteTraversalActive = false
             local mechanicGoal = self:GetPriorityMechanicGoal()
             if mechanicGoal then return oldGetGoal(self) end
             local enemy = self.CurrentEnemy
@@ -671,6 +674,7 @@ do
             if not readyForCombat then
                 local routeGoal = self:GetRecordedProgressGoal()
                 if routeGoal then
+                    self.RecordedRouteTraversalActive = true
                     self:UpdateHealerNavigation(routeGoal)
                     return routeGoal
                 end
@@ -678,6 +682,7 @@ do
                 self.HealerRouteStatus = string.format("Auto route paused for combat • %.0f studs", enemyDistance)
             end
         end
+        self.RecordedRouteTraversalActive = false
         return oldGetGoal(self)
     end
 

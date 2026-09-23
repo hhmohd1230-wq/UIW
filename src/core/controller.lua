@@ -1721,7 +1721,17 @@ function UIWController:Step()
 
     local mechanicActive = mechanicGoal ~= nil
 
-    self.Dodger.ForceRouteMovement = mechanicActive
+    local verticalTransition = self.Route:HasPendingVerticalTransition()
+    if verticalTransition then
+        -- Continue past the stair crest instead of immediately switching to
+        -- boss orbiting at the final step. At normal speed this carries the
+        -- character roughly 20-30 studs onto the platform/edge.
+        self.VerticalRouteCommitUntil = now + 1.25
+    end
+    local navigationCommit = self.RecordedRouteTraversalActive == true
+        or now < (self.VerticalRouteCommitUntil or 0)
+
+    self.Dodger.ForceRouteMovement = mechanicActive or navigationCommit
     self.Dodger.ForcedRegionPart = nil
 
     if mechanicActive
@@ -1759,7 +1769,7 @@ function UIWController:Step()
 
     local recoveryFallback
 
-    if mechanicActive then
+    if mechanicActive or navigationCommit then
         recoveryFallback = routeDirection
     else
         recoveryFallback = self.Dodger:GetCombatPreferred(routeDirection, self.CurrentEnemy, targetYaw)
@@ -1768,6 +1778,7 @@ function UIWController:Step()
     local cooldownHold = false
     if self.AutoCombat
         and not mechanicActive
+        and not navigationCommit
         and not (self.CurrentEnemy and isBossEnemy(self.CurrentEnemy))
     then
         cooldownHold = self.Combat:ShouldHoldApproach(self.CurrentEnemy, self.Dodger.TravelMode)
@@ -1781,7 +1792,9 @@ function UIWController:Step()
     end
 
     local retreating = false
-    if self.AutoCombat and not mechanicActive and not targetBlocked and not self.InWaterStream then
+    if self.AutoCombat and not mechanicActive and not navigationCommit
+        and not targetBlocked and not self.InWaterStream
+    then
         retreating = self.Combat:ShouldRetreat(self.CurrentEnemy)
     else
         self.Combat.RetreatActive = false

@@ -5082,6 +5082,19 @@ function RoutePlanner:GetSafeDirection(goal, targetYaw, reachDistance)
     return self:GetRawDirection(goal, reachDistance)
 end
 
+function RoutePlanner:HasPendingVerticalTransition()
+    if not self.CharacterService:IsAlive() or #self.Waypoints == 0 then return false end
+    local rootY = self.CharacterService.Root.Position.Y
+    local last = math.min(#self.Waypoints, self.WaypointIndex + 8)
+    for index = self.WaypointIndex, last do
+        local waypoint = self.Waypoints[index]
+        if waypoint and math.abs(waypoint.Position.Y - rootY) >= 3 then
+            return true
+        end
+    end
+    return false
+end
+
 local DodgeSolver = {}
 DodgeSolver.__index = DodgeSolver
 
@@ -20913,7 +20926,17 @@ function UIWController:Step()
 
     local mechanicActive = mechanicGoal ~= nil
 
-    self.Dodger.ForceRouteMovement = mechanicActive
+    local verticalTransition = self.Route:HasPendingVerticalTransition()
+    if verticalTransition then
+        -- Continue past the stair crest instead of immediately switching to
+        -- boss orbiting at the final step. At normal speed this carries the
+        -- character roughly 20-30 studs onto the platform/edge.
+        self.VerticalRouteCommitUntil = now + 1.25
+    end
+    local navigationCommit = self.RecordedRouteTraversalActive == true
+        or now < (self.VerticalRouteCommitUntil or 0)
+
+    self.Dodger.ForceRouteMovement = mechanicActive or navigationCommit
     self.Dodger.ForcedRegionPart = nil
 
     if mechanicActive
@@ -20951,7 +20974,7 @@ function UIWController:Step()
 
     local recoveryFallback
 
-    if mechanicActive then
+    if mechanicActive or navigationCommit then
         recoveryFallback = routeDirection
     else
         recoveryFallback = self.Dodger:GetCombatPreferred(routeDirection, self.CurrentEnemy, targetYaw)
@@ -20960,6 +20983,7 @@ function UIWController:Step()
     local cooldownHold = false
     if self.AutoCombat
         and not mechanicActive
+        and not navigationCommit
         and not (self.CurrentEnemy and isBossEnemy(self.CurrentEnemy))
     then
         cooldownHold = self.Combat:ShouldHoldApproach(self.CurrentEnemy, self.Dodger.TravelMode)
@@ -20973,7 +20997,9 @@ function UIWController:Step()
     end
 
     local retreating = false
-    if self.AutoCombat and not mechanicActive and not targetBlocked and not self.InWaterStream then
+    if self.AutoCombat and not mechanicActive and not navigationCommit
+        and not targetBlocked and not self.InWaterStream
+    then
         retreating = self.Combat:ShouldRetreat(self.CurrentEnemy)
     else
         self.Combat.RetreatActive = false
@@ -32627,7 +32653,7 @@ do
     local ROUTE_SAMPLE_DISTANCE = 4
     local ROUTE_REACH_DISTANCE = 5
     local ROUTE_RESYNC_DISTANCE = 32
-    local ROUTE_COMBAT_PAUSE_DISTANCE = 100
+    local ROUTE_COMBAT_PAUSE_DISTANCE = 64
 
     local function healerDungeonFinished()
         local dungeon = Workspace:FindFirstChild("dungeon")
@@ -33268,6 +33294,7 @@ do
     local oldGetGoal = UIWController.GetGoal
     function UIWController:GetGoal()
         if self.HealerEnabled then
+            self.RecordedRouteTraversalActive = false
             local mechanicGoal = self:GetPriorityMechanicGoal()
             if mechanicGoal then return oldGetGoal(self) end
             local _, _, _, root = self:GetHealerTarget()
@@ -33275,12 +33302,14 @@ do
             local distance = (root.Position - self.Character.Root.Position).Magnitude
             if distance > (tonumber(self.HealerFollowDistance) or 14) then
                 local goal = self:GetHealerRecordedGoal(root.Position) or root.Position
+                self.RecordedRouteTraversalActive = self.HealerUseRecordedPath
                 self:UpdateHealerNavigation(goal)
                 return goal
             end
             return nil
         end
         if self.HealerUseRecordedPath then
+            self.RecordedRouteTraversalActive = false
             local mechanicGoal = self:GetPriorityMechanicGoal()
             if mechanicGoal then return oldGetGoal(self) end
             local enemy = self.CurrentEnemy
@@ -33292,6 +33321,7 @@ do
             if not readyForCombat then
                 local routeGoal = self:GetRecordedProgressGoal()
                 if routeGoal then
+                    self.RecordedRouteTraversalActive = true
                     self:UpdateHealerNavigation(routeGoal)
                     return routeGoal
                 end
@@ -33299,6 +33329,7 @@ do
                 self.HealerRouteStatus = string.format("Auto route paused for combat • %.0f studs", enemyDistance)
             end
         end
+        self.RecordedRouteTraversalActive = false
         return oldGetGoal(self)
     end
 
@@ -33382,7 +33413,7 @@ end
 
 
 local Controller = UIWController.new()
-Controller.Version = tostring(Controller.Version) .. "+streamtarget+carry12+route4+healer7"
+Controller.Version = tostring(Controller.Version) .. "+streamtarget+carry12+route5+healer7"
 
 getgenv().UIW = Controller
 getgenv().UNDERWORLD_AI = Controller
