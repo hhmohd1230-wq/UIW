@@ -1,6 +1,6 @@
 
 local Controller = UIWController.new()
-Controller.Version = tostring(Controller.Version) .. "+streamtarget+carry12+route5+healer9"
+Controller.Version = tostring(Controller.Version) .. "+streamtarget+carry12+route5+healer10"
 
 getgenv().UIW = Controller
 getgenv().UNDERWORLD_AI = Controller

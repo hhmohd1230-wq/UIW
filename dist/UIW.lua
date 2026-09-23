@@ -33213,8 +33213,15 @@ do
         return ok
     end
 
-    function UIWController:HealerMobilityCast(distance)
-        if (tonumber(distance) or 0) < 45 then return false end
+    function UIWController:HealerMobilityCast(distance, targetHumanoid)
+        distance = tonumber(distance) or 0
+        local followDistance = tonumber(self.HealerFollowDistance) or 14
+        local hostIsBoosted = targetHumanoid
+            and (tonumber(targetHumanoid.WalkSpeed) or 0) > 20
+        local longCatchup = distance >= 45
+        if not longCatchup and not (hostIsBoosted and distance > followDistance) then
+            return false
+        end
         local now = os.clock()
         if now - (self.HealerLastCastAt or 0) < 1.25
             or now < (self.HealerHealCoveredUntil or 0)
@@ -33227,7 +33234,14 @@ do
             if container then
                 for _, tool in ipairs(container:GetChildren()) do
                     local name = tool:IsA("Tool") and normalized(tool.Name)
-                    local score = name and MOBILITY_HEALS[name]
+                    local score
+                    -- Mirror a host speed spell with Revitalize. Life Dash is
+                    -- still preferred for ordinary long-distance catch-up.
+                    if hostIsBoosted and name == "revitalize" then
+                        score = 1000
+                    elseif longCatchup then
+                        score = name and MOBILITY_HEALS[name]
+                    end
                     local cooldown = tool:FindFirstChild("cooldown")
                     local event = tool:FindFirstChild("localEvent")
                     if score and event and (not cooldown or (tonumber(cooldown.Value) or 0) <= 0) then
@@ -33247,8 +33261,9 @@ do
             local coverage = HEAL_COVERAGE[normalized(chosen.Tool.Name)] or 2
             self.HealerHealCoveredUntil = now + coverage
             self.HealerMobilityBuffUntil = now + coverage
-            self.HealerStatus = string.format("Fast follow with %s • host %.0f studs away",
-                chosen.Tool.Name, distance)
+            local reason = hostIsBoosted and "matching host speed" or "long-distance catch-up"
+            self.HealerStatus = string.format("Fast follow with %s • %s • host %.0f studs away",
+                chosen.Tool.Name, reason, distance)
         end
         return ok
     end
@@ -33319,7 +33334,9 @@ do
         local healerHumanoid = self.Character and self.Character.Humanoid
         local healerHealth = healerHumanoid and healerHumanoid.MaxHealth > 0
             and healerHumanoid.Health / healerHumanoid.MaxHealth * 100 or 0
-        if not self:HealerCast(humanoid, distance) and not self:HealerMobilityCast(distance) then
+        if not self:HealerCast(humanoid, distance)
+            and not self:HealerMobilityCast(distance, humanoid)
+        then
             self.HealerStatus = string.format("Following %s | host %.0f%% • healer %.0f%% | %.0f studs",
                 requested or target.Name, health, healerHealth, distance)
         end
@@ -33462,7 +33479,7 @@ do
 end
 
 local Controller = UIWController.new()
-Controller.Version = tostring(Controller.Version) .. "+streamtarget+carry12+route5+healer9"
+Controller.Version = tostring(Controller.Version) .. "+streamtarget+carry12+route5+healer10"
 
 getgenv().UIW = Controller
 getgenv().UNDERWORLD_AI = Controller
