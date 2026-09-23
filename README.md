@@ -61,8 +61,10 @@ on to equip the two best owned healing spells.
 Map-wide healing can cast immediately; local heals wait until the healer has
 chased within that spell's effective range.
 The healer pathfinder treats vertical distance as real distance, jumps early on
-short climbs, predicts the moving host, runs at least four WalkSpeed faster than
-the host (up to 40), and forces a fresh route when movement stalls. A healer using the
+short climbs, predicts the moving host and forces a fresh route when movement
+stalls. It never raises WalkSpeed for fast follow. When the host is at least 45
+studs away, it uses an available Life Dash or Revitalize movement buff and
+spaces those casts with the same shared healing timer. A healer using the
 recorded route can traverse it in either direction to reach its selected host.
 The target, follow distance and healer choices are saved per Roblox account and
 continue after dungeon teleports.

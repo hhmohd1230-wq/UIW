@@ -56,6 +56,11 @@ do
         ["redemption"] = 2.0,
     }
 
+    local MOBILITY_HEALS = {
+        ["life dash"] = 100,
+        ["revitalize"] = 90,
+    }
+
     local function normalized(value)
         return string.lower(string.match(tostring(value or ""), "^%s*(.-)%s*$"))
     end
@@ -602,6 +607,46 @@ do
         return ok
     end
 
+    function UIWController:HealerMobilityCast(distance)
+        if (tonumber(distance) or 0) < 45 then return false end
+        local now = os.clock()
+        if now - (self.HealerLastCastAt or 0) < 1.25
+            or now < (self.HealerHealCoveredUntil or 0)
+        then
+            return false
+        end
+
+        local ready = {}
+        for _, container in ipairs({ LocalPlayer.Backpack, LocalPlayer.Character }) do
+            if container then
+                for _, tool in ipairs(container:GetChildren()) do
+                    local name = tool:IsA("Tool") and normalized(tool.Name)
+                    local score = name and MOBILITY_HEALS[name]
+                    local cooldown = tool:FindFirstChild("cooldown")
+                    local event = tool:FindFirstChild("localEvent")
+                    if score and event and (not cooldown or (tonumber(cooldown.Value) or 0) <= 0) then
+                        table.insert(ready, { Tool = tool, Event = event, Score = score })
+                    end
+                end
+            end
+        end
+        table.sort(ready, function(a, b) return a.Score > b.Score end)
+        local chosen = ready[1]
+        if not chosen then return false end
+
+        self.HealerLastCastAt = now
+        local ok = pcall(function() chosen.Event:Fire() end)
+        if ok then
+            self.HealerLastSpell = chosen.Tool.Name
+            local coverage = HEAL_COVERAGE[normalized(chosen.Tool.Name)] or 2
+            self.HealerHealCoveredUntil = now + coverage
+            self.HealerMobilityBuffUntil = now + coverage
+            self.HealerStatus = string.format("Fast follow with %s • host %.0f studs away",
+                chosen.Tool.Name, distance)
+        end
+        return ok
+    end
+
     function UIWController:HealerNavigationRecovery(targetRoot, distance)
         if not targetRoot or not self.Character:IsAlive()
             or distance <= (tonumber(self.HealerFollowDistance) or 14)
@@ -666,14 +711,9 @@ do
         self:HealerNavigationRecovery(root, distance)
         local health = humanoid.Health / math.max(humanoid.MaxHealth, 1) * 100
         local healerHumanoid = self.Character and self.Character.Humanoid
-        if healerHumanoid then
-            local hostSpeed = tonumber(humanoid.WalkSpeed) or CONFIG.WalkSpeed
-            local followSpeed = math.clamp(math.max(CONFIG.WalkSpeed, hostSpeed + 4, 24), 12, 40)
-            if healerHumanoid.WalkSpeed < followSpeed then healerHumanoid.WalkSpeed = followSpeed end
-        end
         local healerHealth = healerHumanoid and healerHumanoid.MaxHealth > 0
             and healerHumanoid.Health / healerHumanoid.MaxHealth * 100 or 0
-        if not self:HealerCast(humanoid, distance) then
+        if not self:HealerCast(humanoid, distance) and not self:HealerMobilityCast(distance) then
             self.HealerStatus = string.format("Following %s | host %.0f%% • healer %.0f%% | %.0f studs",
                 requested or target.Name, health, healerHealth, distance)
         end
@@ -752,15 +792,24 @@ do
             return
         end
         local master, combat, dodge = self.Enabled, self.AutoCombat, self.AutoDodge
+        local configuredWalkSpeed = CONFIG.WalkSpeed
+        local healerHumanoid = self.Character and self.Character.Humanoid
+        if healerHumanoid and healerHumanoid.WalkSpeed > 20
+            and os.clock() >= (self.HealerMobilityBuffUntil or 0)
+        then
+            healerHumanoid.WalkSpeed = 20
+        end
         self.Enabled = true
         local use3DGoalDistance = self.Route.Use3DGoalDistance
         self.AutoCombat = false
         self.AutoDodge = true
+        CONFIG.WalkSpeed = math.min(tonumber(CONFIG.WalkSpeed) or 16, 20)
         self.Route.Use3DGoalDistance = true
         local ok, err = pcall(oldStep, self)
         self.AutoCombat = combat
         self.AutoDodge = dodge
         self.Enabled = master
+        CONFIG.WalkSpeed = configuredWalkSpeed
         self.Route.Use3DGoalDistance = use3DGoalDistance
         if not ok then error(err) end
         if self.Character:IsAlive() then self:HealerUpdate() end

@@ -54,6 +54,11 @@ do
 
     local connection = RunService.Heartbeat:Connect(function()
         if not CONFIG.ForceWalkSpeed then return end
+        -- Healer movement must stay server-authoritative. Life Dash and
+        -- Revitalize may grant their own speed, but this loop must never
+        -- manufacture or hold that buff for the healer account.
+        local controller = getgenv().UIW
+        if controller and controller.HealerEnabled then return end
         local h = humanoid()
         if not h then return end
         local want = (os.clock() < buffUntil)
