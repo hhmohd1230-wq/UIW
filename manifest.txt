@@ -59,5 +59,6 @@ src/patches/v51_01_unwedge.lua
 src/dungeons/steampunk_sewers/v52_01_boss_entry.lua
 src/carry/system.lua
 src/healer/system.lua
+src/dungeons/enchanted_forest/v44_33_dragon_entry.lua
 src/99_start.lua
 src/99_telemetry.lua
