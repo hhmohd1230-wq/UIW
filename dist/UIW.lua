@@ -18001,12 +18001,11 @@ function HUD.new(controller)
         Font = UIKit.Fonts.Semi, TextSize = 13, Text = "Follow distance", ZIndex = 3 })
     UIKit.Label(distanceCard, { Position = UDim2.fromOffset(14, 29), Size = UDim2.new(1, -110, 0, 35),
         TextSize = 10, TextColor3 = T.SubText, TextWrapped = true,
-        Text = "Fixed at 10 studs so every local healing spell reaches the host", ZIndex = 3 })
+        Text = "Stay close enough for local healing spells while Dodge avoids hazards", ZIndex = 3 })
     self.HealerDistanceBox = UIKit.New("TextBox", {
         AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -14, 0.5, 0),
         Size = UDim2.fromOffset(76, 34), BackgroundColor3 = T.Tile, BorderSizePixel = 0,
         ClearTextOnFocus = false, Font = UIKit.Fonts.Semi, TextSize = 13,
-        TextEditable = false,
         TextColor3 = T.Text, Text = tostring(controller.HealerFollowDistance),
         TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 3, Parent = distanceCard,
     })
@@ -18770,7 +18769,7 @@ function HUD:RefreshHealer()
         self.HealerTargetBox.Text = controller.HealerTargetName or ""
     end
     if self.HealerDistanceBox and not self.HealerDistanceBox:IsFocused() then
-        self.HealerDistanceBox.Text = tostring(controller.HealerFollowDistance or 10)
+        self.HealerDistanceBox.Text = tostring(controller.HealerFollowDistance or 14)
     end
 end
 
