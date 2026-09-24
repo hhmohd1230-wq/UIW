@@ -10,6 +10,7 @@ function HazardTracker.new(characterService, selfTracker)
         SelfTracker = selfTracker,
         Hazards = setmetatable({}, { __mode = "k" }),
         ContainerState = setmetatable({}, { __mode = "k" }),
+        ContainerDiscoveryScanAt = setmetatable({}, { __mode = "k" }),
         CachedActive = {},
         CachedParts = {},
         LastCacheTime = 0,
@@ -577,6 +578,15 @@ function HazardTracker:RegisterAttackContainer(container)
     then
         return
     end
+
+    -- Attack models are often assembled one descendant at a time. Every part
+    -- already receives its own DescendantAdded registration, so repeatedly
+    -- rescanning the whole growing model creates quadratic work during large
+    -- dragon volleys. Keep occasional rescans to catch unusual nested setups.
+    local now = os.clock()
+    local lastScan = self.ContainerDiscoveryScanAt[container] or -math.huge
+    if now - lastScan < 0.075 then return end
+    self.ContainerDiscoveryScanAt[container] = now
 
     for _, descendant in ipairs(container:GetDescendants()) do
         if descendant:IsA("BasePart") and self:IsHazardPart(descendant) then
@@ -1357,4 +1367,3 @@ end
 function HazardTracker:Destroy()
     self.Maid:Clean()
 end
-

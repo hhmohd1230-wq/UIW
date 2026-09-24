@@ -122,6 +122,15 @@ do
         self.LastSample = now
         self.Controller.SmoothFps = math.floor(self.Fps)
 
+        -- Enter the lightest mode before the Enchanted Forest Dragon fills
+        -- the arena. Waiting for the measured FPS drop makes the first volley
+        -- hitch badly and leaves the healer several frames behind hazards.
+        if self.Controller.EnchantedDragonPerf then
+            self.GoodSince = nil
+            self:Apply(2)
+            return
+        end
+
         if self.Fps < CONFIG.SmoothLowFps then
             self.GoodSince = nil
             self:Apply(self.Fps < CONFIG.SmoothLowFps * 0.6 and 2 or math.max(self.Level, 1))

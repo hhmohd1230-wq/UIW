@@ -28,6 +28,16 @@ do
             object.Enabled = false
         elseif class == "Explosion" then
             object.Visible = false
+        elseif object:IsA("BasePart") then
+            local parent = object.Parent
+            local parentName = parent and string.lower(parent.Name or "") or ""
+            -- The Dragon's one-shot beam uses several enormous decorative
+            -- spheres and rings. Its warning and hitBox live in a different
+            -- container, so hiding these render-only pieces keeps dodge data.
+            if parentName == "thirdbossoneshotbeam" then
+                object.LocalTransparencyModifier = 1
+                object.CastShadow = false
+            end
         end
     end
 
@@ -62,7 +72,7 @@ do
             return
         end
         self.Done[child] = true
-        table.insert(self.Queue, child)
+        table.insert(self.Queue, { Root = child, Descendants = nil, Index = 1 })
         if not self.Watched[child] then
             self.Watched[child] = true
             child.DescendantAdded:Connect(function(object)
@@ -139,6 +149,13 @@ do
                 self:QueueRoot(child)
             end
         end))
+        self.Maid:Give(Workspace.DescendantAdded:Connect(function(object)
+            if self.Active and object ~= LocalPlayer.Character
+                and not object:IsDescendantOf(LocalPlayer.Character or Workspace)
+            then
+                pcall(quiet, object)
+            end
+        end))
     end
 
     -- process queued roots a little every frame (no frame spikes)
@@ -148,17 +165,25 @@ do
         end
         local budget = CONFIG.LowEffectsScanBudget
         while budget > 0 and #self.Queue > 0 do
-            local root = table.remove(self.Queue)
-            if root.Parent then
+            local item = self.Queue[#self.Queue]
+            local root = item.Root
+            if not root.Parent then
+                table.remove(self.Queue)
+                continue
+            end
+            if not item.Descendants then
                 pcall(quiet, root)
-                local descendants = root:GetDescendants()
-                budget -= #descendants
-                for _, object in ipairs(descendants) do
-                    local ok = pcall(quiet, object)
-                    if ok then
-                        self.Quieted += 1
-                    end
-                end
+                item.Descendants = root:GetDescendants()
+            end
+            while budget > 0 and item.Index <= #item.Descendants do
+                local object = item.Descendants[item.Index]
+                item.Index += 1
+                budget -= 1
+                local ok = pcall(quiet, object)
+                if ok then self.Quieted += 1 end
+            end
+            if item.Index > #item.Descendants then
+                table.remove(self.Queue)
             end
         end
     end
@@ -176,6 +201,21 @@ do
         end
         local root = controller.Character.Root
         return root ~= nil and (enemy.Root.Position - root.Position).Magnitude <= 260
+    end
+
+    local function enchantedDragonNearby(controller)
+        local root = controller.Character and controller.Character.Root
+        if not root then return false end
+        local function isNearby(enemy)
+            return enemy and enemy.Model and enemy.Root and enemy.Root.Parent
+                and normalizeEnemyName(enemy.Model.Name) == "enchanted forest dragon"
+                and (enemy.Root.Position - root.Position).Magnitude <= 340
+        end
+        if isNearby(controller.CurrentEnemy) then return true end
+        for _, enemy in ipairs(controller.Dungeon:GetAliveEnemies()) do
+            if isNearby(enemy) then return true end
+        end
+        return false
     end
 
     local oldNew = UIWController.new
@@ -206,7 +246,9 @@ do
             self.LowFxCheckAt = now
             local perf = getgenv().UIW_Perf
             local lagging = type(perf) == "table" and perf.Lite == true
-            local want = self.LowEffects and (inBossFight(self) or lagging)
+            local dragon = enchantedDragonNearby(self)
+            self.EnchantedDragonPerf = dragon
+            local want = self.LowEffects and (dragon or inBossFight(self) or lagging)
             if want then
                 self.LowFxHoldUntil = now + 8
                 self.LowFx:Enable()
@@ -238,4 +280,3 @@ do
         return settings
     end
 end
-

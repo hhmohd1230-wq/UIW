@@ -1473,6 +1473,7 @@ function HazardTracker.new(characterService, selfTracker)
         SelfTracker = selfTracker,
         Hazards = setmetatable({}, { __mode = "k" }),
         ContainerState = setmetatable({}, { __mode = "k" }),
+        ContainerDiscoveryScanAt = setmetatable({}, { __mode = "k" }),
         CachedActive = {},
         CachedParts = {},
         LastCacheTime = 0,
@@ -2040,6 +2041,15 @@ function HazardTracker:RegisterAttackContainer(container)
     then
         return
     end
+
+    -- Attack models are often assembled one descendant at a time. Every part
+    -- already receives its own DescendantAdded registration, so repeatedly
+    -- rescanning the whole growing model creates quadratic work during large
+    -- dragon volleys. Keep occasional rescans to catch unusual nested setups.
+    local now = os.clock()
+    local lastScan = self.ContainerDiscoveryScanAt[container] or -math.huge
+    if now - lastScan < 0.075 then return end
+    self.ContainerDiscoveryScanAt[container] = now
 
     for _, descendant in ipairs(container:GetDescendants()) do
         if descendant:IsA("BasePart") and self:IsHazardPart(descendant) then
@@ -2820,7 +2830,6 @@ end
 function HazardTracker:Destroy()
     self.Maid:Clean()
 end
-
 local HitboxESP = {}
 HitboxESP.__index = HitboxESP
 
@@ -25782,7 +25791,9 @@ end
 -- v44.14: always-on attack census (read with getgenv().UIW_EF). For every new
 -- attack model: name, nearest enemy, size, warning timing and lifetime.
 do
-    CONFIG.AttackCensus = true
+    -- The attack catalogue is complete. Leaving this diagnostic enabled makes
+    -- every dragon volley start deferred inspection and sampling tasks.
+    CONFIG.AttackCensus = false
     CONFIG.AttackCensusExamples = 3
 
     local function topModel(inst)
@@ -25861,6 +25872,7 @@ do
         local self = oldNew()
         self.Version = "44.14"
         if not CONFIG.AttackCensus then
+            getgenv().UIW_EF = nil
             return self
         end
         local log = { Started = os.clock(), ByName = {}, Count = 0, Dungeon = "?" }
@@ -25982,7 +25994,6 @@ do
         return self
     end
 end
-
 -- v44.15: never dodge our own spells. Live finding: casting E spawns a
 -- top-level "lightningBurstHitbox" (55x21x93) in front of us that lives >10 s;
 -- it was tracked as an enemy attack, so the script ran away from its own hits.
@@ -27271,6 +27282,16 @@ do
             object.Enabled = false
         elseif class == "Explosion" then
             object.Visible = false
+        elseif object:IsA("BasePart") then
+            local parent = object.Parent
+            local parentName = parent and string.lower(parent.Name or "") or ""
+            -- The Dragon's one-shot beam uses several enormous decorative
+            -- spheres and rings. Its warning and hitBox live in a different
+            -- container, so hiding these render-only pieces keeps dodge data.
+            if parentName == "thirdbossoneshotbeam" then
+                object.LocalTransparencyModifier = 1
+                object.CastShadow = false
+            end
         end
     end
 
@@ -27305,7 +27326,7 @@ do
             return
         end
         self.Done[child] = true
-        table.insert(self.Queue, child)
+        table.insert(self.Queue, { Root = child, Descendants = nil, Index = 1 })
         if not self.Watched[child] then
             self.Watched[child] = true
             child.DescendantAdded:Connect(function(object)
@@ -27382,6 +27403,13 @@ do
                 self:QueueRoot(child)
             end
         end))
+        self.Maid:Give(Workspace.DescendantAdded:Connect(function(object)
+            if self.Active and object ~= LocalPlayer.Character
+                and not object:IsDescendantOf(LocalPlayer.Character or Workspace)
+            then
+                pcall(quiet, object)
+            end
+        end))
     end
 
     -- process queued roots a little every frame (no frame spikes)
@@ -27391,17 +27419,25 @@ do
         end
         local budget = CONFIG.LowEffectsScanBudget
         while budget > 0 and #self.Queue > 0 do
-            local root = table.remove(self.Queue)
-            if root.Parent then
+            local item = self.Queue[#self.Queue]
+            local root = item.Root
+            if not root.Parent then
+                table.remove(self.Queue)
+                continue
+            end
+            if not item.Descendants then
                 pcall(quiet, root)
-                local descendants = root:GetDescendants()
-                budget -= #descendants
-                for _, object in ipairs(descendants) do
-                    local ok = pcall(quiet, object)
-                    if ok then
-                        self.Quieted += 1
-                    end
-                end
+                item.Descendants = root:GetDescendants()
+            end
+            while budget > 0 and item.Index <= #item.Descendants do
+                local object = item.Descendants[item.Index]
+                item.Index += 1
+                budget -= 1
+                local ok = pcall(quiet, object)
+                if ok then self.Quieted += 1 end
+            end
+            if item.Index > #item.Descendants then
+                table.remove(self.Queue)
             end
         end
     end
@@ -27419,6 +27455,21 @@ do
         end
         local root = controller.Character.Root
         return root ~= nil and (enemy.Root.Position - root.Position).Magnitude <= 260
+    end
+
+    local function enchantedDragonNearby(controller)
+        local root = controller.Character and controller.Character.Root
+        if not root then return false end
+        local function isNearby(enemy)
+            return enemy and enemy.Model and enemy.Root and enemy.Root.Parent
+                and normalizeEnemyName(enemy.Model.Name) == "enchanted forest dragon"
+                and (enemy.Root.Position - root.Position).Magnitude <= 340
+        end
+        if isNearby(controller.CurrentEnemy) then return true end
+        for _, enemy in ipairs(controller.Dungeon:GetAliveEnemies()) do
+            if isNearby(enemy) then return true end
+        end
+        return false
     end
 
     local oldNew = UIWController.new
@@ -27449,7 +27500,9 @@ do
             self.LowFxCheckAt = now
             local perf = getgenv().UIW_Perf
             local lagging = type(perf) == "table" and perf.Lite == true
-            local want = self.LowEffects and (inBossFight(self) or lagging)
+            local dragon = enchantedDragonNearby(self)
+            self.EnchantedDragonPerf = dragon
+            local want = self.LowEffects and (dragon or inBossFight(self) or lagging)
             if want then
                 self.LowFxHoldUntil = now + 8
                 self.LowFx:Enable()
@@ -27481,7 +27534,6 @@ do
         return settings
     end
 end
-
 -- v44.23: keep facing the target until the spell actually leaves.
 -- Measured live (Frost Cone, 125 ms ping): the spell model appears ~0.70 s
 -- after the key press and its direction is the character's facing at THAT
@@ -27997,6 +28049,15 @@ do
         self.Frames = 0
         self.LastSample = now
         self.Controller.SmoothFps = math.floor(self.Fps)
+
+        -- Enter the lightest mode before the Enchanted Forest Dragon fills
+        -- the arena. Waiting for the measured FPS drop makes the first volley
+        -- hitch badly and leaves the healer several frames behind hazards.
+        if self.Controller.EnchantedDragonPerf then
+            self.GoodSince = nil
+            self:Apply(2)
+            return
+        end
 
         if self.Fps < CONFIG.SmoothLowFps then
             self.GoodSince = nil
@@ -33570,7 +33631,7 @@ do
 end
 
 local Controller = UIWController.new()
-Controller.Version = tostring(Controller.Version) .. "+streamtarget+carry12+route5+healer11"
+Controller.Version = tostring(Controller.Version) .. "+streamtarget+carry12+route5+healer11+dragonlag1"
 
 getgenv().UIW = Controller
 getgenv().UNDERWORLD_AI = Controller

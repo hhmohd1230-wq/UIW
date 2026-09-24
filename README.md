@@ -15,6 +15,12 @@ after a teleport when enabled.
 Map scenery clearing runs only in Northern Lands. Other dungeons keep their
 original map parts and collisions, including during boss fights.
 
+The Enchanted Forest Dragon automatically enables the strongest adaptive
+performance mode before its first attack burst. Dragon particles and the large
+one-shot beam decoration are suppressed, effect cleanup is spread across
+frames, and hazard discovery avoids rescanning the same growing attack model.
+Precast and hitbox tracking remain active for Smart Dodge.
+
 The **Carry** tab coordinates a host and any listed alt usernames. Enable it on
 each account, enter the same host and alt list, and leave **Fixed Dungeon** off
 for automatic progression. The host waits until every listed alt has loaded in

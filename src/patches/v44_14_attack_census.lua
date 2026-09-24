@@ -1,7 +1,9 @@
 -- v44.14: always-on attack census (read with getgenv().UIW_EF). For every new
 -- attack model: name, nearest enemy, size, warning timing and lifetime.
 do
-    CONFIG.AttackCensus = true
+    -- The attack catalogue is complete. Leaving this diagnostic enabled makes
+    -- every dragon volley start deferred inspection and sampling tasks.
+    CONFIG.AttackCensus = false
     CONFIG.AttackCensusExamples = 3
 
     local function topModel(inst)
@@ -80,6 +82,7 @@ do
         local self = oldNew()
         self.Version = "44.14"
         if not CONFIG.AttackCensus then
+            getgenv().UIW_EF = nil
             return self
         end
         local log = { Started = os.clock(), ByName = {}, Count = 0, Dungeon = "?" }
@@ -201,4 +204,3 @@ do
         return self
     end
 end
-
