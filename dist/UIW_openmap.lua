@@ -1470,6 +1470,14 @@ end
 local HazardTracker = {}
 HazardTracker.__index = HazardTracker
 
+local DRAGON_ATTACK_CONTAINERS = {
+    thirdbossxshot = true,
+    thirdbosscrossshot = true,
+    thirdbossflamebreathe = true,
+    thirdbossoneshot = true,
+    thirdbossoneshotbeam = true,
+}
+
 function HazardTracker.new(characterService, selfTracker)
     local overlapParams = OverlapParams.new()
     overlapParams.FilterType = Enum.RaycastFilterType.Include
@@ -1531,6 +1539,9 @@ end
 
 function HazardTracker:IsWarningVisible(part)
     if not part or not part.Parent then return false end
+    if part:GetAttribute("UIWHiddenDragonWarning") == true then
+        return part.Transparency < 0.98
+    end
     if part.Transparency < 0.98 and part.LocalTransparencyModifier < 0.98 then return true end
     for _, visual in ipairs(part:GetDescendants()) do
         if (visual:IsA("Decal") or visual:IsA("Texture")) and visual.Transparency < 0.98 then
@@ -1591,8 +1602,10 @@ end
 function HazardTracker:IsPrecastTrajectoryClear(position, direction, yaw, distance)
     self:RefreshCache(false)
     direction = unit(flatten(direction))
+    local controller = getgenv().UIW
+    local sampleLength = controller and controller.EnchantedDragonPerf and 4.5 or 2
     for _, data in ipairs(self.CachedWarnings or {}) do
-        local count = math.max(1, math.ceil(distance / 2))
+        local count = math.max(1, math.ceil(distance / sampleLength))
         for i = 0, count do
             if self:IsBodyInWarning(position + direction * (distance * i / count), yaw, data) then
                 return false
@@ -1628,6 +1641,9 @@ function HazardTracker:ScanContainerVisualState(container)
     if not container or not container.Parent then return false end
     local function visible(object)
         if object:IsA("BasePart") then
+            if object:GetAttribute("UIWHiddenDragonWarning") == true then
+                return object.Transparency < 0.98
+            end
             return object.Transparency < 0.98 and object.LocalTransparencyModifier < 0.98
         elseif object:IsA("Decal") or object:IsA("Texture") then
             return object.Transparency < 0.98
@@ -1763,11 +1779,22 @@ function HazardTracker:IsHazardPart(part)
         return false
     end
 
+    local lower = string.lower(part.Name)
+    local broadContainer = getBroadHazardContainer(part)
+    if broadContainer
+        and DRAGON_ATTACK_CONTAINERS[string.lower(broadContainer.Name or "")]
+    then
+        -- Dragon attack models contain many decorative queryable parts. The
+        -- actual warning and damage volumes are consistently named precast
+        -- and hitBox; tracking the rest inflated one burst to 92 hazards.
+        return lower == "precast" or lower == "hitbox"
+            or string.find(lower, "precast", 1, true) ~= nil
+            or string.find(lower, "hitbox", 1, true) ~= nil
+    end
+
     if self:IsPrecastPart(part) then return true end
 
     if self:IsLaneBall(part) then return true end
-
-    local lower = string.lower(part.Name)
 
     if lower == "hitbox"
         or lower == "hitboxpart"
@@ -1777,8 +1804,6 @@ function HazardTracker:IsHazardPart(part)
     then
         return true
     end
-
-    local broadContainer = getBroadHazardContainer(part)
 
     if broadContainer and (part.CanQuery or part.CanTouch) then
         return true
@@ -2207,31 +2232,35 @@ function HazardTracker:Start()
 
     self.Maid:Give(Workspace.DescendantAdded:Connect(function(instance)
         if instance:IsA("BasePart") then
-            for _, delayTime in ipairs({0.03, 0.12}) do
-                task.delay(delayTime, function()
-                    if instance.Parent then self:Register(instance) end
-                end)
+            if isNonHazardMechanicInstance(instance)
+                or isLocalPlayerOwnedInstance(instance)
+                or isDetachedLocalPlayerEffect(instance)
+            then
+                return
             end
-            task.defer(function()
-                if not instance.Parent
-                    or isNonHazardMechanicInstance(instance)
-                    or isLocalPlayerOwnedInstance(instance)
-                    or isDetachedLocalPlayerEffect(instance)
-                then
-                    return
-                end
 
+            local broad = getBroadHazardContainer(instance)
+            local special = getSpecialHazardContainer(instance)
+            local candidate = broad ~= nil or special ~= nil or self:IsHazardPart(instance)
+
+            -- Streamed room geometry accounts for thousands of additions in
+            -- one frame. It needs no deferred work when it is not an attack.
+            if not candidate then return end
+
+            self:Register(instance)
+            if broad then self:RegisterAttackContainer(broad) end
+            if special then self:RegisterSpecialContainer(special) end
+
+            -- One later check catches attacks that resize or reveal a named
+            -- part after parenting it. Older builds queued three tasks for
+            -- every BasePart in the streamed dungeon map.
+            task.delay(0.10, function()
+                if not instance.Parent then return end
                 self:Register(instance)
-
-                local broad = getBroadHazardContainer(instance)
-                if broad then
-                    self:RegisterAttackContainer(broad)
-                end
-
-                local special = getSpecialHazardContainer(instance)
-                if special then
-                    self:RegisterSpecialContainer(special)
-                end
+                local laterBroad = getBroadHazardContainer(instance)
+                if laterBroad then self:RegisterAttackContainer(laterBroad) end
+                local laterSpecial = getSpecialHazardContainer(instance)
+                if laterSpecial then self:RegisterSpecialContainer(laterSpecial) end
             end)
         elseif instance:IsA("Model") and instance.Parent == Workspace
             and not (isBossAttackContainerName(instance.Name) or hasHazardNameHint(instance.Name))
@@ -2656,6 +2685,34 @@ function HazardTracker:RefreshCache(force)
         end
     end
 
+    -- Cross/X Shot keeps an overlapping precast and hitBox for each beam.
+    -- Their X/Z footprints are identical, so one representative per attack
+    -- container preserves the dodge shape while halving every solver query.
+    local dragonChosen = {}
+    local filteredActive = {}
+    for _, data in ipairs(self.CachedActive) do
+        local container = data.Container
+        local dragon = container
+            and DRAGON_ATTACK_CONTAINERS[string.lower(container.Name or "")]
+        if dragon then
+            local previous = dragonChosen[container]
+            if not previous or (data.IsPrecast and not previous.IsPrecast) then
+                dragonChosen[container] = data
+            end
+        else
+            table.insert(filteredActive, data)
+        end
+    end
+    for _, data in pairs(dragonChosen) do table.insert(filteredActive, data) end
+    if #filteredActive ~= #self.CachedActive then
+        table.clear(self.CachedActive)
+        table.clear(self.CachedParts)
+        for _, data in ipairs(filteredActive) do
+            table.insert(self.CachedActive, data)
+            table.insert(self.CachedParts, data.Part)
+        end
+    end
+
     self.OverlapParams.FilterDescendantsInstances = self.CachedParts
 end
 
@@ -2714,7 +2771,8 @@ function HazardTracker:IsTrajectoryClear(startPosition, direction, yaw, distance
 
     distance = math.max(distance or 0, 0)
 
-    local step = 2.25
+    local controller = getgenv().UIW
+    local step = controller and controller.EnchantedDragonPerf and 4.5 or 2.25
     local sample = 0
 
     while sample < distance do
@@ -22331,6 +22389,9 @@ do
     function DodgeSolver:FindEmergencyOrientation(preferred, targetYaw)
         local bestDirection, bestYaw = nil, nil
         local bestScore = -math.huge
+        local controller = getgenv().UIW
+        local yawOffsets = controller and controller.EnchantedDragonPerf
+            and { 0 } or { 90, -90, 0 }
 
         for _, angle in ipairs(CONFIG.DodgeAngles) do
             local direction = unit(rotateXZ(preferred, angle))
@@ -22338,7 +22399,7 @@ do
 
             -- 0 = facing the movement (thin along travel),
             -- ±90 = side-on (thin across travel, squeezes between hitboxes).
-            for _, yawOffset in ipairs({ 90, -90, 0 }) do
+            for _, yawOffset in ipairs(yawOffsets) do
                 local yaw = movementYaw + math.rad(yawOffset)
                 local score = self:ScoreCandidate(direction, preferred, yaw)
 
@@ -23270,7 +23331,6 @@ do
 
     print("[UIW] v42 combat + dodge section applied")
 end
-
 
 -- v44: bounded hazard prediction, attack opportunities, and wide navigation.
 do
@@ -27295,7 +27355,8 @@ end
 --   * particles / trails / beams become fully transparent and stop emitting
 --     (their Enabled flag is left alone - hazard detection reads it)
 --   * lights, explosions and screen post effects are switched off
--- Warning (precast) and hitBox parts are never touched.
+-- Dragon warning parts can be hidden locally, while HazardTracker continues
+-- reading their original transparency for Smart Dodge.
 do
     CONFIG.LowEffectsDefault = true
     CONFIG.LowEffectsScanBudget = 400     -- descendants handled per frame
@@ -27306,14 +27367,35 @@ do
         map = true, dungeon = true, Terrain = true, Camera = true,
         UIW_HitboxESP = true, UIW_PathESP = true,
     }
+    local DRAGON_EFFECTS = {
+        thirdbossxshot = true,
+        thirdbosscrossshot = true,
+        thirdbossflamebreathe = true,
+        thirdbossoneshot = true,
+        thirdbossoneshotbeam = true,
+    }
+
+    local function dragonEffectContainer(object)
+        local current = object
+        while current and current ~= Workspace do
+            if DRAGON_EFFECTS[string.lower(current.Name or "")] then return current end
+            current = current.Parent
+        end
+        return nil
+    end
 
     local function quiet(object)
         local class = object.ClassName
         if class == "ParticleEmitter" then
             object.Rate = 0
             object.Transparency = INVISIBLE
+            pcall(function() object:Clear() end)
         elseif class == "Trail" or class == "Beam" then
             object.Transparency = INVISIBLE
+        elseif class == "Decal" or class == "Texture" then
+            object.Transparency = 1
+        elseif class == "SurfaceGui" then
+            object.Enabled = false
         elseif class == "PointLight" or class == "SpotLight" or class == "SurfaceLight"
             or class == "Fire" or class == "Smoke" or class == "Sparkles"
         then
@@ -27321,12 +27403,13 @@ do
         elseif class == "Explosion" then
             object.Visible = false
         elseif object:IsA("BasePart") then
-            local parent = object.Parent
-            local parentName = parent and string.lower(parent.Name or "") or ""
-            -- The Dragon's one-shot beam uses several enormous decorative
-            -- spheres and rings. Its warning and hitBox live in a different
-            -- container, so hiding these render-only pieces keeps dodge data.
-            if parentName == "thirdbossoneshotbeam" then
+            -- Dragon attacks use enormous visible parts. Hide them locally,
+            -- but mark warnings so HazardTracker still treats their original
+            -- transparency as active for Smart Dodge.
+            if dragonEffectContainer(object) then
+                if string.find(string.lower(object.Name or ""), "precast", 1, true) then
+                    object:SetAttribute("UIWHiddenDragonWarning", true)
+                end
                 object.LocalTransparencyModifier = 1
                 object.CastShadow = false
             end
@@ -27442,11 +27525,18 @@ do
             end
         end))
         self.Maid:Give(Workspace.DescendantAdded:Connect(function(object)
-            if self.Active and object ~= LocalPlayer.Character
-                and not object:IsDescendantOf(LocalPlayer.Character or Workspace)
-            then
-                pcall(quiet, object)
-            end
+            if not self.Active then return end
+            local class = object.ClassName
+            local visual = class == "ParticleEmitter" or class == "Trail" or class == "Beam"
+                or class == "PointLight" or class == "SpotLight" or class == "SurfaceLight"
+                or class == "Fire" or class == "Smoke" or class == "Sparkles"
+                or class == "Explosion"
+            local beamPart = object:IsA("BasePart") and object.Parent
+                and string.lower(object.Parent.Name or "") == "thirdbossoneshotbeam"
+            if not visual and not beamPart then return end
+            local character = LocalPlayer.Character
+            if character and (object == character or object:IsDescendantOf(character)) then return end
+            pcall(quiet, object)
         end))
     end
 
@@ -28050,12 +28140,33 @@ do
                 saved.DodgeSolveInterval = CONFIG.DodgeSolveInterval
                 saved.HazardCacheInterval = CONFIG.HazardCacheInterval
             end
-            CONFIG.DodgeSolveInterval = math.max(CONFIG.DodgeSolveInterval, 1 / 15)
-            CONFIG.HazardCacheInterval = math.max(CONFIG.HazardCacheInterval, 1 / 15)
+            CONFIG.DodgeSolveInterval = math.max(CONFIG.DodgeSolveInterval, 1 / 6)
+            CONFIG.HazardCacheInterval = math.max(CONFIG.HazardCacheInterval, 1 / 6)
         elseif saved.DodgeSolveInterval ~= nil then
             CONFIG.DodgeSolveInterval = saved.DodgeSolveInterval
             CONFIG.HazardCacheInterval = saved.HazardCacheInterval
             saved.DodgeSolveInterval, saved.HazardCacheInterval = nil, nil
+        end
+    end
+
+    function Smooth:SetDragonCompute(active)
+        local saved = self.Saved
+        if active then
+            if saved.DragonDodgeAngles == nil then
+                saved.DragonDodgeAngles = CONFIG.DodgeAngles
+                saved.DragonAuraScanRadii = CONFIG.AuraScanRadii
+                saved.DragonAuraDotsPerRing = CONFIG.AuraDotsPerRing
+            end
+            CONFIG.DodgeAngles = { 0, 45, -45, 90, -90, 180 }
+            CONFIG.AuraScanRadii = { 8, 18, 28, 34 }
+            CONFIG.AuraDotsPerRing = 8
+        elseif saved.DragonDodgeAngles ~= nil then
+            CONFIG.DodgeAngles = saved.DragonDodgeAngles
+            CONFIG.AuraScanRadii = saved.DragonAuraScanRadii
+            CONFIG.AuraDotsPerRing = saved.DragonAuraDotsPerRing
+            saved.DragonDodgeAngles = nil
+            saved.DragonAuraScanRadii = nil
+            saved.DragonAuraDotsPerRing = nil
         end
     end
 
@@ -28096,9 +28207,11 @@ do
         -- hitch badly and leaves the healer several frames behind hazards.
         if self.Controller.EnchantedDragonPerf then
             self.GoodSince = nil
+            self:SetDragonCompute(true)
             self:Apply(2)
             return
         end
+        self:SetDragonCompute(false)
 
         if self.Fps < CONFIG.SmoothLowFps then
             self.GoodSince = nil
@@ -28139,6 +28252,7 @@ do
             if self.SmoothConn then
                 self.SmoothConn:Disconnect()
             end
+            self.Smooth:SetDragonCompute(false)
             self.Smooth:Apply(0)
         end)
         return oldDestroy(self)
@@ -33690,7 +33804,7 @@ end
 
 
 local Controller = UIWController.new()
-Controller.Version = tostring(Controller.Version) .. "+streamtarget+carry12+route5+healer11+dragonlag1"
+Controller.Version = tostring(Controller.Version) .. "+streamtarget+carry12+route5+healer11+dragonlag6"
 
 getgenv().UIW = Controller
 getgenv().UNDERWORLD_AI = Controller

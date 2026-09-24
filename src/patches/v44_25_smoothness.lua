@@ -81,12 +81,33 @@ do
                 saved.DodgeSolveInterval = CONFIG.DodgeSolveInterval
                 saved.HazardCacheInterval = CONFIG.HazardCacheInterval
             end
-            CONFIG.DodgeSolveInterval = math.max(CONFIG.DodgeSolveInterval, 1 / 15)
-            CONFIG.HazardCacheInterval = math.max(CONFIG.HazardCacheInterval, 1 / 15)
+            CONFIG.DodgeSolveInterval = math.max(CONFIG.DodgeSolveInterval, 1 / 6)
+            CONFIG.HazardCacheInterval = math.max(CONFIG.HazardCacheInterval, 1 / 6)
         elseif saved.DodgeSolveInterval ~= nil then
             CONFIG.DodgeSolveInterval = saved.DodgeSolveInterval
             CONFIG.HazardCacheInterval = saved.HazardCacheInterval
             saved.DodgeSolveInterval, saved.HazardCacheInterval = nil, nil
+        end
+    end
+
+    function Smooth:SetDragonCompute(active)
+        local saved = self.Saved
+        if active then
+            if saved.DragonDodgeAngles == nil then
+                saved.DragonDodgeAngles = CONFIG.DodgeAngles
+                saved.DragonAuraScanRadii = CONFIG.AuraScanRadii
+                saved.DragonAuraDotsPerRing = CONFIG.AuraDotsPerRing
+            end
+            CONFIG.DodgeAngles = { 0, 45, -45, 90, -90, 180 }
+            CONFIG.AuraScanRadii = { 8, 18, 28, 34 }
+            CONFIG.AuraDotsPerRing = 8
+        elseif saved.DragonDodgeAngles ~= nil then
+            CONFIG.DodgeAngles = saved.DragonDodgeAngles
+            CONFIG.AuraScanRadii = saved.DragonAuraScanRadii
+            CONFIG.AuraDotsPerRing = saved.DragonAuraDotsPerRing
+            saved.DragonDodgeAngles = nil
+            saved.DragonAuraScanRadii = nil
+            saved.DragonAuraDotsPerRing = nil
         end
     end
 
@@ -127,9 +148,11 @@ do
         -- hitch badly and leaves the healer several frames behind hazards.
         if self.Controller.EnchantedDragonPerf then
             self.GoodSince = nil
+            self:SetDragonCompute(true)
             self:Apply(2)
             return
         end
+        self:SetDragonCompute(false)
 
         if self.Fps < CONFIG.SmoothLowFps then
             self.GoodSince = nil
@@ -170,6 +193,7 @@ do
             if self.SmoothConn then
                 self.SmoothConn:Disconnect()
             end
+            self.Smooth:SetDragonCompute(false)
             self.Smooth:Apply(0)
         end)
         return oldDestroy(self)

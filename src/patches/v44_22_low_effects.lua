@@ -3,7 +3,8 @@
 --   * particles / trails / beams become fully transparent and stop emitting
 --     (their Enabled flag is left alone - hazard detection reads it)
 --   * lights, explosions and screen post effects are switched off
--- Warning (precast) and hitBox parts are never touched.
+-- Dragon warning parts can be hidden locally, while HazardTracker continues
+-- reading their original transparency for Smart Dodge.
 do
     CONFIG.LowEffectsDefault = true
     CONFIG.LowEffectsScanBudget = 400     -- descendants handled per frame
@@ -14,14 +15,35 @@ do
         map = true, dungeon = true, Terrain = true, Camera = true,
         UIW_HitboxESP = true, UIW_PathESP = true,
     }
+    local DRAGON_EFFECTS = {
+        thirdbossxshot = true,
+        thirdbosscrossshot = true,
+        thirdbossflamebreathe = true,
+        thirdbossoneshot = true,
+        thirdbossoneshotbeam = true,
+    }
+
+    local function dragonEffectContainer(object)
+        local current = object
+        while current and current ~= Workspace do
+            if DRAGON_EFFECTS[string.lower(current.Name or "")] then return current end
+            current = current.Parent
+        end
+        return nil
+    end
 
     local function quiet(object)
         local class = object.ClassName
         if class == "ParticleEmitter" then
             object.Rate = 0
             object.Transparency = INVISIBLE
+            pcall(function() object:Clear() end)
         elseif class == "Trail" or class == "Beam" then
             object.Transparency = INVISIBLE
+        elseif class == "Decal" or class == "Texture" then
+            object.Transparency = 1
+        elseif class == "SurfaceGui" then
+            object.Enabled = false
         elseif class == "PointLight" or class == "SpotLight" or class == "SurfaceLight"
             or class == "Fire" or class == "Smoke" or class == "Sparkles"
         then
@@ -29,12 +51,13 @@ do
         elseif class == "Explosion" then
             object.Visible = false
         elseif object:IsA("BasePart") then
-            local parent = object.Parent
-            local parentName = parent and string.lower(parent.Name or "") or ""
-            -- The Dragon's one-shot beam uses several enormous decorative
-            -- spheres and rings. Its warning and hitBox live in a different
-            -- container, so hiding these render-only pieces keeps dodge data.
-            if parentName == "thirdbossoneshotbeam" then
+            -- Dragon attacks use enormous visible parts. Hide them locally,
+            -- but mark warnings so HazardTracker still treats their original
+            -- transparency as active for Smart Dodge.
+            if dragonEffectContainer(object) then
+                if string.find(string.lower(object.Name or ""), "precast", 1, true) then
+                    object:SetAttribute("UIWHiddenDragonWarning", true)
+                end
                 object.LocalTransparencyModifier = 1
                 object.CastShadow = false
             end
@@ -150,11 +173,18 @@ do
             end
         end))
         self.Maid:Give(Workspace.DescendantAdded:Connect(function(object)
-            if self.Active and object ~= LocalPlayer.Character
-                and not object:IsDescendantOf(LocalPlayer.Character or Workspace)
-            then
-                pcall(quiet, object)
-            end
+            if not self.Active then return end
+            local class = object.ClassName
+            local visual = class == "ParticleEmitter" or class == "Trail" or class == "Beam"
+                or class == "PointLight" or class == "SpotLight" or class == "SurfaceLight"
+                or class == "Fire" or class == "Smoke" or class == "Sparkles"
+                or class == "Explosion"
+            local beamPart = object:IsA("BasePart") and object.Parent
+                and string.lower(object.Parent.Name or "") == "thirdbossoneshotbeam"
+            if not visual and not beamPart then return end
+            local character = LocalPlayer.Character
+            if character and (object == character or object:IsDescendantOf(character)) then return end
+            pcall(quiet, object)
         end))
     end
 

@@ -1,6 +1,14 @@
 local HazardTracker = {}
 HazardTracker.__index = HazardTracker
 
+local DRAGON_ATTACK_CONTAINERS = {
+    thirdbossxshot = true,
+    thirdbosscrossshot = true,
+    thirdbossflamebreathe = true,
+    thirdbossoneshot = true,
+    thirdbossoneshotbeam = true,
+}
+
 function HazardTracker.new(characterService, selfTracker)
     local overlapParams = OverlapParams.new()
     overlapParams.FilterType = Enum.RaycastFilterType.Include
@@ -62,6 +70,9 @@ end
 
 function HazardTracker:IsWarningVisible(part)
     if not part or not part.Parent then return false end
+    if part:GetAttribute("UIWHiddenDragonWarning") == true then
+        return part.Transparency < 0.98
+    end
     if part.Transparency < 0.98 and part.LocalTransparencyModifier < 0.98 then return true end
     for _, visual in ipairs(part:GetDescendants()) do
         if (visual:IsA("Decal") or visual:IsA("Texture")) and visual.Transparency < 0.98 then
@@ -122,8 +133,10 @@ end
 function HazardTracker:IsPrecastTrajectoryClear(position, direction, yaw, distance)
     self:RefreshCache(false)
     direction = unit(flatten(direction))
+    local controller = getgenv().UIW
+    local sampleLength = controller and controller.EnchantedDragonPerf and 4.5 or 2
     for _, data in ipairs(self.CachedWarnings or {}) do
-        local count = math.max(1, math.ceil(distance / 2))
+        local count = math.max(1, math.ceil(distance / sampleLength))
         for i = 0, count do
             if self:IsBodyInWarning(position + direction * (distance * i / count), yaw, data) then
                 return false
@@ -159,6 +172,9 @@ function HazardTracker:ScanContainerVisualState(container)
     if not container or not container.Parent then return false end
     local function visible(object)
         if object:IsA("BasePart") then
+            if object:GetAttribute("UIWHiddenDragonWarning") == true then
+                return object.Transparency < 0.98
+            end
             return object.Transparency < 0.98 and object.LocalTransparencyModifier < 0.98
         elseif object:IsA("Decal") or object:IsA("Texture") then
             return object.Transparency < 0.98
@@ -294,11 +310,22 @@ function HazardTracker:IsHazardPart(part)
         return false
     end
 
+    local lower = string.lower(part.Name)
+    local broadContainer = getBroadHazardContainer(part)
+    if broadContainer
+        and DRAGON_ATTACK_CONTAINERS[string.lower(broadContainer.Name or "")]
+    then
+        -- Dragon attack models contain many decorative queryable parts. The
+        -- actual warning and damage volumes are consistently named precast
+        -- and hitBox; tracking the rest inflated one burst to 92 hazards.
+        return lower == "precast" or lower == "hitbox"
+            or string.find(lower, "precast", 1, true) ~= nil
+            or string.find(lower, "hitbox", 1, true) ~= nil
+    end
+
     if self:IsPrecastPart(part) then return true end
 
     if self:IsLaneBall(part) then return true end
-
-    local lower = string.lower(part.Name)
 
     if lower == "hitbox"
         or lower == "hitboxpart"
@@ -308,8 +335,6 @@ function HazardTracker:IsHazardPart(part)
     then
         return true
     end
-
-    local broadContainer = getBroadHazardContainer(part)
 
     if broadContainer and (part.CanQuery or part.CanTouch) then
         return true
@@ -738,31 +763,35 @@ function HazardTracker:Start()
 
     self.Maid:Give(Workspace.DescendantAdded:Connect(function(instance)
         if instance:IsA("BasePart") then
-            for _, delayTime in ipairs({0.03, 0.12}) do
-                task.delay(delayTime, function()
-                    if instance.Parent then self:Register(instance) end
-                end)
+            if isNonHazardMechanicInstance(instance)
+                or isLocalPlayerOwnedInstance(instance)
+                or isDetachedLocalPlayerEffect(instance)
+            then
+                return
             end
-            task.defer(function()
-                if not instance.Parent
-                    or isNonHazardMechanicInstance(instance)
-                    or isLocalPlayerOwnedInstance(instance)
-                    or isDetachedLocalPlayerEffect(instance)
-                then
-                    return
-                end
 
+            local broad = getBroadHazardContainer(instance)
+            local special = getSpecialHazardContainer(instance)
+            local candidate = broad ~= nil or special ~= nil or self:IsHazardPart(instance)
+
+            -- Streamed room geometry accounts for thousands of additions in
+            -- one frame. It needs no deferred work when it is not an attack.
+            if not candidate then return end
+
+            self:Register(instance)
+            if broad then self:RegisterAttackContainer(broad) end
+            if special then self:RegisterSpecialContainer(special) end
+
+            -- One later check catches attacks that resize or reveal a named
+            -- part after parenting it. Older builds queued three tasks for
+            -- every BasePart in the streamed dungeon map.
+            task.delay(0.10, function()
+                if not instance.Parent then return end
                 self:Register(instance)
-
-                local broad = getBroadHazardContainer(instance)
-                if broad then
-                    self:RegisterAttackContainer(broad)
-                end
-
-                local special = getSpecialHazardContainer(instance)
-                if special then
-                    self:RegisterSpecialContainer(special)
-                end
+                local laterBroad = getBroadHazardContainer(instance)
+                if laterBroad then self:RegisterAttackContainer(laterBroad) end
+                local laterSpecial = getSpecialHazardContainer(instance)
+                if laterSpecial then self:RegisterSpecialContainer(laterSpecial) end
             end)
         elseif instance:IsA("Model") and instance.Parent == Workspace
             and not (isBossAttackContainerName(instance.Name) or hasHazardNameHint(instance.Name))
@@ -1187,6 +1216,34 @@ function HazardTracker:RefreshCache(force)
         end
     end
 
+    -- Cross/X Shot keeps an overlapping precast and hitBox for each beam.
+    -- Their X/Z footprints are identical, so one representative per attack
+    -- container preserves the dodge shape while halving every solver query.
+    local dragonChosen = {}
+    local filteredActive = {}
+    for _, data in ipairs(self.CachedActive) do
+        local container = data.Container
+        local dragon = container
+            and DRAGON_ATTACK_CONTAINERS[string.lower(container.Name or "")]
+        if dragon then
+            local previous = dragonChosen[container]
+            if not previous or (data.IsPrecast and not previous.IsPrecast) then
+                dragonChosen[container] = data
+            end
+        else
+            table.insert(filteredActive, data)
+        end
+    end
+    for _, data in pairs(dragonChosen) do table.insert(filteredActive, data) end
+    if #filteredActive ~= #self.CachedActive then
+        table.clear(self.CachedActive)
+        table.clear(self.CachedParts)
+        for _, data in ipairs(filteredActive) do
+            table.insert(self.CachedActive, data)
+            table.insert(self.CachedParts, data.Part)
+        end
+    end
+
     self.OverlapParams.FilterDescendantsInstances = self.CachedParts
 end
 
@@ -1245,7 +1302,8 @@ function HazardTracker:IsTrajectoryClear(startPosition, direction, yaw, distance
 
     distance = math.max(distance or 0, 0)
 
-    local step = 2.25
+    local controller = getgenv().UIW
+    local step = controller and controller.EnchantedDragonPerf and 4.5 or 2.25
     local sample = 0
 
     while sample < distance do

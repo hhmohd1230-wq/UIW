@@ -19,7 +19,9 @@ The Enchanted Forest Dragon automatically enables the strongest adaptive
 performance mode before its first attack burst. Dragon particles and the large
 one-shot beam decoration are suppressed, effect cleanup is spread across
 frames, and hazard discovery avoids rescanning the same growing attack model.
-Precast and hitbox tracking remain active for Smart Dodge.
+Cross Shot and X Shot keep one equivalent danger volume per attack instead of
+processing overlapping warning and hitbox copies. Smart Dodge uses a smaller
+dragon-specific candidate set so it remains responsive during dense volleys.
 
 The **Carry** tab coordinates a host and any listed alt usernames. Enable it on
 each account, enter the same host and alt list, and leave **Fixed Dungeon** off
