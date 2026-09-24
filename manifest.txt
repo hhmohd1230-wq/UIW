@@ -60,5 +60,6 @@ src/dungeons/steampunk_sewers/v52_01_boss_entry.lua
 src/carry/system.lua
 src/healer/system.lua
 src/dungeons/enchanted_forest/v44_33_dragon_entry.lua
+src/patches/v44_34_forward_damage_dodge.lua
 src/99_start.lua
 src/99_telemetry.lua
