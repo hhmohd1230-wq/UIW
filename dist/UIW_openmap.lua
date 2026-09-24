@@ -1479,6 +1479,7 @@ function HazardTracker.new(characterService, selfTracker)
         SelfTracker = selfTracker,
         Hazards = setmetatable({}, { __mode = "k" }),
         ContainerState = setmetatable({}, { __mode = "k" }),
+        ContainerDiscoveryScanAt = setmetatable({}, { __mode = "k" }),
         CachedActive = {},
         CachedParts = {},
         LastCacheTime = 0,
@@ -2046,6 +2047,15 @@ function HazardTracker:RegisterAttackContainer(container)
     then
         return
     end
+
+    -- Attack models are often assembled one descendant at a time. Every part
+    -- already receives its own DescendantAdded registration, so repeatedly
+    -- rescanning the whole growing model creates quadratic work during large
+    -- dragon volleys. Keep occasional rescans to catch unusual nested setups.
+    local now = os.clock()
+    local lastScan = self.ContainerDiscoveryScanAt[container] or -math.huge
+    if now - lastScan < 0.075 then return end
+    self.ContainerDiscoveryScanAt[container] = now
 
     for _, descendant in ipairs(container:GetDescendants()) do
         if descendant:IsA("BasePart") and self:IsHazardPart(descendant) then
@@ -2826,7 +2836,6 @@ end
 function HazardTracker:Destroy()
     self.Maid:Clean()
 end
-
 
 local HitboxESP = {}
 HitboxESP.__index = HitboxESP
@@ -25812,7 +25821,9 @@ end
 -- v44.14: always-on attack census (read with getgenv().UIW_EF). For every new
 -- attack model: name, nearest enemy, size, warning timing and lifetime.
 do
-    CONFIG.AttackCensus = true
+    -- The attack catalogue is complete. Leaving this diagnostic enabled makes
+    -- every dragon volley start deferred inspection and sampling tasks.
+    CONFIG.AttackCensus = false
     CONFIG.AttackCensusExamples = 3
 
     local function topModel(inst)
@@ -25891,6 +25902,7 @@ do
         local self = oldNew()
         self.Version = "44.14"
         if not CONFIG.AttackCensus then
+            getgenv().UIW_EF = nil
             return self
         end
         local log = { Started = os.clock(), ByName = {}, Count = 0, Dungeon = "?" }
@@ -26012,7 +26024,6 @@ do
         return self
     end
 end
-
 
 -- v44.15: never dodge our own spells. Live finding: casting E spawns a
 -- top-level "lightningBurstHitbox" (55x21x93) in front of us that lives >10 s;
@@ -27309,6 +27320,16 @@ do
             object.Enabled = false
         elseif class == "Explosion" then
             object.Visible = false
+        elseif object:IsA("BasePart") then
+            local parent = object.Parent
+            local parentName = parent and string.lower(parent.Name or "") or ""
+            -- The Dragon's one-shot beam uses several enormous decorative
+            -- spheres and rings. Its warning and hitBox live in a different
+            -- container, so hiding these render-only pieces keeps dodge data.
+            if parentName == "thirdbossoneshotbeam" then
+                object.LocalTransparencyModifier = 1
+                object.CastShadow = false
+            end
         end
     end
 
@@ -27343,7 +27364,7 @@ do
             return
         end
         self.Done[child] = true
-        table.insert(self.Queue, child)
+        table.insert(self.Queue, { Root = child, Descendants = nil, Index = 1 })
         if not self.Watched[child] then
             self.Watched[child] = true
             child.DescendantAdded:Connect(function(object)
@@ -27420,6 +27441,13 @@ do
                 self:QueueRoot(child)
             end
         end))
+        self.Maid:Give(Workspace.DescendantAdded:Connect(function(object)
+            if self.Active and object ~= LocalPlayer.Character
+                and not object:IsDescendantOf(LocalPlayer.Character or Workspace)
+            then
+                pcall(quiet, object)
+            end
+        end))
     end
 
     -- process queued roots a little every frame (no frame spikes)
@@ -27429,17 +27457,25 @@ do
         end
         local budget = CONFIG.LowEffectsScanBudget
         while budget > 0 and #self.Queue > 0 do
-            local root = table.remove(self.Queue)
-            if root.Parent then
+            local item = self.Queue[#self.Queue]
+            local root = item.Root
+            if not root.Parent then
+                table.remove(self.Queue)
+                continue
+            end
+            if not item.Descendants then
                 pcall(quiet, root)
-                local descendants = root:GetDescendants()
-                budget -= #descendants
-                for _, object in ipairs(descendants) do
-                    local ok = pcall(quiet, object)
-                    if ok then
-                        self.Quieted += 1
-                    end
-                end
+                item.Descendants = root:GetDescendants()
+            end
+            while budget > 0 and item.Index <= #item.Descendants do
+                local object = item.Descendants[item.Index]
+                item.Index += 1
+                budget -= 1
+                local ok = pcall(quiet, object)
+                if ok then self.Quieted += 1 end
+            end
+            if item.Index > #item.Descendants then
+                table.remove(self.Queue)
             end
         end
     end
@@ -27457,6 +27493,21 @@ do
         end
         local root = controller.Character.Root
         return root ~= nil and (enemy.Root.Position - root.Position).Magnitude <= 260
+    end
+
+    local function enchantedDragonNearby(controller)
+        local root = controller.Character and controller.Character.Root
+        if not root then return false end
+        local function isNearby(enemy)
+            return enemy and enemy.Model and enemy.Root and enemy.Root.Parent
+                and normalizeEnemyName(enemy.Model.Name) == "enchanted forest dragon"
+                and (enemy.Root.Position - root.Position).Magnitude <= 340
+        end
+        if isNearby(controller.CurrentEnemy) then return true end
+        for _, enemy in ipairs(controller.Dungeon:GetAliveEnemies()) do
+            if isNearby(enemy) then return true end
+        end
+        return false
     end
 
     local oldNew = UIWController.new
@@ -27487,7 +27538,9 @@ do
             self.LowFxCheckAt = now
             local perf = getgenv().UIW_Perf
             local lagging = type(perf) == "table" and perf.Lite == true
-            local want = self.LowEffects and (inBossFight(self) or lagging)
+            local dragon = enchantedDragonNearby(self)
+            self.EnchantedDragonPerf = dragon
+            local want = self.LowEffects and (dragon or inBossFight(self) or lagging)
             if want then
                 self.LowFxHoldUntil = now + 8
                 self.LowFx:Enable()
@@ -27519,7 +27572,6 @@ do
         return settings
     end
 end
-
 
 -- v44.23: keep facing the target until the spell actually leaves.
 -- Measured live (Frost Cone, 125 ms ping): the spell model appears ~0.70 s
@@ -28038,6 +28090,15 @@ do
         self.Frames = 0
         self.LastSample = now
         self.Controller.SmoothFps = math.floor(self.Fps)
+
+        -- Enter the lightest mode before the Enchanted Forest Dragon fills
+        -- the arena. Waiting for the measured FPS drop makes the first volley
+        -- hitch badly and leaves the healer several frames behind hazards.
+        if self.Controller.EnchantedDragonPerf then
+            self.GoodSince = nil
+            self:Apply(2)
+            return
+        end
 
         if self.Fps < CONFIG.SmoothLowFps then
             self.GoodSince = nil
@@ -31811,6 +31872,11 @@ do
 
     local connection = RunService.Heartbeat:Connect(function()
         if not CONFIG.ForceWalkSpeed then return end
+        -- Healer movement must stay server-authoritative. Life Dash and
+        -- Revitalize may grant their own speed, but this loop must never
+        -- manufacture or hold that buff for the healer account.
+        local controller = getgenv().UIW
+        if controller and controller.HealerEnabled then return end
         local h = humanoid()
         if not h then return end
         local want = (os.clock() < buffUntil)
@@ -32735,6 +32801,12 @@ do
         end
     end
 
+    function UIWController:GetHealerApproachDistance()
+        -- Every supported local heal reaches at least 24 studs. Holding within
+        -- 14 leaves enough margin for a moving host and network replication.
+        return math.min(tonumber(self.HealerFollowDistance) or 14, 14)
+    end
+
     local function routeVector(point)
         if type(point) ~= "table" then return nil end
         local x, y, z = tonumber(point.X or point.x or point[1]),
@@ -33266,8 +33338,15 @@ do
         return ok
     end
 
-    function UIWController:HealerMobilityCast(distance)
-        if (tonumber(distance) or 0) < 45 then return false end
+    function UIWController:HealerMobilityCast(distance, targetHumanoid)
+        distance = tonumber(distance) or 0
+        local followDistance = self:GetHealerApproachDistance()
+        local hostIsBoosted = targetHumanoid
+            and (tonumber(targetHumanoid.WalkSpeed) or 0) > 20
+        local longCatchup = distance >= 45
+        if not longCatchup and not (hostIsBoosted and distance > followDistance) then
+            return false
+        end
         local now = os.clock()
         if now - (self.HealerLastCastAt or 0) < 1.25
             or now < (self.HealerHealCoveredUntil or 0)
@@ -33280,7 +33359,14 @@ do
             if container then
                 for _, tool in ipairs(container:GetChildren()) do
                     local name = tool:IsA("Tool") and normalized(tool.Name)
-                    local score = name and MOBILITY_HEALS[name]
+                    local score
+                    -- Mirror a host speed spell with Revitalize. Life Dash is
+                    -- still preferred for ordinary long-distance catch-up.
+                    if hostIsBoosted and name == "revitalize" then
+                        score = 1000
+                    elseif longCatchup then
+                        score = name and MOBILITY_HEALS[name]
+                    end
                     local cooldown = tool:FindFirstChild("cooldown")
                     local event = tool:FindFirstChild("localEvent")
                     if score and event and (not cooldown or (tonumber(cooldown.Value) or 0) <= 0) then
@@ -33300,15 +33386,16 @@ do
             local coverage = HEAL_COVERAGE[normalized(chosen.Tool.Name)] or 2
             self.HealerHealCoveredUntil = now + coverage
             self.HealerMobilityBuffUntil = now + coverage
-            self.HealerStatus = string.format("Fast follow with %s • host %.0f studs away",
-                chosen.Tool.Name, distance)
+            local reason = hostIsBoosted and "matching host speed" or "long-distance catch-up"
+            self.HealerStatus = string.format("Fast follow with %s • %s • host %.0f studs away",
+                chosen.Tool.Name, reason, distance)
         end
         return ok
     end
 
     function UIWController:HealerNavigationRecovery(targetRoot, distance)
         if not targetRoot or not self.Character:IsAlive()
-            or distance <= (tonumber(self.HealerFollowDistance) or 14)
+            or distance <= self:GetHealerApproachDistance()
         then
             self.HealerProgressPosition = self.Character.Root and self.Character.Root.Position or nil
             self.HealerProgressAt = os.clock()
@@ -33356,6 +33443,87 @@ do
         end
     end
 
+    function UIWController:SetHealerNoclip(enabled)
+        local character = self.Character and self.Character.Character
+        if not enabled or not character or not character.Parent then
+            for part, wasCollidable in pairs(self.HealerNoclipParts or {}) do
+                if part.Parent then part.CanCollide = wasCollidable end
+            end
+            self.HealerNoclipParts = nil
+            self.HealerNoclipCharacter = nil
+            return
+        end
+
+        if self.HealerNoclipCharacter ~= character then
+            self:SetHealerNoclip(false)
+            self.HealerNoclipCharacter = character
+            self.HealerNoclipParts = {}
+        end
+        for _, part in ipairs(character:GetDescendants()) do
+            if part:IsA("BasePart") and part.CanCollide then
+                if self.HealerNoclipParts[part] == nil then
+                    self.HealerNoclipParts[part] = true
+                end
+                part.CanCollide = false
+            end
+        end
+        -- Other local scripts may restore collision each frame.
+        for part in pairs(self.HealerNoclipParts) do
+            if part.Parent then part.CanCollide = false end
+        end
+    end
+
+    function UIWController:UpdateHealerNoclip(targetRoot, distance)
+        local approach = self:GetHealerApproachDistance()
+        if not self.HealerEnabled or not targetRoot or not self.Character:IsAlive()
+            or distance <= approach
+        then
+            self.HealerNoclipUntil = 0
+            self:SetHealerNoclip(false)
+            return
+        end
+
+        local now = os.clock()
+        if now < (self.HealerNoclipUntil or 0) then
+            self:SetHealerNoclip(true)
+            local delta = flatten(targetRoot.Position - self.Character.Root.Position)
+            if delta.Magnitude > 0.1 then
+                self.Character.Humanoid:Move(delta.Unit, false)
+            end
+            return
+        end
+        self:SetHealerNoclip(false)
+        if now < (self.HealerNoclipCooldownUntil or 0) then return end
+
+        local delta = flatten(targetRoot.Position - self.Character.Root.Position)
+        local blocked = false
+        if delta.Magnitude > 0.1 then
+            local params = RaycastParams.new()
+            params.FilterType = Enum.RaycastFilterType.Exclude
+            params.FilterDescendantsInstances = {
+                self.Character.Character,
+                targetRoot.Parent,
+            }
+            params.IgnoreWater = true
+            local hit = Workspace:Raycast(self.Character.Root.Position,
+                delta.Unit * math.min(delta.Magnitude, 6), params)
+            blocked = hit ~= nil and hit.Instance.CanCollide
+        end
+        local stalled = now - (self.HealerProgressAt or now) >= 0.8
+        if not blocked and not stalled then return end
+
+        -- Short pulses pass a wall or prop without leaving collision disabled
+        -- long enough for the character to fall through a floor.
+        self.HealerNoclipUntil = now + (blocked and 0.3 or 0.45)
+        self.HealerNoclipCooldownUntil = self.HealerNoclipUntil + 0.15
+        self:SetHealerNoclip(true)
+        self.Route:ClearPath()
+        self.Route:ForceRepath(targetRoot.Position)
+        self.HealerRouteStatus = blocked
+            and "Healer collision recovery • passing obstacle"
+            or "Healer collision recovery • escaping stuck point"
+    end
+
     function UIWController:HealerUpdate()
         if not self.HealerEnabled or self.Destroyed then return end
         local target, _, humanoid, root, requested = self:GetHealerTarget()
@@ -33368,11 +33536,14 @@ do
         end
         local distance = (root.Position - self.Character.Root.Position).Magnitude
         self:HealerNavigationRecovery(root, distance)
+        self:UpdateHealerNoclip(root, distance)
         local health = humanoid.Health / math.max(humanoid.MaxHealth, 1) * 100
         local healerHumanoid = self.Character and self.Character.Humanoid
         local healerHealth = healerHumanoid and healerHumanoid.MaxHealth > 0
             and healerHumanoid.Health / healerHumanoid.MaxHealth * 100 or 0
-        if not self:HealerCast(humanoid, distance) and not self:HealerMobilityCast(distance) then
+        if not self:HealerCast(humanoid, distance)
+            and not self:HealerMobilityCast(distance, humanoid)
+        then
             self.HealerStatus = string.format("Following %s | host %.0f%% • healer %.0f%% | %.0f studs",
                 requested or target.Name, health, healerHealth, distance)
         end
@@ -33387,7 +33558,7 @@ do
             local _, _, _, root = self:GetHealerTarget()
             if not root then return nil end
             local distance = (root.Position - self.Character.Root.Position).Magnitude
-            if distance > (tonumber(self.HealerFollowDistance) or 14) then
+            if distance > self:GetHealerApproachDistance() then
                 local goal = self:GetHealerRecordedGoal(root.Position)
                     or self:GetHealerLeadPosition(root) or root.Position
                 -- Healer following is always committed route travel. Nearby
@@ -33438,10 +33609,12 @@ do
     local oldStep = UIWController.Step
     function UIWController:Step()
         if self.HealerRecording then
+            self:SetHealerNoclip(false)
             self.Character:ReleaseAutomationFacing()
             return
         end
         if not self.HealerEnabled then
+            self:SetHealerNoclip(false)
             if not self.HealerUseRecordedPath then return oldStep(self) end
             local dodge = self.AutoDodge
             self.AutoDodge = true
@@ -33484,6 +33657,7 @@ do
             self.AutoDodge = true
         end
         self.HealerStatus = self.HealerEnabled and "Starting healer" or "Healer off"
+        self.Maid:Give(function() self:SetHealerNoclip(false) end)
         self.Maid:Give(RunService.Heartbeat:Connect(function()
             local now = os.clock()
             if self.HealerRecording and now - (self.HealerLastRecordSampleAt or 0) >= 0.15 then
@@ -33516,7 +33690,7 @@ end
 
 
 local Controller = UIWController.new()
-Controller.Version = tostring(Controller.Version) .. "+streamtarget+carry12+route5+healer9"
+Controller.Version = tostring(Controller.Version) .. "+streamtarget+carry12+route5+healer11+dragonlag1"
 
 getgenv().UIW = Controller
 getgenv().UNDERWORLD_AI = Controller
