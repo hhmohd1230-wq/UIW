@@ -17,7 +17,9 @@ original map parts and collisions, including during boss fights.
 
 The Enchanted Forest Dragon automatically enables the strongest adaptive
 performance mode before its first attack burst. Dragon particles and the large
-one-shot beam decoration are suppressed, effect cleanup is spread across
+one-shot beam decoration are removed locally, including particles, beams,
+trails, textures, sounds and lights. Decorative attack parts have rendering,
+touch and query work disabled while warning and hitbox geometry remains. Effect cleanup is spread across
 frames, and hazard discovery avoids rescanning the same growing attack model.
 Cross Shot and X Shot keep one equivalent danger volume per attack instead of
 processing overlapping warning and hitbox copies. Smart Dodge uses a smaller
@@ -75,9 +77,11 @@ studs away, it uses an available Life Dash or Revitalize movement buff. If the
 host activates a speed buff while ahead of the healer, the healer mirrors it
 with Revitalize. These casts use the same shared healing timer. A healer using the
 recorded route can traverse it in either direction to reach its selected host.
-The healer holds within 14 studs so every supported local heal has range. When
+The healer holds at 10 studs so every supported local heal has range. When
 a wall, prop or stuck point blocks that approach, short collision-free recovery
 pulses pass the obstruction and restore character collision immediately after.
+Recovery also activates whenever the healer is not reducing its distance to
+the host, or whenever it falls at least 20 studs behind.
 The target, follow distance and healer choices are saved per Roblox account and
 continue after dungeon teleports.
 

@@ -77,9 +77,7 @@ do
     end
 
     function UIWController:GetHealerApproachDistance()
-        -- Every supported local heal reaches at least 24 studs. Holding within
-        -- 14 leaves enough margin for a moving host and network replication.
-        return math.min(tonumber(self.HealerFollowDistance) or 14, 14)
+        return 10
     end
 
     local function routeVector(point)
@@ -200,7 +198,7 @@ do
         elseif key == "HealerAutoSpells" then
             self.HealerAutoSpells = value == true
         elseif key == "HealerFollowDistance" then
-            self.HealerFollowDistance = math.clamp(tonumber(value) or 14, 8, 35)
+            self.HealerFollowDistance = 10
         elseif key == "HealerUseRecordedPath" then
             self.HealerUseRecordedPath = value == true
             self.HealerRouteIndex = nil
@@ -754,11 +752,24 @@ do
             or distance <= approach
         then
             self.HealerNoclipUntil = 0
+            self.HealerClosingSampleAt = nil
+            self.HealerClosingSampleDistance = nil
+            self.HealerClosingStalledUntil = nil
             self:SetHealerNoclip(false)
             return
         end
 
         local now = os.clock()
+        if not self.HealerClosingSampleAt then
+            self.HealerClosingSampleAt = now
+            self.HealerClosingSampleDistance = distance
+        elseif now - self.HealerClosingSampleAt >= 0.7 then
+            if distance >= (self.HealerClosingSampleDistance or distance) - 1 then
+                self.HealerClosingStalledUntil = now + 0.8
+            end
+            self.HealerClosingSampleAt = now
+            self.HealerClosingSampleDistance = distance
+        end
         if now < (self.HealerNoclipUntil or 0) then
             self:SetHealerNoclip(true)
             local delta = flatten(targetRoot.Position - self.Character.Root.Position)
@@ -785,18 +796,21 @@ do
             blocked = hit ~= nil and hit.Instance.CanCollide
         end
         local stalled = now - (self.HealerProgressAt or now) >= 0.8
-        if not blocked and not stalled then return end
+        local notClosing = now < (self.HealerClosingStalledUntil or 0)
+        local farBehind = distance >= 20
+        if not blocked and not stalled and not notClosing and not farBehind then return end
 
         -- Short pulses pass a wall or prop without leaving collision disabled
         -- long enough for the character to fall through a floor.
-        self.HealerNoclipUntil = now + (blocked and 0.3 or 0.45)
+        local pulse = blocked and 0.3 or (farBehind and 0.2 or 0.4)
+        self.HealerNoclipUntil = now + pulse
         self.HealerNoclipCooldownUntil = self.HealerNoclipUntil + 0.15
         self:SetHealerNoclip(true)
         self.Route:ClearPath()
         self.Route:ForceRepath(targetRoot.Position)
-        self.HealerRouteStatus = blocked
-            and "Healer collision recovery • passing obstacle"
-            or "Healer collision recovery • escaping stuck point"
+        self.HealerRouteStatus = blocked and "Healer collision recovery • passing obstacle"
+            or (farBehind and "Healer collision recovery • closing on host"
+                or "Healer collision recovery • escaping stuck point")
     end
 
     function UIWController:HealerUpdate()
@@ -834,8 +848,17 @@ do
             if not root then return nil end
             local distance = (root.Position - self.Character.Root.Position).Magnitude
             if distance > self:GetHealerApproachDistance() then
-                local goal = self:GetHealerRecordedGoal(root.Position)
-                    or self:GetHealerLeadPosition(root) or root.Position
+                local goal
+                if distance >= 20 then
+                    -- When far behind, take the direct predicted host point;
+                    -- collision pulses handle props instead of sending the
+                    -- healer through a slower recorded-route detour.
+                    goal = self:GetHealerLeadPosition(root) or root.Position
+                    self.HealerRouteStatus = "Direct catch-up route to host"
+                else
+                    goal = self:GetHealerRecordedGoal(root.Position)
+                        or self:GetHealerLeadPosition(root) or root.Position
+                end
                 -- Healer following is always committed route travel. Nearby
                 -- dungeon enemies must not pull the healer away from its host.
                 self.RecordedRouteTraversalActive = true
@@ -923,6 +946,7 @@ do
     end
 
     function UIWController:StartHealer()
+        self.HealerFollowDistance = 10
         self:LoadHealerRoutes()
         local savedRoute = self:GetRecordedHealerRoute()
         self.HealerRouteStatus = savedRoute

@@ -351,7 +351,7 @@ local DEFAULT_SETTINGS = {
     HealerEnabled = false,
     HealerTargetName = "",
     HealerAutoEquip = true,
-    HealerFollowDistance = 14,
+    HealerFollowDistance = 10,
     AutoExecuteOnTeleport = false,
     LowEffects = true,
     WalkSpeed = 16,
@@ -628,7 +628,7 @@ function ConfigStore.ReadMeta()
         HealerTargetName = type(meta.HealerTargetName) == "string" and meta.HealerTargetName or "",
         HealerAutoEquip = meta.HealerAutoEquip ~= false,
         HealerAutoSpells = meta.HealerAutoSpells == true,
-        HealerFollowDistance = tonumber(meta.HealerFollowDistance) or 14,
+        HealerFollowDistance = 10,
         HealerUseRecordedPath = meta.HealerUseRecordedPath == true,
         ShowRecordedPath = meta.ShowRecordedPath == true,
     }
@@ -653,7 +653,7 @@ function ConfigStore.WriteMeta(meta)
         HealerTargetName = meta.HealerTargetName or "",
         HealerAutoEquip = meta.HealerAutoEquip ~= false,
         HealerAutoSpells = meta.HealerAutoSpells == true,
-        HealerFollowDistance = meta.HealerFollowDistance or 14,
+        HealerFollowDistance = 10,
         HealerUseRecordedPath = meta.HealerUseRecordedPath == true,
         ShowRecordedPath = meta.ShowRecordedPath == true,
     }, true)
@@ -18001,11 +18001,12 @@ function HUD.new(controller)
         Font = UIKit.Fonts.Semi, TextSize = 13, Text = "Follow distance", ZIndex = 3 })
     UIKit.Label(distanceCard, { Position = UDim2.fromOffset(14, 29), Size = UDim2.new(1, -110, 0, 35),
         TextSize = 10, TextColor3 = T.SubText, TextWrapped = true,
-        Text = "Stay close enough for local healing spells while Dodge avoids hazards", ZIndex = 3 })
+        Text = "Fixed at 10 studs so every local healing spell reaches the host", ZIndex = 3 })
     self.HealerDistanceBox = UIKit.New("TextBox", {
         AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -14, 0.5, 0),
         Size = UDim2.fromOffset(76, 34), BackgroundColor3 = T.Tile, BorderSizePixel = 0,
         ClearTextOnFocus = false, Font = UIKit.Fonts.Semi, TextSize = 13,
+        TextEditable = false,
         TextColor3 = T.Text, Text = tostring(controller.HealerFollowDistance),
         TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 3, Parent = distanceCard,
     })
@@ -18769,7 +18770,7 @@ function HUD:RefreshHealer()
         self.HealerTargetBox.Text = controller.HealerTargetName or ""
     end
     if self.HealerDistanceBox and not self.HealerDistanceBox:IsFocused() then
-        self.HealerDistanceBox.Text = tostring(controller.HealerFollowDistance or 14)
+        self.HealerDistanceBox.Text = tostring(controller.HealerFollowDistance or 10)
     end
 end
 
@@ -19302,7 +19303,7 @@ function UIWController.new()
     self.HealerTargetName = ""
     self.HealerAutoEquip = true
     self.HealerAutoSpells = false
-    self.HealerFollowDistance = 14
+    self.HealerFollowDistance = 10
     self.HealerUseRecordedPath = false
     self.ShowRecordedPath = false
     self.ActiveConfig = nil
@@ -19393,7 +19394,7 @@ function UIWController:ApplySettings(settings)
     end
     self.HealerAutoEquip = readBoolean("HealerAutoEquip", self.HealerAutoEquip)
     self.HealerAutoSpells = readBoolean("HealerAutoSpells", self.HealerAutoSpells)
-    self.HealerFollowDistance = validNumber(settings.HealerFollowDistance, 8, 35, self.HealerFollowDistance)
+    self.HealerFollowDistance = 10
     self.HealerUseRecordedPath = readBoolean("HealerUseRecordedPath", self.HealerUseRecordedPath)
     self.ShowRecordedPath = readBoolean("ShowRecordedPath", self.ShowRecordedPath)
 
@@ -19563,7 +19564,7 @@ function UIWController:InitConfigs()
     self.HealerTargetName = meta.HealerTargetName
     self.HealerAutoEquip = meta.HealerAutoEquip
     self.HealerAutoSpells = meta.HealerAutoSpells == true
-    self.HealerFollowDistance = math.clamp(tonumber(meta.HealerFollowDistance) or 14, 8, 35)
+    self.HealerFollowDistance = 10
     self.HealerUseRecordedPath = meta.HealerUseRecordedPath == true
     self.ShowRecordedPath = meta.ShowRecordedPath == true
     if meta.BlackScreen and meta.RestoreFPSCap then
@@ -27346,34 +27347,51 @@ do
         return nil
     end
 
-    local function quiet(object)
+    local function quiet(object, aggressive)
         local class = object.ClassName
         if class == "ParticleEmitter" then
+            if aggressive then object:Destroy() return end
             object.Rate = 0
             object.Transparency = INVISIBLE
             pcall(function() object:Clear() end)
         elseif class == "Trail" or class == "Beam" then
+            if aggressive then object:Destroy() return end
             object.Transparency = INVISIBLE
         elseif class == "Decal" or class == "Texture" then
+            if aggressive then object:Destroy() return end
             object.Transparency = 1
         elseif class == "SurfaceGui" then
+            if aggressive then object:Destroy() return end
             object.Enabled = false
         elseif class == "PointLight" or class == "SpotLight" or class == "SurfaceLight"
             or class == "Fire" or class == "Smoke" or class == "Sparkles"
         then
+            if aggressive then object:Destroy() return end
             object.Enabled = false
         elseif class == "Explosion" then
+            if aggressive then object:Destroy() return end
             object.Visible = false
+        elseif class == "Sound" and aggressive then
+            object:Stop()
+            object:Destroy()
         elseif object:IsA("BasePart") then
             -- Dragon attacks use enormous visible parts. Hide them locally,
             -- but mark warnings so HazardTracker still treats their original
             -- transparency as active for Smart Dodge.
             if dragonEffectContainer(object) then
-                if string.find(string.lower(object.Name or ""), "precast", 1, true) then
+                local lower = string.lower(object.Name or "")
+                local essential = string.find(lower, "precast", 1, true)
+                    or string.find(lower, "hitbox", 1, true)
+                if string.find(lower, "precast", 1, true) then
                     object:SetAttribute("UIWHiddenDragonWarning", true)
                 end
                 object.LocalTransparencyModifier = 1
                 object.CastShadow = false
+                if aggressive and not essential then
+                    object.CanCollide = false
+                    object.CanTouch = false
+                    object.CanQuery = false
+                end
             end
         end
     end
@@ -27414,7 +27432,7 @@ do
             self.Watched[child] = true
             child.DescendantAdded:Connect(function(object)
                 if self.Active then
-                    pcall(quiet, object)
+                    pcall(quiet, object, self.Controller.EnchantedDragonPerf == true)
                 end
             end)
         end
@@ -27490,15 +27508,16 @@ do
             if not self.Active then return end
             local class = object.ClassName
             local visual = class == "ParticleEmitter" or class == "Trail" or class == "Beam"
+                or class == "Decal" or class == "Texture" or class == "SurfaceGui"
                 or class == "PointLight" or class == "SpotLight" or class == "SurfaceLight"
                 or class == "Fire" or class == "Smoke" or class == "Sparkles"
-                or class == "Explosion"
+                or class == "Explosion" or class == "Sound"
             local beamPart = object:IsA("BasePart") and object.Parent
                 and string.lower(object.Parent.Name or "") == "thirdbossoneshotbeam"
             if not visual and not beamPart then return end
             local character = LocalPlayer.Character
             if character and (object == character or object:IsDescendantOf(character)) then return end
-            pcall(quiet, object)
+            pcall(quiet, object, self.Controller.EnchantedDragonPerf == true)
         end))
     end
 
@@ -27516,14 +27535,14 @@ do
                 continue
             end
             if not item.Descendants then
-                pcall(quiet, root)
+                pcall(quiet, root, self.Controller.EnchantedDragonPerf == true)
                 item.Descendants = root:GetDescendants()
             end
             while budget > 0 and item.Index <= #item.Descendants do
                 local object = item.Descendants[item.Index]
                 item.Index += 1
                 budget -= 1
-                local ok = pcall(quiet, object)
+                local ok = pcall(quiet, object, self.Controller.EnchantedDragonPerf == true)
                 if ok then self.Quieted += 1 end
             end
             if item.Index > #item.Descendants then
@@ -32858,9 +32877,7 @@ do
     end
 
     function UIWController:GetHealerApproachDistance()
-        -- Every supported local heal reaches at least 24 studs. Holding within
-        -- 14 leaves enough margin for a moving host and network replication.
-        return math.min(tonumber(self.HealerFollowDistance) or 14, 14)
+        return 10
     end
 
     local function routeVector(point)
@@ -32981,7 +32998,7 @@ do
         elseif key == "HealerAutoSpells" then
             self.HealerAutoSpells = value == true
         elseif key == "HealerFollowDistance" then
-            self.HealerFollowDistance = math.clamp(tonumber(value) or 14, 8, 35)
+            self.HealerFollowDistance = 10
         elseif key == "HealerUseRecordedPath" then
             self.HealerUseRecordedPath = value == true
             self.HealerRouteIndex = nil
@@ -33535,11 +33552,24 @@ do
             or distance <= approach
         then
             self.HealerNoclipUntil = 0
+            self.HealerClosingSampleAt = nil
+            self.HealerClosingSampleDistance = nil
+            self.HealerClosingStalledUntil = nil
             self:SetHealerNoclip(false)
             return
         end
 
         local now = os.clock()
+        if not self.HealerClosingSampleAt then
+            self.HealerClosingSampleAt = now
+            self.HealerClosingSampleDistance = distance
+        elseif now - self.HealerClosingSampleAt >= 0.7 then
+            if distance >= (self.HealerClosingSampleDistance or distance) - 1 then
+                self.HealerClosingStalledUntil = now + 0.8
+            end
+            self.HealerClosingSampleAt = now
+            self.HealerClosingSampleDistance = distance
+        end
         if now < (self.HealerNoclipUntil or 0) then
             self:SetHealerNoclip(true)
             local delta = flatten(targetRoot.Position - self.Character.Root.Position)
@@ -33566,18 +33596,21 @@ do
             blocked = hit ~= nil and hit.Instance.CanCollide
         end
         local stalled = now - (self.HealerProgressAt or now) >= 0.8
-        if not blocked and not stalled then return end
+        local notClosing = now < (self.HealerClosingStalledUntil or 0)
+        local farBehind = distance >= 20
+        if not blocked and not stalled and not notClosing and not farBehind then return end
 
         -- Short pulses pass a wall or prop without leaving collision disabled
         -- long enough for the character to fall through a floor.
-        self.HealerNoclipUntil = now + (blocked and 0.3 or 0.45)
+        local pulse = blocked and 0.3 or (farBehind and 0.2 or 0.4)
+        self.HealerNoclipUntil = now + pulse
         self.HealerNoclipCooldownUntil = self.HealerNoclipUntil + 0.15
         self:SetHealerNoclip(true)
         self.Route:ClearPath()
         self.Route:ForceRepath(targetRoot.Position)
-        self.HealerRouteStatus = blocked
-            and "Healer collision recovery • passing obstacle"
-            or "Healer collision recovery • escaping stuck point"
+        self.HealerRouteStatus = blocked and "Healer collision recovery • passing obstacle"
+            or (farBehind and "Healer collision recovery • closing on host"
+                or "Healer collision recovery • escaping stuck point")
     end
 
     function UIWController:HealerUpdate()
@@ -33615,8 +33648,17 @@ do
             if not root then return nil end
             local distance = (root.Position - self.Character.Root.Position).Magnitude
             if distance > self:GetHealerApproachDistance() then
-                local goal = self:GetHealerRecordedGoal(root.Position)
-                    or self:GetHealerLeadPosition(root) or root.Position
+                local goal
+                if distance >= 20 then
+                    -- When far behind, take the direct predicted host point;
+                    -- collision pulses handle props instead of sending the
+                    -- healer through a slower recorded-route detour.
+                    goal = self:GetHealerLeadPosition(root) or root.Position
+                    self.HealerRouteStatus = "Direct catch-up route to host"
+                else
+                    goal = self:GetHealerRecordedGoal(root.Position)
+                        or self:GetHealerLeadPosition(root) or root.Position
+                end
                 -- Healer following is always committed route travel. Nearby
                 -- dungeon enemies must not pull the healer away from its host.
                 self.RecordedRouteTraversalActive = true
@@ -33704,6 +33746,7 @@ do
     end
 
     function UIWController:StartHealer()
+        self.HealerFollowDistance = 10
         self:LoadHealerRoutes()
         local savedRoute = self:GetRecordedHealerRoute()
         self.HealerRouteStatus = savedRoute
@@ -33745,7 +33788,7 @@ do
 end
 
 local Controller = UIWController.new()
-Controller.Version = tostring(Controller.Version) .. "+streamtarget+carry12+route5+healer11+dragonlag6"
+Controller.Version = tostring(Controller.Version) .. "+streamtarget+carry12+route5+healer13+dragonlag7"
 
 getgenv().UIW = Controller
 getgenv().UNDERWORLD_AI = Controller

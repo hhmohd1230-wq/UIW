@@ -32,34 +32,51 @@ do
         return nil
     end
 
-    local function quiet(object)
+    local function quiet(object, aggressive)
         local class = object.ClassName
         if class == "ParticleEmitter" then
+            if aggressive then object:Destroy() return end
             object.Rate = 0
             object.Transparency = INVISIBLE
             pcall(function() object:Clear() end)
         elseif class == "Trail" or class == "Beam" then
+            if aggressive then object:Destroy() return end
             object.Transparency = INVISIBLE
         elseif class == "Decal" or class == "Texture" then
+            if aggressive then object:Destroy() return end
             object.Transparency = 1
         elseif class == "SurfaceGui" then
+            if aggressive then object:Destroy() return end
             object.Enabled = false
         elseif class == "PointLight" or class == "SpotLight" or class == "SurfaceLight"
             or class == "Fire" or class == "Smoke" or class == "Sparkles"
         then
+            if aggressive then object:Destroy() return end
             object.Enabled = false
         elseif class == "Explosion" then
+            if aggressive then object:Destroy() return end
             object.Visible = false
+        elseif class == "Sound" and aggressive then
+            object:Stop()
+            object:Destroy()
         elseif object:IsA("BasePart") then
             -- Dragon attacks use enormous visible parts. Hide them locally,
             -- but mark warnings so HazardTracker still treats their original
             -- transparency as active for Smart Dodge.
             if dragonEffectContainer(object) then
-                if string.find(string.lower(object.Name or ""), "precast", 1, true) then
+                local lower = string.lower(object.Name or "")
+                local essential = string.find(lower, "precast", 1, true)
+                    or string.find(lower, "hitbox", 1, true)
+                if string.find(lower, "precast", 1, true) then
                     object:SetAttribute("UIWHiddenDragonWarning", true)
                 end
                 object.LocalTransparencyModifier = 1
                 object.CastShadow = false
+                if aggressive and not essential then
+                    object.CanCollide = false
+                    object.CanTouch = false
+                    object.CanQuery = false
+                end
             end
         end
     end
@@ -100,7 +117,7 @@ do
             self.Watched[child] = true
             child.DescendantAdded:Connect(function(object)
                 if self.Active then
-                    pcall(quiet, object)
+                    pcall(quiet, object, self.Controller.EnchantedDragonPerf == true)
                 end
             end)
         end
@@ -176,15 +193,16 @@ do
             if not self.Active then return end
             local class = object.ClassName
             local visual = class == "ParticleEmitter" or class == "Trail" or class == "Beam"
+                or class == "Decal" or class == "Texture" or class == "SurfaceGui"
                 or class == "PointLight" or class == "SpotLight" or class == "SurfaceLight"
                 or class == "Fire" or class == "Smoke" or class == "Sparkles"
-                or class == "Explosion"
+                or class == "Explosion" or class == "Sound"
             local beamPart = object:IsA("BasePart") and object.Parent
                 and string.lower(object.Parent.Name or "") == "thirdbossoneshotbeam"
             if not visual and not beamPart then return end
             local character = LocalPlayer.Character
             if character and (object == character or object:IsDescendantOf(character)) then return end
-            pcall(quiet, object)
+            pcall(quiet, object, self.Controller.EnchantedDragonPerf == true)
         end))
     end
 
@@ -202,14 +220,14 @@ do
                 continue
             end
             if not item.Descendants then
-                pcall(quiet, root)
+                pcall(quiet, root, self.Controller.EnchantedDragonPerf == true)
                 item.Descendants = root:GetDescendants()
             end
             while budget > 0 and item.Index <= #item.Descendants do
                 local object = item.Descendants[item.Index]
                 item.Index += 1
                 budget -= 1
-                local ok = pcall(quiet, object)
+                local ok = pcall(quiet, object, self.Controller.EnchantedDragonPerf == true)
                 if ok then self.Quieted += 1 end
             end
             if item.Index > #item.Descendants then

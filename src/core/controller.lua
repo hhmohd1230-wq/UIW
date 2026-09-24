@@ -42,7 +42,7 @@ function UIWController.new()
     self.HealerTargetName = ""
     self.HealerAutoEquip = true
     self.HealerAutoSpells = false
-    self.HealerFollowDistance = 14
+    self.HealerFollowDistance = 10
     self.HealerUseRecordedPath = false
     self.ShowRecordedPath = false
     self.ActiveConfig = nil
@@ -133,7 +133,7 @@ function UIWController:ApplySettings(settings)
     end
     self.HealerAutoEquip = readBoolean("HealerAutoEquip", self.HealerAutoEquip)
     self.HealerAutoSpells = readBoolean("HealerAutoSpells", self.HealerAutoSpells)
-    self.HealerFollowDistance = validNumber(settings.HealerFollowDistance, 8, 35, self.HealerFollowDistance)
+    self.HealerFollowDistance = 10
     self.HealerUseRecordedPath = readBoolean("HealerUseRecordedPath", self.HealerUseRecordedPath)
     self.ShowRecordedPath = readBoolean("ShowRecordedPath", self.ShowRecordedPath)
 
@@ -303,7 +303,7 @@ function UIWController:InitConfigs()
     self.HealerTargetName = meta.HealerTargetName
     self.HealerAutoEquip = meta.HealerAutoEquip
     self.HealerAutoSpells = meta.HealerAutoSpells == true
-    self.HealerFollowDistance = math.clamp(tonumber(meta.HealerFollowDistance) or 14, 8, 35)
+    self.HealerFollowDistance = 10
     self.HealerUseRecordedPath = meta.HealerUseRecordedPath == true
     self.ShowRecordedPath = meta.ShowRecordedPath == true
     if meta.BlackScreen and meta.RestoreFPSCap then
