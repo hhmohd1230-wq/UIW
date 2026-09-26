@@ -350,7 +350,15 @@ do
         -- also removes the thing that keeps a room's fight in its own room. If
         -- progression stalls - mobs left behind, a room that never completes -
         -- this is the first suspect, not the tenth.
-        if CONFIG.NLBarrierDodge == nil then CONFIG.NLBarrierDodge = true end
+        -- 2026-09-26, check-in #6: DEFAULT FLIPPED TO FALSE. The prediction
+        -- above is what the numbers now say happened. Champion damage on the
+        -- open map has sat at 0.64-0.96%/s for eight builds (50.9 through
+        -- 51.8) after 1.33-1.59%/s at 50.5/50.6, and solidifying the walls in
+        -- 51.1/51.2 did not move it. The barrier experiment is the remaining
+        -- difference, and it opens ~500 gates a run. Off by default until a
+        -- measured run says otherwise; set CONFIG.NLBarrierDodge = true to
+        -- put the experiment back.
+        if CONFIG.NLBarrierDodge == nil then CONFIG.NLBarrierDodge = false end
 
         local rooms = workspace:FindFirstChild("dungeon")
         if rooms and CONFIG.NLBarrierDodge then

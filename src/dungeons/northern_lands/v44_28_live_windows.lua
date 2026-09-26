@@ -440,6 +440,13 @@ do
     -- 4x1x2 marker, which is all we were tracking - while the thing that hits
     -- you is a 52 stud bar strung between two balls. We were dodging a dot.
     local bodyPart = {secondBossMovingBeam = {"middleBeam", "swirlPart"}}
+    -- These templates were inspected in enemyProjectiles. Scan each explicit
+    -- damage part: SweepingFlames contains several hitboxes, not just the first.
+    -- MemoryModel is deliberately separate: its good/bad side needs phase data.
+    local compoundWarnings = {
+        bonusBossGroundFlame=true, bonusBossSmallSpiralFlame=true,
+        bonusBossLongLine=true, bonusBossSweepingFlames=true,
+    }
     -- Found by logging everything that appears during the fight: the whirlwinds
     -- and the shurikens are bare MeshParts sitting straight in the workspace
     -- with no hitBox and no precast child, so the hazard tracker never saw them
@@ -655,6 +662,18 @@ do
                 Name=name, Distance=math.sqrt(dx * dx + dy * dy + dz * dz)}
         end
         for _,container in ipairs(Workspace:GetChildren()) do
+            if compoundWarnings[container.Name] then
+                local damage,warnings={},{}
+                for _,part in ipairs(container:QueryDescendants("BasePart")) do
+                    local name=part.Name:lower()
+                    if name=="hitbox" then damage[#damage+1]=part
+                    elseif name=="precast" then warnings[#warnings+1]=part end
+                end
+                -- Do not count the warning and its identical damage volume twice.
+                for _,part in ipairs(#damage>0 and damage or warnings) do
+                    add(part,part.AssemblyLinearVelocity,container.Name)
+                end
+            end
             if timed[container.Name] or moving[container.Name] then
                 local part, info = live(container, now)
                 if part then
@@ -665,7 +684,8 @@ do
         end
         for _,data in ipairs(self.Hazards:GetActive()) do
             local part, container = data.Part, data.Container
-            if part and part.Parent and not data.IsPrecast and not (container and timed[container.Name]) then
+            if part and part.Parent and not data.IsPrecast
+                and not (container and (timed[container.Name] or compoundWarnings[container.Name])) then
                 add(part, self.Hazards:GetProjectileVelocity(data), container and container.Name or part.Name)
             end
         end
@@ -858,6 +878,9 @@ do
                     self.NLBursting = false
                 end
                 self.NLWantRadius, self.NLGapDegrees = radius, math.deg(span)
+                -- Stay in the central fighting band except for the return-to-pillar window.
+                if not self.NLChampWide then radius=CONFIG.NLMinRadius end
+                self.NLWantRadius=radius
                 self.NLLead = lead
                 goal = flatPivot + Vector3.new(math.cos(angle), 0, math.sin(angle)) * radius
                 preferred = unit(flatten(goal - root.Position))
@@ -870,6 +893,7 @@ do
         -- both where the damage happens and where the wave is easiest to step
         -- around.
         if bob and enemy.Root and enemy.Root.Parent then
+            local offset = flatten(root.Position - enemy.Root.Position)
             -- Fight him from the totems.
             --
             -- Measured in his arena: the three crystals sit at (-144,268),
@@ -895,17 +919,33 @@ do
             local crystals = Workspace:FindFirstChild("secondBossCrystals")
             if crystals then
                 local sum, n = Vector3.zero, 0
-                for _, child in ipairs(crystals:GetDescendants()) do
-                    if child:IsA("BasePart") then
-                        sum, n = sum + child.Position, n + 1
-                        pillars[#pillars + 1] = child.Position
+                for _, colour in ipairs({"green", "red", "yellow"}) do
+                    local child=crystals:FindFirstChild(colour)
+                    local part=child and (child:IsA("BasePart") and child or child:FindFirstChildWhichIsA("BasePart",true))
+                    if part then
+                        sum, n = sum + part.Position, n + 1
+                        pillars[#pillars + 1] = part.Position
                     end
                 end
                 if n > 0 then anchor = sum / n end
             end
 
             local stand
+            self.NLBobRegroup=false
             if anchor then
+                self.NLBobHome=Vector3.new(anchor.X,root.Position.Y,anchor.Z)
+                local controller=getgenv().UIW
+                local combat=controller and controller.Combat
+                local ready=false
+                if combat then
+                    for _,slot in ipairs({"q","e"}) do
+                        local tool=combat:GetTool(slot)
+                        if tool and not combat:IsBuffTool(tool) and combat:IsReady(slot) then ready=true end
+                    end
+                    local lock=controller.Character.CastLock
+                    if combat:IsBusyCasting() or (lock and now<lock.Until) then ready=true end
+                end
+                self.NLBobRegroup=not ready
                 local toBoss = flatten(enemy.Root.Position - Vector3.new(anchor.X, enemy.Root.Position.Y, anchor.Z))
                 local gap = toBoss.Magnitude
                 if gap > 1 then
@@ -916,9 +956,9 @@ do
                     -- Phase runs 0 -> 1 -> 0 over one period, so the near end
                     -- is approached and left again smoothly rather than
                     -- snapping, which would read as a stutter to the mover.
-                    local phase = (1 - math.cos((now / CONFIG.NLBobPulsePeriod) * math.pi * 2)) * 0.5
-                    local want = math.max(CONFIG.NLBobPulseFloor, far - phase * CONFIG.NLBobPulseDepth)
+                    local want = math.max(CONFIG.NLBobPulseFloor, far - CONFIG.NLBobPulseDepth)
                     stand = enemy.Root.Position - toBoss.Unit * want
+                    if self.NLBobRegroup then stand=Vector3.new(anchor.X,stand.Y,anchor.Z) end
 
                     -- Stay near the totems even when he does not. If the point
                     -- we picked has drifted outside the ring, pull it back to
@@ -952,7 +992,6 @@ do
                 self.NLBobAnchored = (self.NLBobAnchored or 0) + 1
             else
                 -- no crystals in the world: fall back to the old bearing
-                local offset = flatten(root.Position - enemy.Root.Position)
                 local out = offset.Magnitude > 1 and offset.Unit or Vector3.new(1, 0, 0)
                 stand = enemy.Root.Position + out * CONFIG.NLBobRadius
             end
@@ -1035,6 +1074,11 @@ do
         local horizon = wide and CONFIG.NLBossHorizon or (champion and 1.5 or 0.65)
         local times = wide and {0.3,0.8,1.4,2.0,2.6}
             or (champion and {0.15,0.4,0.7,1.0,1.25,1.5} or {0.12,0.3,0.5,0.65})
+        local bobHolding=bob and (self.NLBobRegroup or orbErrand) and goal~=nil
+        if bobHolding then
+            horizon=math.clamp(flatten(goal-root.Position).Magnitude/speed,0.25,CONFIG.NLBossHorizon)
+            times={horizon*0.1,horizon*0.25,horizon*0.5,horizon*0.75,horizon}
+        end
         local melee={}
         if not champion then
             for _,e in ipairs(self.Dungeon and self.Dungeon:GetAliveEnemies() or {}) do
@@ -1058,6 +1102,7 @@ do
             castTarget = enemy.Root.Position
             castRange = (enemy.Model and LONG_RANGE[normalizeEnemyName(enemy.Model.Name)])
                 and CONFIG.NLBossCastRange or (CONFIG.DamageCastRange or 64)
+            if not champion and not bob and not odin then castRange=CONFIG.NLMobCastRange end
         end
         local goalPull = CONFIG.NLGoalPull
         if goal then
@@ -1124,6 +1169,10 @@ do
         -- and the pillar is between us and it.
         if orbErrand then
             goalPull = math.max(goalPull, CONFIG.NLOrbGoalPull)
+        end
+        if bob and (self.NLBobRegroup or orbErrand) then
+            rangePull=0
+            goalPull=math.max(goalPull,CONFIG.NLOrbGoalPull)
         end
         if pitGoal then
             goalPull = math.max(goalPull, CONFIG.NLPitGoalPull)
@@ -1218,13 +1267,25 @@ do
             if dir.Magnitude==0 or (self.Geometry:IsDirectionClear(dir,probe,yaw)
                 and self.Geometry:IsGroundPadded(root.Position+dir*probe,CONFIG.EdgeHardPadding)) then
                 local score=0
+                local gathering=mobFight and not odin and not pitGoal and not orbErrand
+                    and self.NLGatherPoint and self.NLGatherTarget and self.NLGatherTarget.Parent
                 for _,t in ipairs(times) do
                     local position=root.Position+dir*speed*t
                     score+=risk(list,position,t)
+                    local proximity,contact=0,0
                     for _,mob in ipairs(melee) do
-                        score+=math.max(0,CONFIG.NLMeleeKeepOut-flatten(position-mob).Magnitude)
-                            *CONFIG.NLMeleeWeight
+                        local away=flatten(position-mob).Magnitude
+                        proximity+=math.max(0,CONFIG.NLMeleeKeepOut-away)*CONFIG.NLMeleeWeight
+                        contact=math.max(contact,math.max(0,7-away)*25)
                     end
+                    -- A following pack is not multiple simultaneous attacks.
+                    -- Keep body clearance; real attack hitboxes retain full risk.
+                    score+=gathering and (math.min(proximity,60)+contact) or proximity
+                end
+                if gathering then
+                    local before=flatten(root.Position-self.NLGatherPoint).Magnitude
+                    local after=flatten(root.Position+dir*distance-self.NLGatherPoint).Magnitude
+                    score+=(after-before)*6
                 end
                 if goal then
                     score+=flatten(root.Position+dir*distance-goal).Magnitude*goalPull
@@ -1248,7 +1309,9 @@ do
                         -- a precise business and there are real moments when
                         -- the square you are on is the right one. This only has
                         -- to beat a tie.
-                        score += CONFIG.NLBossStandStillCost
+                        if not (bobHolding and flatten(goal-root.Position).Magnitude<5) then
+                            score += CONFIG.NLBossStandStillCost
+                        end
                     end
                 end
                 if waveDir and waveNear <= CONFIG.NLWaveLaneRange and dir.Magnitude > 0 then
@@ -1352,7 +1415,7 @@ do
         -- ones ahead and behind.
         -- Boxed in at a boss is rarer - 4 frames in 147 against Bob - but the
         -- consequence is worse, so the same sidestep applies.
-        if (not best or best.Magnitude == 0) then
+        if (not best or best.Magnitude == 0) and not (bobHolding and best and standing<1) then
             local shortest, shortestScore = nil, math.huge
             local facing = Vector3.new(math.cos(yaw), 0, math.sin(yaw))
             for i = 0, 15 do
@@ -1460,7 +1523,7 @@ do
     local newController = UIWController.new
     function UIWController.new()
         local self = newController()
-        self.Version = "51.2-totemring"
+        self.Version = "51.9-nobarrierdodge"
         return self
     end
 end

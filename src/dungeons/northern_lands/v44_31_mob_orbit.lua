@@ -41,6 +41,8 @@ do
     -- that proved true against Bob. It is only capped below the range at which
     -- we can still hit the middle.
     CONFIG.NLPackMaxRadius = 80
+    CONFIG.NLGatherReach = 220
+    CONFIG.NLGatherLead = 18
 
     local function inNorthernLands()
         local value = Workspace:FindFirstChild("dungeonName")
@@ -89,8 +91,13 @@ do
         -- clustered in there.
         local centre = Vector3.new(enemy.Root.Position.X, root.Position.Y, enemy.Root.Position.Z)
         local pack, sum, spread = 0, Vector3.zero, 0
-        for _, other in ipairs(self.Dungeon and self.Dungeon:GetAliveEnemies() or {}) do
-            if other.Root and other.Root.Parent and not isBossEnemy(other)
+        local enemies=self.Dungeon and self.Dungeon:GetAliveEnemies() or {}
+        local function samePack(other)
+            return other.Root and other.Root.Parent and not isBossEnemy(other)
+                and other.Room==enemy.Room and math.abs(other.Root.Position.Y-root.Position.Y)<12
+        end
+        for _, other in ipairs(enemies) do
+            if samePack(other)
                 and flatten(other.Root.Position - centre).Magnitude <= CONFIG.NLPackSpan
             then
                 pack += 1
@@ -99,8 +106,8 @@ do
         end
         if pack >= 2 then
             local middle = sum / pack
-            for _, other in ipairs(self.Dungeon and self.Dungeon:GetAliveEnemies() or {}) do
-                if other.Root and other.Root.Parent and not isBossEnemy(other) then
+            for _, other in ipairs(enemies) do
+                if samePack(other) then
                     local out = flatten(other.Root.Position - middle).Magnitude
                     if out <= CONFIG.NLPackSpan then spread = math.max(spread, out) end
                 end
@@ -111,12 +118,57 @@ do
             self.NLPackSize, self.NLPackSpread = pack, 0
         end
 
+        -- Advance the orbit toward an uncollected mob while retaining its spin.
+        -- Use only this room and elevation; a distant pack behind a gate or
+        -- below the balcony must not pull this fight away from its floor.
+        local now=os.clock()
+        local gather,best=nil,math.huge
+        for _,other in ipairs(enemies) do
+            if samePack(other) then
+                local distance=flatten(other.Root.Position-root.Position).Magnitude
+                if distance>75 and distance<=CONFIG.NLGatherReach then
+                    local count,sum=0,Vector3.zero
+                    for _,near in ipairs(enemies) do
+                        if samePack(near) and flatten(near.Root.Position-other.Root.Position).Magnitude<55 then
+                            count+=1
+                            sum+=near.Root.Position
+                        end
+                    end
+                    -- Prefer the large waiting group, not the nearest lone pursuer.
+                    local score=distance-count*35
+                    if getEnemyThreatClass(other)~="Melee" then score-=20 end
+                    if other.Model==self.NLGatherTarget then score-=25 end
+                    if score<best then
+                        gather,best=other,score
+                        self.NLGatherCluster=sum/math.max(count,1)
+                        self.NLGatherCount=count
+                    end
+                end
+            end
+        end
+        local wanted=Vector3.zero
+        if gather then
+            local toward=flatten(gather.Root.Position-centre)
+            if toward.Magnitude>1 then wanted=toward.Unit*math.min(CONFIG.NLGatherLead,toward.Magnitude) end
+        end
+        if self.NLGatherRoom~=enemy.Room or now-(self.NLGatherAt or 0)>1 then self.NLGatherBias=Vector3.zero end
+        local dt=math.clamp(now-(self.NLGatherAt or now),0,0.2)
+        self.NLGatherBias=(self.NLGatherBias or Vector3.zero):Lerp(wanted,1-math.exp(-dt*3))
+        self.NLGatherAt,self.NLGatherRoom=now,enemy.Room
+        self.NLGatherTarget=gather and gather.Model or nil
+        self.NLGatherPoint=nil
+        if gather then
+            local destination=Vector3.new(self.NLGatherCluster.X,root.Position.Y,self.NLGatherCluster.Z)
+            local approach=flatten(root.Position-destination)
+            self.NLGatherPoint=destination+(approach.Magnitude>1 and approach.Unit or Vector3.new(1,0,0))*40
+        end
+        centre+=self.NLGatherBias
+
         local offset = flatten(root.Position - centre)
         if offset.Magnitude < 1 then
             return nil
         end
         local radial = offset.Unit
-        local now = os.clock()
 
         -- Circling a group needs a radius that clears the widest mob in it and
         -- still keeps the middle of the pack inside our own casting range, so
@@ -148,6 +200,16 @@ do
           for _, degrees in ipairs({ step, step * 0.5 }) do
             for _, radius in ipairs(radii) do
                 local point = orbitPoint(centre, radial, radius, degrees * spin)
+                -- Keep the current damage target reachable while gathering.
+                -- If it is already far away, permit only progress toward it.
+                if point and gather then
+                    local limit=math.max((CONFIG.NLMobCastRange or 100)-5,
+                        flatten(root.Position-enemy.Root.Position).Magnitude)
+                    if flatten(point-enemy.Root.Position).Magnitude>limit then
+                        local base=centre-self.NLGatherBias
+                        point=orbitPoint(base,unit(flatten(root.Position-base)),radius,degrees*spin)
+                    end
+                end
                 if point then
                     local step = flatten(point - root.Position)
                     if step.Magnitude > 0.5 then

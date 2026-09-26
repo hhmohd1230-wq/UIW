@@ -115,10 +115,8 @@ do
         if not humanoid or not character:IsAlive() then
             return false
         end
-        if humanoid.WalkSpeed > CONFIG.WalkSpeed + 1 then
-            self.SpeedFast = (self.SpeedFast or 0) + 1
-            return false                       -- already fast, save the cast
-        end
+        -- WalkSpeed may be raised by the movement layer even after Inner Rage
+        -- expires. Spell readiness, rather than speed, controls its refresh.
         self.SpeedSlow = (self.SpeedSlow or 0) + 1
         local combat = self.Combat
         if not combat or not combat:CanSendInput() or combat:IsBusyCasting() then

@@ -29,7 +29,7 @@ do
     -- rejection is now counted rather than guessed at.
     CONFIG.NLOrbAimCos = 0.88        -- within about 28 degrees of straight at us
     CONFIG.NLOrbLockTime = 0.35      -- and holding that for this long
-    CONFIG.NLOrbWatch = 150          -- studs: close enough to be ours
+    CONFIG.NLOrbWatch = 420          -- watch the arena from spawn, not only nearby orbs
     -- An orb 100 studs out is not urgent - it travels at walking pace, so there
     -- is time to keep fighting and deal with it when it is actually close.
     -- Running the errand from the moment it spawns meant the fight was spent
@@ -37,7 +37,7 @@ do
     -- 55 was set when we fought Bob from 40 studs. We now hold him at up to 140,
     -- so an orb inside 55 studs of us is one that has already crossed most of
     -- the arena - by then the errand is a panic, not a plan.
-    CONFIG.NLOrbAct = 120            -- only start the errand inside this
+    CONFIG.NLOrbAct = 420            -- intercept as soon as ownership is known
     CONFIG.NLOrbHold = 1.5           -- seconds a spotted orb keeps the errand alive
     -- How far behind the crystal we stand. 46 came from the same phantom blast
     -- as the escape below it: with nothing to be thrown clear of, the only job
@@ -112,6 +112,8 @@ do
         local any = false
         for _, orb in ipairs(orbs(now)) do
             any = true
+            if self.NLTrackedOrb and self.NLTrackedOrb.Part==orb.Part then return orb end
+            if #Players:GetPlayers()==1 then return orb end
             local toUs = flatten(root.Position - orb.Part.Position)
             local range = toUs.Magnitude
             if range <= CONFIG.NLOrbWatch and range > 1 then
@@ -154,11 +156,25 @@ do
             return
         end
         local now = os.clock()
+        local enemy=self.CurrentEnemy
+        if not enemy or not enemy.Model or normalizeEnemyName(enemy.Model.Name)~="bob the frost giant" then
+            self.NLTrackedOrb=nil
+            solver.NLOrbGoal=nil
+            solver.NLOrbUntil=nil
+            return
+        end
+
+        if self.NLTrackedOrb and not self.NLTrackedOrb.Part.Parent then
+            self.NLTrackedOrb=nil
+            solver.NLOrbUntil=now+CONFIG.NLOrbSettle
+            return
+        end
 
         local ok, orb = pcall(mine, self, root, now)
         if not ok or not orb then
             return
         end
+        self.NLTrackedOrb=orb
         if flatten(root.Position - orb.Part.Position).Magnitude > CONFIG.NLOrbAct then
             note(self, "ours, but still too far to act")
             return    -- still far: keep fighting, it is coming at walking pace

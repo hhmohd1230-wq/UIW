@@ -63,7 +63,7 @@ do
     -- any other point in the fight: the difference between clearing the edge of
     -- a wave and being caught by it is usually a stride.
     local function bossNearby(controller)
-        local enemy = controller.Target or controller.CurrentTarget
+        local enemy = controller.CurrentEnemy
         local model = enemy and enemy.Model
         if not model then return false end
         local name = model.Name
@@ -128,30 +128,53 @@ do
 
     function UIWController:WatchChampionReturn()
         if not self.AutoCombat then return end
-        local enemy = self.Target or self.CurrentTarget
+        local enemy = self.CurrentEnemy
         local model = enemy and enemy.Model
         if not model or not model.Name:find("Champion") then
             self.ChampSeenY = nil
+            self.ChampWasHigh=nil
+            self.ChampFloorAt=nil
+            self.ChampModel=nil
+            if self.Dodger then self.Dodger.NLChampWide=nil end
             return
         end
         local root = enemy.Root
         if not root or not root.Parent then return end
         local now = os.clock()
         local y = root.Position.Y
-        local was = self.ChampSeenY
+        local playerRoot=self.Character and self.Character.Root
+        if not playerRoot then return end
+        if self.ChampModel~=model then
+            self.ChampModel=model
+            self.ChampWasHigh=nil
+            self.ChampFloorAt=nil
+            self.ChampFloorDuration=nil
+            self.ChampFloorSamples=0
+            self.ChampWideUntil=0
+        end
+        local high=y-playerRoot.Position.Y>=CONFIG.ChampionRiseStuds
+        local wasHigh=self.ChampWasHigh
+        self.ChampWasHigh=high
         self.ChampSeenY = y
-        if not was then return end
+        if wasHigh==nil then return end
 
-        if was - y >= CONFIG.ChampionDropStuds then
+        if wasHigh and not high then
             -- He is coming down. The slam lands where he lands, so the useful
             -- thing is distance from him, immediately, and the radial exit in
             -- the solver does the rest once the disc exists.
-            self.ChampWideUntil = math.max(self.ChampWideUntil or 0,
-                now + CONFIG.ChampionDropHold)
+            self.ChampWideUntil=0
+            self.ChampFloorAt=now
             self.ChampDrops = (self.ChampDrops or 0) + 1
         end
 
-        if y - was >= CONFIG.ChampionRiseStuds then
+        if high and not wasHigh then
+            local duration=self.ChampFloorAt and now-self.ChampFloorAt
+            if duration and duration>=2 and duration<=45 then
+                local previous=self.ChampFloorDuration
+                self.ChampFloorSamples=(previous and math.abs(previous-duration)<=1) and (self.ChampFloorSamples+1) or 1
+                self.ChampFloorDuration=duration
+            end
+            self.ChampFloorAt=nil
             self.ChampWideUntil = now + CONFIG.ChampionRiseHold
             self.ChampReturns = (self.ChampReturns or 0) + 1
             -- Speed first: the room we want is several strides away and the
@@ -173,7 +196,11 @@ do
         -- While the window is open, hold the outer radius.
         local solver = self.Dodger
         if solver then
-            solver.NLChampWide = (now < (self.ChampWideUntil or 0)) or nil
+            local due=not high and self.ChampFloorAt and self.ChampFloorDuration
+                and (self.ChampFloorSamples or 0)>=2
+                and now-self.ChampFloorAt>=self.ChampFloorDuration-0.6
+                and now-self.ChampFloorAt<=self.ChampFloorDuration+1
+            solver.NLChampWide = (due or now < (self.ChampWideUntil or 0)) or nil
         end
     end
 
