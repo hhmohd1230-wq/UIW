@@ -654,6 +654,9 @@ do
     function DodgeSolver:FindEmergencyOrientation(preferred, targetYaw)
         local bestDirection, bestYaw = nil, nil
         local bestScore = -math.huge
+        local controller = getgenv().UIW
+        local yawOffsets = controller and controller.EnchantedDragonPerf
+            and { 0 } or { 90, -90, 0 }
 
         for _, angle in ipairs(CONFIG.DodgeAngles) do
             local direction = unit(rotateXZ(preferred, angle))
@@ -661,7 +664,7 @@ do
 
             -- 0 = facing the movement (thin along travel),
             -- ±90 = side-on (thin across travel, squeezes between hitboxes).
-            for _, yawOffset in ipairs({ 90, -90, 0 }) do
+            for _, yawOffset in ipairs(yawOffsets) do
                 local yaw = movementYaw + math.rad(yawOffset)
                 local score = self:ScoreCandidate(direction, preferred, yaw)
 
@@ -1593,4 +1596,3 @@ do
 
     print("[UIW] v42 combat + dodge section applied")
 end
-

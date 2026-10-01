@@ -1,5 +1,5 @@
 -- Optional open-map build only; Bob-specific aiming and observed damage feedback.
-do
+local function setupBobFeedback()
     local c = getgenv().UIW
     local d = workspace:FindFirstChild("dungeonName")
     if not c or not d or d.Value ~= "Northern Lands" then return end
@@ -75,3 +75,5 @@ do
         return direction,facing,emergency,dodging
     end
 end
+
+setupBobFeedback()

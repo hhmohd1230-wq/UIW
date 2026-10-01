@@ -8,6 +8,9 @@ function DungeonModel.new()
         LastKnownRoom = 1,
         EnemyCache = {},
         LastEnemyRefresh = 0,
+        HasSeenEnemies = false,
+        LastStreamRequest = 0,
+        StreamRequestPending = false,
     }, DungeonModel)
 end
 
@@ -59,15 +62,36 @@ function DungeonModel:GetAliveEnemies(force)
 
     table.clear(self.EnemyCache)
 
+    local character = LocalPlayer.Character
+    local playerRoot = character and character:FindFirstChild("HumanoidRootPart")
+    local nearestMissingPosition, nearestMissingDistance = nil, math.huge
+
+    local function collectEnemy(model, roomNumber)
+        local enemy = self:WrapEnemy(model, roomNumber)
+        if enemy then
+            table.insert(self.EnemyCache, enemy)
+            return
+        end
+
+        -- A streamed-out enemy can keep its Model and Humanoid while all
+        -- body parts are absent. The model pivot still locates it.
+        if not playerRoot or not model:IsA("Model") then return end
+        local humanoid = model:FindFirstChildOfClass("Humanoid")
+        if not humanoid or humanoid.Health <= 0 then return end
+        local ok, pivot = pcall(function() return model:GetPivot().Position end)
+        if not ok then return end
+        local distance = (pivot - playerRoot.Position).Magnitude
+        if distance < nearestMissingDistance then
+            nearestMissingPosition, nearestMissingDistance = pivot, distance
+        end
+    end
+
     for roomNumber, room in pairs(self.Rooms) do
         local folder = room:FindFirstChild("enemyFolder")
 
         if folder then
             for _, model in ipairs(folder:GetChildren()) do
-                local enemy = self:WrapEnemy(model, roomNumber)
-                if enemy then
-                    table.insert(self.EnemyCache, enemy)
-                end
+                collectEnemy(model, roomNumber)
             end
         end
     end
@@ -78,12 +102,24 @@ function DungeonModel:GetAliveEnemies(force)
 
         if folder then
             for _, model in ipairs(folder:GetChildren()) do
-                local enemy = self:WrapEnemy(model, 999)
-                if enemy then
-                    table.insert(self.EnemyCache, enemy)
-                end
+                collectEnemy(model, 999)
             end
         end
+    end
+
+    if #self.EnemyCache > 0 then
+        self.HasSeenEnemies = true
+    elseif nearestMissingPosition and not self.StreamRequestPending
+        and now - self.LastStreamRequest >= 2
+    then
+        self.LastStreamRequest = now
+        self.StreamRequestPending = true
+        task.spawn(function()
+            pcall(function()
+                LocalPlayer:RequestStreamAroundAsync(nearestMissingPosition)
+            end)
+            self.StreamRequestPending = false
+        end)
     end
 
     return self.EnemyCache
@@ -292,6 +328,15 @@ function DungeonModel:GetNextReachableCheckpointTowardRoom(position, targetRoom,
 end
 
 function DungeonModel:GetProgressionGoal(position)
+    -- Underworld's first wave appears after the dungeon-start signal. Before
+    -- that, the only checkpoints are several locked rooms away.
+    local dungeonName = Workspace:FindFirstChild("dungeonName")
+    if not self.HasSeenEnemies
+        and (not dungeonName or dungeonName.Value == "The Underworld")
+    then
+        return nil
+    end
+
     for roomNumber = math.max(self.LastKnownRoom, 1), 9 do
         local room = self.Rooms[roomNumber]
 
@@ -310,4 +355,3 @@ function DungeonModel:GetProgressionGoal(position)
 
     return nil
 end
-

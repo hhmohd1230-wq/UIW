@@ -677,9 +677,11 @@ function HUD.new(controller)
 
     tabButton("Home", "⌂", 1)
     tabButton("Automation", "⚔", 2)
-    tabButton("Settings", "⚙", 3)
-    tabButton("Configs", "▤", 4)
-    tabButton("Inventory", "▦", 5)
+    tabButton("Carry", "♣", 3)
+    tabButton("Healer", "+", 4)
+    tabButton("Settings", "⚙", 5)
+    tabButton("Configs", "▤", 6)
+    tabButton("Inventory", "▦", 7)
     local inventoryPage = newPage("Inventory", false)
     if UIKit.BuildInventoryPage then UIKit.BuildInventoryPage(self, inventoryPage, controller) end
 
@@ -939,6 +941,201 @@ function HUD.new(controller)
             end
         end)
 
+    toggleRow(automationPage, 10, "Use Recorded Auto Route",
+        "For hosts, healers and alts: follows the saved path and pauses for combat",
+        function() return controller.HealerUseRecordedPath end,
+        function(value) controller:SetHealerOption("HealerUseRecordedPath", value) end)
+
+    toggleRow(automationPage, 11, "Show Recorded Route",
+        "Draws the saved route in blue without hiding the live yellow path",
+        function() return controller.ShowRecordedPath end,
+        function(value) controller:SetHealerOption("ShowRecordedPath", value) end)
+
+    local routeCard = UIKit.Card(automationPage, { Size = UDim2.new(1, 0, 0, 112), LayoutOrder = 12 })
+    self.HealerRouteStatusLabel = UIKit.Label(routeCard, {
+        Position = UDim2.fromOffset(14, 8), Size = UDim2.new(1, -28, 0, 38),
+        Font = UIKit.Fonts.Semi, TextSize = 11, TextWrapped = true,
+        TextYAlignment = Enum.TextYAlignment.Top,
+        Text = "No recorded route for this dungeon", ZIndex = 3,
+    })
+    self.HealerRecordButton = UIKit.Button(routeCard, {
+        Position = UDim2.fromOffset(14, 58), Size = UDim2.new(0.6, -18, 0, 38),
+        Text = "Start recording", ZIndex = 3,
+    })
+    local clearRouteButton = UIKit.Button(routeCard, {
+        Position = UDim2.new(0.6, 4, 0, 58), Size = UDim2.new(0.4, -18, 0, 38),
+        Text = "Clear", ZIndex = 3,
+    })
+    UIKit.Corner(self.HealerRecordButton, 8)
+    UIKit.Corner(clearRouteButton, 8)
+    self.HealerRecordButton.MouseButton1Click:Connect(function()
+        if controller.HealerRecording then
+            controller:StopHealerRouteRecording()
+        else
+            controller:StartHealerRouteRecording()
+        end
+        self:RefreshHealer()
+    end)
+    clearRouteButton.MouseButton1Click:Connect(function()
+        controller:ClearHealerRecordedPath()
+        self:RefreshHealer()
+    end)
+
+    -----------------------------------------------------------------------
+    -- Carry
+    -----------------------------------------------------------------------
+    local carryPage = newPage("Carry", true)
+    pageHeader(carryPage, 0, "Carry", "Keep the host and listed alts together")
+
+    local carryStatusCard = UIKit.Card(carryPage, { Size = UDim2.new(1, 0, 0, 100), LayoutOrder = 1 })
+    self.CarryTargetLabel = UIKit.Label(carryStatusCard, {
+        Position = UDim2.fromOffset(14, 8), Size = UDim2.new(1, -28, 0, 35),
+        Font = UIKit.Fonts.Semi, TextSize = 13, TextWrapped = true,
+        TextYAlignment = Enum.TextYAlignment.Top, Text = "Set a host and alts", ZIndex = 3,
+    })
+    self.CarryStatusLabel = UIKit.Label(carryStatusCard, {
+        Position = UDim2.fromOffset(14, 48), Size = UDim2.new(1, -28, 0, 43),
+        TextSize = 11, TextColor3 = T.SubText, TextWrapped = true,
+        TextYAlignment = Enum.TextYAlignment.Top, Text = "Carry off", ZIndex = 3,
+    })
+
+    toggleRow(carryPage, 2, "Carry System", "Host creates parties; alts follow and join",
+        function() return controller.CarryEnabled end,
+        function(value) controller:SetCarryOption("CarryEnabled", value) end)
+
+    local function carryInput(order, title, placeholder, height, getter, key)
+        local card = UIKit.Card(carryPage, { Size = UDim2.new(1, 0, 0, height), LayoutOrder = order })
+        UIKit.Label(card, { Position = UDim2.fromOffset(14, 8), Size = UDim2.new(1, -28, 0, 18),
+            Font = UIKit.Fonts.Semi, TextSize = 13, Text = title, ZIndex = 3 })
+        local box = UIKit.New("TextBox", {
+            Position = UDim2.fromOffset(14, 30), Size = UDim2.new(1, -28, 0, height - 42),
+            BackgroundColor3 = T.Tile, BorderSizePixel = 0, ClearTextOnFocus = false,
+            Font = UIKit.Fonts.Body, TextSize = 12, TextColor3 = T.Text,
+            PlaceholderText = placeholder, PlaceholderColor3 = T.Muted,
+            Text = getter(), TextXAlignment = Enum.TextXAlignment.Left,
+            TextYAlignment = Enum.TextYAlignment.Top, TextWrapped = true,
+            MultiLine = key == "CarryAlts", ZIndex = 3, Parent = card,
+        })
+        UIKit.Corner(box, 8)
+        UIKit.Padding(box, 8, 5, 8, 5)
+        box.FocusLost:Connect(function()
+            controller:SetCarryOption(key, box.Text)
+            box.Text = getter()
+        end)
+        return box
+    end
+    self.CarryHostBox = carryInput(3, "Host username", "Main account username", 76,
+        function() return controller.CarryHostName end, "CarryHostName")
+    self.CarryAltsBox = carryInput(4, "Alt usernames", "Separate names with commas, spaces or new lines", 102,
+        function() return controller.CarryAlts end, "CarryAlts")
+
+    toggleRow(carryPage, 5, "Fixed Dungeon", "Off: progress by the lowest alt's level",
+        function() return controller.CarryMode == "Fixed" end,
+        function(value) controller:SetCarryOption("CarryMode", value and "Fixed" or "Auto") end)
+    toggleRow(carryPage, 6, "Hardcore", "Use Hardcore when the host creates the party",
+        function() return controller.CarryHardcore end,
+        function(value) controller:SetCarryOption("CarryHardcore", value) end)
+
+    local stageCard = UIKit.Card(carryPage, { Size = UDim2.new(1, 0, 0, 256), LayoutOrder = 7 })
+    UIKit.Label(stageCard, { Position = UDim2.fromOffset(14, 8), Size = UDim2.new(1, -28, 0, 18),
+        Font = UIKit.Fonts.Semi, TextSize = 13, Text = "Fixed dungeon and difficulty", ZIndex = 3 })
+    UIKit.Label(stageCard, { Position = UDim2.fromOffset(14, 27), Size = UDim2.new(1, -28, 0, 16),
+        TextSize = 10, TextColor3 = T.Muted,
+        Text = "Pick one below. Used when Fixed Dungeon is on.", ZIndex = 3 })
+    local stageList = UIKit.New("ScrollingFrame", {
+        Position = UDim2.fromOffset(10, 48), Size = UDim2.new(1, -20, 1, -58),
+        BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 4,
+        CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
+        ZIndex = 3, Parent = stageCard,
+    })
+    UIKit.New("UIListLayout", { Padding = UDim.new(0, 4),
+        SortOrder = Enum.SortOrder.LayoutOrder, Parent = stageList })
+    self.CarryStageButtons = {}
+    for index, stage in ipairs(CARRY_STAGES) do
+        local button = UIKit.Button(stageList, {
+            Size = UDim2.new(1, -8, 0, 30), BackgroundColor3 = T.Tile,
+            Font = UIKit.Fonts.Body, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left,
+            Text = string.format("  %s · %s (Lv %d)", stage.Name, stage.Difficulty, stage.Level),
+            LayoutOrder = index, ZIndex = 4,
+        })
+        UIKit.Corner(button, 6)
+        button.MouseButton1Click:Connect(function()
+            controller:SetCarryOption("CarryFixedStage", index)
+            self:RefreshCarry()
+        end)
+        self.CarryStageButtons[index] = button
+    end
+
+    -----------------------------------------------------------------------
+    -- Healer
+    -----------------------------------------------------------------------
+    local healerPage = newPage("Healer", true)
+    pageHeader(healerPage, 0, "Healer", "Follow and continuously support one player")
+
+    local healerStatusCard = UIKit.Card(healerPage, { Size = UDim2.new(1, 0, 0, 108), LayoutOrder = 1 })
+    self.HealerStatusLabel = UIKit.Label(healerStatusCard, {
+        Position = UDim2.fromOffset(14, 9), Size = UDim2.new(1, -28, 0, 42),
+        Font = UIKit.Fonts.Semi, TextSize = 13, TextWrapped = true,
+        TextYAlignment = Enum.TextYAlignment.Top, Text = "Healer off", ZIndex = 3,
+    })
+    self.HealerLoadoutLabel = UIKit.Label(healerStatusCard, {
+        Position = UDim2.fromOffset(14, 54), Size = UDim2.new(1, -28, 0, 45),
+        TextSize = 10, TextColor3 = T.SubText, TextWrapped = true,
+        TextYAlignment = Enum.TextYAlignment.Top, Text = "Loadout: waiting", ZIndex = 3,
+    })
+
+    toggleRow(healerPage, 2, "Healer System", "Disables attacks, follows the target and forces Auto Dodge on",
+        function() return controller.HealerEnabled end,
+        function(value) controller:SetHealerOption("HealerEnabled", value) end)
+
+    local targetCard = UIKit.Card(healerPage, { Size = UDim2.new(1, 0, 0, 78), LayoutOrder = 3 })
+    UIKit.Label(targetCard, { Position = UDim2.fromOffset(14, 8), Size = UDim2.new(1, -28, 0, 18),
+        Font = UIKit.Fonts.Semi, TextSize = 13, Text = "Player to heal", ZIndex = 3 })
+    self.HealerTargetBox = UIKit.New("TextBox", {
+        Position = UDim2.fromOffset(14, 34), Size = UDim2.new(1, -28, 0, 32),
+        BackgroundColor3 = T.Tile, BorderSizePixel = 0, ClearTextOnFocus = false,
+        Font = UIKit.Fonts.Body, TextSize = 12, TextColor3 = T.Text,
+        PlaceholderText = "Blank = Carry host", PlaceholderColor3 = T.Muted,
+        Text = controller.HealerTargetName, TextXAlignment = Enum.TextXAlignment.Left,
+        ZIndex = 3, Parent = targetCard,
+    })
+    UIKit.Corner(self.HealerTargetBox, 8)
+    UIKit.Padding(self.HealerTargetBox, 8, 0, 8, 0)
+    self.HealerTargetBox.FocusLost:Connect(function()
+        controller:SetHealerOption("HealerTargetName", self.HealerTargetBox.Text)
+        self.HealerTargetBox.Text = controller.HealerTargetName
+    end)
+
+    toggleRow(healerPage, 4, "Auto Tank Armor",
+        "Equips the owned chest and helmet with the highest health; turn off for manual armor",
+        function() return controller.HealerAutoEquip end,
+        function(value) controller:SetHealerOption("HealerAutoEquip", value) end)
+
+    toggleRow(healerPage, 5, "Auto Healing Spells",
+        "Equips the two best owned heals; turn off to keep your own Q and E spells",
+        function() return controller.HealerAutoSpells end,
+        function(value) controller:SetHealerOption("HealerAutoSpells", value) end)
+
+    local distanceCard = UIKit.Card(healerPage, { Size = UDim2.new(1, 0, 0, 80), LayoutOrder = 6 })
+    UIKit.Label(distanceCard, { Position = UDim2.fromOffset(14, 9), Size = UDim2.new(1, -110, 0, 18),
+        Font = UIKit.Fonts.Semi, TextSize = 13, Text = "Follow distance", ZIndex = 3 })
+    UIKit.Label(distanceCard, { Position = UDim2.fromOffset(14, 29), Size = UDim2.new(1, -110, 0, 35),
+        TextSize = 10, TextColor3 = T.SubText, TextWrapped = true,
+        Text = "Fixed at 10 studs so every local healing spell reaches the host", ZIndex = 3 })
+    self.HealerDistanceBox = UIKit.New("TextBox", {
+        AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -14, 0.5, 0),
+        Size = UDim2.fromOffset(76, 34), BackgroundColor3 = T.Tile, BorderSizePixel = 0,
+        ClearTextOnFocus = false, Font = UIKit.Fonts.Semi, TextSize = 13,
+        TextEditable = false,
+        TextColor3 = T.Text, Text = tostring(controller.HealerFollowDistance),
+        TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 3, Parent = distanceCard,
+    })
+    UIKit.Corner(self.HealerDistanceBox, 8)
+    self.HealerDistanceBox.FocusLost:Connect(function()
+        controller:SetHealerOption("HealerFollowDistance", self.HealerDistanceBox.Text)
+        self.HealerDistanceBox.Text = tostring(controller.HealerFollowDistance)
+    end)
+
     -----------------------------------------------------------------------
     -- Settings
     -----------------------------------------------------------------------
@@ -1080,7 +1277,23 @@ function HUD.new(controller)
         function() return CONFIG.DamageCastRange end,
         function(value) CONFIG.DamageCastRange = value end, 30, 80, 1)
 
-    local keysCard = UIKit.Card(settingsPage, { Size = UDim2.new(1, 0, 0, 92), LayoutOrder = 4 })
+    toggleRow(settingsPage, 4, "FPS Limiter", "Caps frame rate while UIW runs",
+        function() return controller.FPSLimitEnabled end,
+        function(value)
+            controller.FPSLimitEnabled = value
+            controller:ApplyDisplaySettings()
+        end)
+    sliderRow(5, "FPS Limit", "Active when the limiter is on (15-120 FPS)",
+        function() return controller.FPSCap end,
+        function(value)
+            controller.FPSCap = value
+            controller:ApplyDisplaySettings()
+        end, 15, 120, 5)
+    toggleRow(settingsPage, 6, "Black Screen", "Hides 3D, caps at 15 FPS and resumes after teleport; F8 shows game",
+        function() return controller.BlackScreen end,
+        function(value) controller:SetBlackScreen(value) end)
+
+    local keysCard = UIKit.Card(settingsPage, { Size = UDim2.new(1, 0, 0, 92), LayoutOrder = 7 })
     UIKit.Label(keysCard, { Position = UDim2.fromOffset(14, 8), Size = UDim2.new(1, -28, 0, 18),
         Font = UIKit.Fonts.Semi, TextSize = 13, Text = "Window", ZIndex = 3 })
     UIKit.Label(keysCard, { Position = UDim2.fromOffset(14, 26), Size = UDim2.new(1, -28, 0, 14),
@@ -1113,7 +1326,7 @@ function HUD.new(controller)
     -- Configs
     -----------------------------------------------------------------------
     local configsPage = newPage("Configs", true)
-    pageHeader(configsPage, 0, "Configs", "Save, load and delete your setups")
+    pageHeader(configsPage, 0, "Configs", "Saved separately for this Roblox account")
 
     -- save row
     local saveCard = UIKit.Card(configsPage, { Size = UDim2.new(1, 0, 0, 56), LayoutOrder = 1 })
@@ -1308,7 +1521,7 @@ function HUD.new(controller)
         function() return controller.AutoExecuteOnTeleport end,
         function(value) controller:SetAutoExecute(value) end, configSwitches)
 
-    local infoCard = UIKit.Card(configsPage, { Size = UDim2.new(1, 0, 0, 84), LayoutOrder = 5 })
+    local infoCard = UIKit.Card(configsPage, { Size = UDim2.new(1, 0, 0, 122), LayoutOrder = 5 })
     self.ScriptPathLabel = UIKit.Label(infoCard, {
         Position = UDim2.fromOffset(14, 8),
         Size = UDim2.new(1, -28, 0, 30),
@@ -1343,6 +1556,19 @@ function HUD.new(controller)
     UIKit.Corner(refreshButton, 8)
     refreshButton.MouseButton1Click:Connect(function()
         self:RefreshConfigs()
+    end)
+    local importButton = UIKit.Button(infoCard, {
+        Position = UDim2.new(0, 14, 0, 82),
+        Size = UDim2.new(0, 268, 0, 30),
+        BackgroundColor3 = T.Tile,
+        Font = UIKit.Fonts.Semi,
+        TextSize = 12,
+        Text = "Import old shared configs to this account",
+        ZIndex = 3,
+    })
+    UIKit.Corner(importButton, 8)
+    importButton.MouseButton1Click:Connect(function()
+        controller:ImportLegacyConfigs()
     end)
 
     table.insert(self.ConfigRefreshers, function()
@@ -1462,6 +1688,8 @@ function HUD.new(controller)
     selectTab(Workspace:FindFirstChild("dungeonName") and "Home" or "Inventory")
     self:RefreshControls()
     self:RefreshConfigs()
+    self:RefreshCarry()
+    self:RefreshHealer()
     if controller.StartupNotice then
         task.delay(0.5, function()
             self:Notify(controller.StartupNotice, "success")
@@ -1620,6 +1848,49 @@ function HUD:RefreshControls()
     end
     if not enabled then
         self:SetStatus("IDLE", "paused")
+    end
+end
+
+function HUD:RefreshCarry()
+    if not self.CarryStatusLabel then return end
+    local controller = self.Controller
+    self.CarryStatusLabel.Text = controller.CarryStatus or (controller.CarryEnabled and "Starting carry" or "Carry off")
+    local index, reason, lowest = controller:CarryTarget()
+    if index then
+        local stage = CARRY_STAGES[index]
+        local nextStage = CARRY_STAGES[index + 1]
+        self.CarryTargetLabel.Text = string.format("Target: %s %s | lowest alt Lv %d%s",
+            stage.Name, stage.Difficulty, lowest,
+            controller.CarryMode == "Auto" and nextStage and (" | next at " .. nextStage.Level) or "")
+    else
+        self.CarryTargetLabel.Text = reason or "Set a host and alts"
+    end
+    for buttonIndex, button in ipairs(self.CarryStageButtons or {}) do
+        button.BackgroundColor3 = buttonIndex == controller.CarryFixedStage
+            and UIKit.Theme.Accent or UIKit.Theme.Tile
+    end
+end
+
+function HUD:RefreshHealer()
+    if not self.HealerStatusLabel then return end
+    local controller = self.Controller
+    self.HealerStatusLabel.Text = controller.HealerStatus
+        or (controller.HealerEnabled and "Starting healer" or "Healer off")
+    self.HealerLoadoutLabel.Text = "Loadout: " .. tostring(controller.HealerLoadout or "waiting")
+    if self.HealerRouteStatusLabel then
+        self.HealerRouteStatusLabel.Text = controller.HealerRouteStatus
+            or "No recorded route for this dungeon"
+    end
+    if self.HealerRecordButton then
+        self.HealerRecordButton.Text = controller.HealerRecording and "Stop & save" or "Start recording"
+        self.HealerRecordButton.BackgroundColor3 = controller.HealerRecording
+            and UIKit.Theme.Warn or UIKit.Theme.Tile
+    end
+    if self.HealerTargetBox and not self.HealerTargetBox:IsFocused() then
+        self.HealerTargetBox.Text = controller.HealerTargetName or ""
+    end
+    if self.HealerDistanceBox and not self.HealerDistanceBox:IsFocused() then
+        self.HealerDistanceBox.Text = tostring(controller.HealerFollowDistance or 10)
     end
 end
 

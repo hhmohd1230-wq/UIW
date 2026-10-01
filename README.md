@@ -3,6 +3,88 @@
 Roblox dungeon automation script (Volt executor). The source lives in `src/`,
 split by area; `dist/UIW.lua` is the joined, ready-to-run file.
 
+With Auto Combat enabled, UIW also swings the equipped weapon at its attack
+speed during a started dungeon, pausing while casting or in a peaceful area.
+
+The Settings tab has an FPS limiter (15-120 FPS) and Black Screen mode. Black
+Screen hides 3D rendering and caps the client at 15 FPS; press F8 or the on-screen
+button to return. Both choices can be saved in a named config. Black Screen also
+remembers its on/off state for the same account and queues UIW to run again
+after a teleport when enabled.
+
+Map scenery clearing runs only in Northern Lands. Other dungeons keep their
+original map parts and collisions, including during boss fights.
+
+The Enchanted Forest Dragon automatically enables the strongest adaptive
+performance mode before its first attack burst. Dragon particles and the large
+one-shot beam decoration are removed locally, including particles, beams,
+trails, textures, sounds and lights. Decorative attack parts have rendering,
+touch and query work disabled while warning and hitbox geometry remains. Effect cleanup is spread across
+frames, and hazard discovery avoids rescanning the same growing attack model.
+Cross Shot and X Shot keep one equivalent danger volume per attack instead of
+processing overlapping warning and hitbox copies. Smart Dodge uses a smaller
+dragon-specific candidate set so it remains responsive during dense volleys.
+
+The **Carry** tab coordinates a host and any listed alt usernames. Enable it on
+each account, enter the same host and alt list, and leave **Fixed Dungeon** off
+for automatic progression. The host waits until every listed alt has loaded in
+the lobby, creates a private party at the highest difficulty the lowest alt can
+enter, whitelists the alts and starts when they have all joined. Alts use the
+game's friend join control if they land in another lobby. The lobby Play button
+is pressed automatically. After the dungeon finishes and rewards arrive, the
+host uses the in-dungeon Retry while the lowest alt remains below the next level
+requirement. The group returns to the lobby only when the next dungeon or
+difficulty unlocks, then creates that newly unlocked stage. **Fixed Dungeon**
+keeps retrying the chosen dungeon and difficulty. Carry
+choices are saved per account and queue
+UIW after teleport while Carry is enabled. Master Auto remains in the state
+chosen on each account. The game still controls party and server capacity.
+
+**Use Recorded Auto Route** is available on the Automation tab for hosts,
+healers and ordinary alts. Start recording, manually walk the full dungeon
+route, and let completion auto-save it (or press **Stop & save**). On later
+runs, the account follows the saved waypoints until an enemy group, boss or map
+mechanic needs attention. It pauses the route for combat while keeping Smart
+Dodge active, then resumes from the nearest saved waypoint after the fight.
+Each account and dungeon has its own route. Turning Master Auto off always
+leaves that account paused; Carry and Healer do not turn it back on.
+Recorded routes are compacted to remove redundant samples and use visible
+forward lookahead, reducing path computations and keeping movement smooth.
+**Show Recorded Route** draws the saved path in blue alongside the live yellow
+path. When an enemy is above or below the account, the saved route continues to
+the correct floor before combat takes over.
+Both recorded and live paths commit through the full stair transition and keep
+moving briefly past the crest onto the platform edge before boss spacing takes
+control. Recorded combat handoff now occurs inside normal casting range.
+
+The **Healer** tab follows one selected player and heals even when Master Auto
+is off, while keeping Smart Dodge active.
+When its target is blank, it automatically follows the configured Carry host.
+It stops offensive casts, faces the selected player and uses any equipped
+healing spell when either the target or the healer loses health. When two
+healing spells are equipped, a shared coverage timer spaces their casts so the
+second spell is preserved instead of being fired at the same moment. **Auto
+Tank Armor** selects the owned chest and helmet with the highest health. Turn it
+off to keep manually equipped armor. **Auto Healing Spells** is separate and is
+off by default, so manually selected Q and E spells remain unchanged; turn it
+on to equip the two best owned healing spells.
+Map-wide healing can cast immediately; local heals wait until the healer has
+chased within that spell's effective range.
+The healer pathfinder treats vertical distance as real distance, jumps early on
+short climbs, predicts the moving host and forces a fresh route when movement
+stalls. It never raises WalkSpeed for fast follow. When the host is at least 45
+studs away, it uses an available Life Dash or Revitalize movement buff. If the
+host activates a speed buff while ahead of the healer, the healer mirrors it
+with Revitalize. These casts use the same shared healing timer. A healer using the
+recorded route can traverse it in either direction to reach its selected host.
+The healer holds at 10 studs so every supported local heal has range. When
+a wall, prop or stuck point blocks that approach, short collision-free recovery
+pulses pass the obstruction and restore character collision immediately after.
+Recovery also activates whenever the healer is not reducing its distance to
+the host, or whenever it falls at least 20 studs behind.
+The target, follow distance and healer choices are saved per Roblox account and
+continue after dungeon teleports.
+
 Base version: **v44.20** (from `UIW_v44.17.lua`). The split is lossless: building
 reproduces that file byte for byte.
 
@@ -13,8 +95,7 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/hhmohd1230-wq/UIW/mai
 ```
 
 The loader always takes the current build from GitHub, saves it next to the
-executor (`UIW/UIW_main.lua`, `UIW_flat.lua`, `UIW_stable.lua` — so Auto
-Execute still works after a teleport) and falls back to that saved copy only
+executor (`UIW/UIW.lua` — so Auto Execute still works after a teleport) and falls back to that saved copy only
 when GitHub cannot be reached. To pick another build, set one of these before
 the line above:
 
@@ -63,8 +144,8 @@ Everything is in the **Configs** tab of the window.
 
 | File (Volt `workspace/UIW/`) | What it holds |
 | --- | --- |
-| `configs/<name>.json` | One saved setup (switches + sliders) |
-| `uiw_meta.json` | Which config loads on start (`AutoLoad`), `AutoExecute`, `ScriptPath` |
+| `accounts/<RobloxUserId>/configs/<name>.json` | One saved setup (switches + sliders) for that account |
+| `accounts/<RobloxUserId>/uiw_meta.json` | That account's Auto Load, Auto Execute, script path and Black Screen state |
 
 * **Save** writes the current setup under the typed name. **Load** applies it.
 * **Delete** asks once more ("Sure?"). Deleting the config that is in use or
@@ -76,7 +157,10 @@ Everything is in the **Configs** tab of the window.
   `ScriptPath` (default `UIW/UIW.lua`, which `build.cmd -Volt` writes). To use
   another file, set `getgenv().UIW_SCRIPT_PATH = "UIW/other.lua"` before
   loading the script once.
-* An old `UIW/settings.json` is moved to `configs/default.json` on first start.
+* Old shared configs stay in `UIW/configs`. Use **Import old shared configs to
+  this account** on the Configs tab to copy them explicitly. Existing account
+  configs are never overwritten. Each account sets its own Auto Load and Auto
+  Execute choices.
 
 ## Layout
 
@@ -96,6 +180,8 @@ Everything is in the **Configs** tab of the window.
 | `src/core/dodge_solver.lua` | `DodgeSolver` |
 | `src/core/combat.lua` | `CombatController` (Q/E casting) |
 | `src/core/controller.lua` | `UIWController` (targets, main loop) |
+| `src/carry/system.lua` | Host and alt party coordination, reward gated retry and stage selection |
+| `src/healer/system.lua` | Target following, healing casts and maximum spell power loadout |
 | `src/ui/hud.lua` | The hub window (tabs, cards, toasts, config page) |
 | `src/ui/*` | Hitbox ESP, path ESP, target health bar, tactical display |
 | `src/patches/*` | Version layers that extend the classes above (v42 ... v44.20) |

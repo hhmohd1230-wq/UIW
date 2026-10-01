@@ -291,6 +291,45 @@ local SETTINGS_FOLDER = "UIW"
 local SETTINGS_FILE = SETTINGS_FOLDER .. "/settings.json"
 local AUTOEXEC_FILE = "UIW/UIW_Aura_Mage_v13.lua"
 
+-- Ordered by the level needed to enter each mode. Carry progression uses the
+-- lowest configured alt, not the host's level.
+local CARRY_STAGES = {
+    { Name = "Desert Temple", Difficulty = "Easy", Level = 1 },
+    { Name = "Desert Temple", Difficulty = "Medium", Level = 6 },
+    { Name = "Desert Temple", Difficulty = "Hard", Level = 12 },
+    { Name = "Desert Temple", Difficulty = "Insane", Level = 20 },
+    { Name = "Desert Temple", Difficulty = "Nightmare", Level = 27 },
+    { Name = "Winter Outpost", Difficulty = "Easy", Level = 30 },
+    { Name = "Winter Outpost", Difficulty = "Medium", Level = 40 },
+    { Name = "Winter Outpost", Difficulty = "Hard", Level = 45 },
+    { Name = "Winter Outpost", Difficulty = "Insane", Level = 50 },
+    { Name = "Winter Outpost", Difficulty = "Nightmare", Level = 55 },
+    { Name = "Pirate Island", Difficulty = "Insane", Level = 60 },
+    { Name = "Pirate Island", Difficulty = "Nightmare", Level = 65 },
+    { Name = "King's Castle", Difficulty = "Insane", Level = 70 },
+    { Name = "King's Castle", Difficulty = "Nightmare", Level = 75 },
+    { Name = "The Underworld", Difficulty = "Insane", Level = 80 },
+    { Name = "The Underworld", Difficulty = "Nightmare", Level = 85 },
+    { Name = "Samurai Palace", Difficulty = "Insane", Level = 90 },
+    { Name = "Samurai Palace", Difficulty = "Nightmare", Level = 95 },
+    { Name = "The Canals", Difficulty = "Insane", Level = 100 },
+    { Name = "The Canals", Difficulty = "Nightmare", Level = 105 },
+    { Name = "Ghastly Harbor", Difficulty = "Insane", Level = 110 },
+    { Name = "Ghastly Harbor", Difficulty = "Nightmare", Level = 115 },
+    { Name = "Steampunk Sewers", Difficulty = "Insane", Level = 120 },
+    { Name = "Steampunk Sewers", Difficulty = "Nightmare", Level = 125 },
+    { Name = "Orbital Outpost", Difficulty = "Insane", Level = 140 },
+    { Name = "Orbital Outpost", Difficulty = "Nightmare", Level = 145 },
+    { Name = "Volcanic Chambers", Difficulty = "Insane", Level = 150 },
+    { Name = "Volcanic Chambers", Difficulty = "Nightmare", Level = 155 },
+    { Name = "Aquatic Temple", Difficulty = "Insane", Level = 160 },
+    { Name = "Aquatic Temple", Difficulty = "Nightmare", Level = 165 },
+    { Name = "Enchanted Forest", Difficulty = "Insane", Level = 170 },
+    { Name = "Enchanted Forest", Difficulty = "Nightmare", Level = 175 },
+    { Name = "Northern Lands", Difficulty = "Insane", Level = 180 },
+    { Name = "Northern Lands", Difficulty = "Nightmare", Level = 185 },
+}
+
 local DEFAULT_SETTINGS = {
     Enabled = true,
     AutoCombat = true,
@@ -300,13 +339,25 @@ local DEFAULT_SETTINGS = {
     AutoRetryEnabled = true,
     ShowAura = true,
     ShowMobGroups = true,
+    FPSLimitEnabled = false,
+    FPSCap = 30,
+    BlackScreen = false,
+    CarryEnabled = false,
+    CarryHostName = "",
+    CarryAlts = "",
+    CarryMode = "Auto",
+    CarryFixedStage = 1,
+    CarryHardcore = false,
+    HealerEnabled = false,
+    HealerTargetName = "",
+    HealerAutoEquip = true,
+    HealerFollowDistance = 10,
     AutoExecuteOnTeleport = false,
     LowEffects = true,
     WalkSpeed = 16,
     DesiredCombatRange = 42,
     DamageCastRange = 64,
 }
-
 -- v44: crash-safe file access. Every call is protected, the UIW folder is
 -- created before writing, and a file is only rewritten when its content
 -- changed and not more often than MinInterval seconds.
@@ -426,13 +477,14 @@ function SafeFile.Delete(path)
 end
 
 ---------------------------------------------------------------------------
--- Named configs: UIW/configs/<name>.json
--- Script-wide switches (which config loads on start, auto execute, where
--- the script file is) live in UIW/uiw_meta.json.
+-- Each Roblox account owns its configs and startup choices. Do not silently
+-- import the old shared files: that would copy one account's settings to alts.
 ---------------------------------------------------------------------------
+local ACCOUNT_FOLDER = SETTINGS_FOLDER .. "/accounts/" .. tostring(LocalPlayer.UserId)
 local ConfigStore = {
-    Folder = SETTINGS_FOLDER .. "/configs",
-    MetaFile = SETTINGS_FOLDER .. "/uiw_meta.json",
+    AccountFolder = ACCOUNT_FOLDER,
+    Folder = ACCOUNT_FOLDER .. "/configs",
+    MetaFile = ACCOUNT_FOLDER .. "/uiw_meta.json",
     DefaultScriptPath = SETTINGS_FOLDER .. "/UIW.lua",
 }
 
@@ -456,15 +508,22 @@ function ConfigStore.PathFor(name)
     return ConfigStore.Folder .. "/" .. name .. ".json"
 end
 
-function ConfigStore.EnsureFolder()
+function ConfigStore.EnsureAccountFolder()
     SafeFile.EnsureFolder()
     if type(isfolder) ~= "function" or type(makefolder) ~= "function" then
         return
     end
-    local ok, exists = pcall(isfolder, ConfigStore.Folder)
-    if not (ok and exists) then
-        pcall(makefolder, ConfigStore.Folder)
+    for _, path in ipairs({ SETTINGS_FOLDER .. "/accounts", ConfigStore.AccountFolder }) do
+        local ok, exists = pcall(isfolder, path)
+        if not (ok and exists) then pcall(makefolder, path) end
     end
+end
+
+function ConfigStore.EnsureFolder()
+    ConfigStore.EnsureAccountFolder()
+    if type(isfolder) ~= "function" or type(makefolder) ~= "function" then return end
+    local ok, exists = pcall(isfolder, ConfigStore.Folder)
+    if not (ok and exists) then pcall(makefolder, ConfigStore.Folder) end
 end
 
 function ConfigStore.List()
@@ -521,39 +580,83 @@ function ConfigStore.Delete(name)
     return true, "Deleted config \"" .. name .. "\""
 end
 
+-- Legacy files had no account owner. Import them only when the player asks.
+function ConfigStore.ImportLegacy()
+    local copied = 0
+    local function copy(name, path)
+        if ConfigStore.CleanName(name) ~= name or ConfigStore.Exists(name) then return end
+        local data = SafeFile.ReadJson(path)
+        if data and ConfigStore.Save(name, data) then copied += 1 end
+    end
+    if type(listfiles) == "function" then
+        local ok, files = pcall(listfiles, SETTINGS_FOLDER .. "/configs")
+        if ok and type(files) == "table" then
+            for _, path in ipairs(files) do
+                local name = string.match(tostring(path), "([^/\\]+)%.json$")
+                if name then copy(name, path) end
+            end
+        end
+    end
+    copy("default", SETTINGS_FILE)
+    return copied
+end
+
 function ConfigStore.ReadMeta()
     local meta = SafeFile.ReadJson(ConfigStore.MetaFile) or {}
+    local blackScreen
+    if type(meta.BlackScreen) == "boolean" then
+        blackScreen = meta.BlackScreen
+    end
+    local restoreCap = tonumber(meta.RestoreFPSCap)
+    if not restoreCap or restoreCap < 1 or restoreCap > 10000 then
+        restoreCap = nil
+    end
     return {
         AutoLoad = type(meta.AutoLoad) == "string" and meta.AutoLoad or "",
         AutoExecute = meta.AutoExecute == true,
         ScriptPath = type(meta.ScriptPath) == "string" and meta.ScriptPath or nil,
+        BlackScreen = blackScreen,
+        RestoreFPSCap = restoreCap,
+        CarryEnabled = meta.CarryEnabled == true,
+        CarryHostName = type(meta.CarryHostName) == "string" and meta.CarryHostName or "",
+        CarryAlts = type(meta.CarryAlts) == "string" and meta.CarryAlts or "",
+        CarryMode = meta.CarryMode == "Fixed" and "Fixed" or "Auto",
+        CarryFixedStage = tonumber(meta.CarryFixedStage) or 1,
+        CarryHardcore = meta.CarryHardcore == true,
+        CarryRunStage = tonumber(meta.CarryRunStage),
+        HealerEnabled = meta.HealerEnabled == true,
+        HealerTargetName = type(meta.HealerTargetName) == "string" and meta.HealerTargetName or "",
+        HealerAutoEquip = meta.HealerAutoEquip ~= false,
+        HealerAutoSpells = meta.HealerAutoSpells == true,
+        HealerFollowDistance = 10,
+        HealerUseRecordedPath = meta.HealerUseRecordedPath == true,
+        ShowRecordedPath = meta.ShowRecordedPath == true,
     }
 end
 
 function ConfigStore.WriteMeta(meta)
+    ConfigStore.EnsureAccountFolder()
     return SafeFile.WriteJson(ConfigStore.MetaFile, {
         AutoLoad = meta.AutoLoad or "",
         AutoExecute = meta.AutoExecute == true,
         ScriptPath = meta.ScriptPath,
+        BlackScreen = meta.BlackScreen == true,
+        RestoreFPSCap = meta.RestoreFPSCap,
+        CarryEnabled = meta.CarryEnabled == true,
+        CarryHostName = meta.CarryHostName or "",
+        CarryAlts = meta.CarryAlts or "",
+        CarryMode = meta.CarryMode == "Fixed" and "Fixed" or "Auto",
+        CarryFixedStage = meta.CarryFixedStage or 1,
+        CarryHardcore = meta.CarryHardcore == true,
+        CarryRunStage = meta.CarryRunStage,
+        HealerEnabled = meta.HealerEnabled == true,
+        HealerTargetName = meta.HealerTargetName or "",
+        HealerAutoEquip = meta.HealerAutoEquip ~= false,
+        HealerAutoSpells = meta.HealerAutoSpells == true,
+        HealerFollowDistance = 10,
+        HealerUseRecordedPath = meta.HealerUseRecordedPath == true,
+        ShowRecordedPath = meta.ShowRecordedPath == true,
     }, true)
-end
-
--- One-time move of the old single UIW/settings.json into the new layout.
-function ConfigStore.Migrate()
-    if SafeFile.IsFile(ConfigStore.MetaFile) or not SafeFile.IsFile(SETTINGS_FILE) then
-        return
-    end
-    local old = SafeFile.ReadJson(SETTINGS_FILE)
-    local meta = { AutoLoad = "", AutoExecute = false }
-    if old then
-        if ConfigStore.Save("default", old) then
-            meta.AutoLoad = "default"
-        end
-        meta.AutoExecute = old.AutoExecuteOnTeleport == true
-    end
-    if ConfigStore.WriteMeta(meta) then
-        SafeFile.Delete(SETTINGS_FILE)
-    end
 end
 
 local function validNumber(value, minimum, maximum, fallback)
@@ -561,7 +664,6 @@ local function validNumber(value, minimum, maximum, fallback)
     if not value then return fallback end
     return math.clamp(value, minimum, maximum)
 end
-
 local COLORS = {
     Idle = Color3.fromRGB(140, 143, 150),
     Moving = Color3.fromRGB(75, 145, 255),
@@ -1362,6 +1464,14 @@ end
 local HazardTracker = {}
 HazardTracker.__index = HazardTracker
 
+local DRAGON_ATTACK_CONTAINERS = {
+    thirdbossxshot = true,
+    thirdbosscrossshot = true,
+    thirdbossflamebreathe = true,
+    thirdbossoneshot = true,
+    thirdbossoneshotbeam = true,
+}
+
 function HazardTracker.new(characterService, selfTracker)
     local overlapParams = OverlapParams.new()
     overlapParams.FilterType = Enum.RaycastFilterType.Include
@@ -1371,6 +1481,7 @@ function HazardTracker.new(characterService, selfTracker)
         SelfTracker = selfTracker,
         Hazards = setmetatable({}, { __mode = "k" }),
         ContainerState = setmetatable({}, { __mode = "k" }),
+        ContainerDiscoveryScanAt = setmetatable({}, { __mode = "k" }),
         CachedActive = {},
         CachedParts = {},
         LastCacheTime = 0,
@@ -1422,6 +1533,9 @@ end
 
 function HazardTracker:IsWarningVisible(part)
     if not part or not part.Parent then return false end
+    if part:GetAttribute("UIWHiddenDragonWarning") == true then
+        return part.Transparency < 0.98
+    end
     if part.Transparency < 0.98 and part.LocalTransparencyModifier < 0.98 then return true end
     for _, visual in ipairs(part:GetDescendants()) do
         if (visual:IsA("Decal") or visual:IsA("Texture")) and visual.Transparency < 0.98 then
@@ -1482,8 +1596,10 @@ end
 function HazardTracker:IsPrecastTrajectoryClear(position, direction, yaw, distance)
     self:RefreshCache(false)
     direction = unit(flatten(direction))
+    local controller = getgenv().UIW
+    local sampleLength = controller and controller.EnchantedDragonPerf and 4.5 or 2
     for _, data in ipairs(self.CachedWarnings or {}) do
-        local count = math.max(1, math.ceil(distance / 2))
+        local count = math.max(1, math.ceil(distance / sampleLength))
         for i = 0, count do
             if self:IsBodyInWarning(position + direction * (distance * i / count), yaw, data) then
                 return false
@@ -1519,6 +1635,9 @@ function HazardTracker:ScanContainerVisualState(container)
     if not container or not container.Parent then return false end
     local function visible(object)
         if object:IsA("BasePart") then
+            if object:GetAttribute("UIWHiddenDragonWarning") == true then
+                return object.Transparency < 0.98
+            end
             return object.Transparency < 0.98 and object.LocalTransparencyModifier < 0.98
         elseif object:IsA("Decal") or object:IsA("Texture") then
             return object.Transparency < 0.98
@@ -1654,11 +1773,22 @@ function HazardTracker:IsHazardPart(part)
         return false
     end
 
+    local lower = string.lower(part.Name)
+    local broadContainer = getBroadHazardContainer(part)
+    if broadContainer
+        and DRAGON_ATTACK_CONTAINERS[string.lower(broadContainer.Name or "")]
+    then
+        -- Dragon attack models contain many decorative queryable parts. The
+        -- actual warning and damage volumes are consistently named precast
+        -- and hitBox; tracking the rest inflated one burst to 92 hazards.
+        return lower == "precast" or lower == "hitbox"
+            or string.find(lower, "precast", 1, true) ~= nil
+            or string.find(lower, "hitbox", 1, true) ~= nil
+    end
+
     if self:IsPrecastPart(part) then return true end
 
     if self:IsLaneBall(part) then return true end
-
-    local lower = string.lower(part.Name)
 
     if lower == "hitbox"
         or lower == "hitboxpart"
@@ -1668,8 +1798,6 @@ function HazardTracker:IsHazardPart(part)
     then
         return true
     end
-
-    local broadContainer = getBroadHazardContainer(part)
 
     if broadContainer and (part.CanQuery or part.CanTouch) then
         return true
@@ -1939,6 +2067,15 @@ function HazardTracker:RegisterAttackContainer(container)
         return
     end
 
+    -- Attack models are often assembled one descendant at a time. Every part
+    -- already receives its own DescendantAdded registration, so repeatedly
+    -- rescanning the whole growing model creates quadratic work during large
+    -- dragon volleys. Keep occasional rescans to catch unusual nested setups.
+    local now = os.clock()
+    local lastScan = self.ContainerDiscoveryScanAt[container] or -math.huge
+    if now - lastScan < 0.075 then return end
+    self.ContainerDiscoveryScanAt[container] = now
+
     for _, descendant in ipairs(container:GetDescendants()) do
         if descendant:IsA("BasePart") and self:IsHazardPart(descendant) then
             self:Register(descendant)
@@ -2089,31 +2226,35 @@ function HazardTracker:Start()
 
     self.Maid:Give(Workspace.DescendantAdded:Connect(function(instance)
         if instance:IsA("BasePart") then
-            for _, delayTime in ipairs({0.03, 0.12}) do
-                task.delay(delayTime, function()
-                    if instance.Parent then self:Register(instance) end
-                end)
+            if isNonHazardMechanicInstance(instance)
+                or isLocalPlayerOwnedInstance(instance)
+                or isDetachedLocalPlayerEffect(instance)
+            then
+                return
             end
-            task.defer(function()
-                if not instance.Parent
-                    or isNonHazardMechanicInstance(instance)
-                    or isLocalPlayerOwnedInstance(instance)
-                    or isDetachedLocalPlayerEffect(instance)
-                then
-                    return
-                end
 
+            local broad = getBroadHazardContainer(instance)
+            local special = getSpecialHazardContainer(instance)
+            local candidate = broad ~= nil or special ~= nil or self:IsHazardPart(instance)
+
+            -- Streamed room geometry accounts for thousands of additions in
+            -- one frame. It needs no deferred work when it is not an attack.
+            if not candidate then return end
+
+            self:Register(instance)
+            if broad then self:RegisterAttackContainer(broad) end
+            if special then self:RegisterSpecialContainer(special) end
+
+            -- One later check catches attacks that resize or reveal a named
+            -- part after parenting it. Older builds queued three tasks for
+            -- every BasePart in the streamed dungeon map.
+            task.delay(0.10, function()
+                if not instance.Parent then return end
                 self:Register(instance)
-
-                local broad = getBroadHazardContainer(instance)
-                if broad then
-                    self:RegisterAttackContainer(broad)
-                end
-
-                local special = getSpecialHazardContainer(instance)
-                if special then
-                    self:RegisterSpecialContainer(special)
-                end
+                local laterBroad = getBroadHazardContainer(instance)
+                if laterBroad then self:RegisterAttackContainer(laterBroad) end
+                local laterSpecial = getSpecialHazardContainer(instance)
+                if laterSpecial then self:RegisterSpecialContainer(laterSpecial) end
             end)
         elseif instance:IsA("Model") and instance.Parent == Workspace
             and not (isBossAttackContainerName(instance.Name) or hasHazardNameHint(instance.Name))
@@ -2538,6 +2679,34 @@ function HazardTracker:RefreshCache(force)
         end
     end
 
+    -- Cross/X Shot keeps an overlapping precast and hitBox for each beam.
+    -- Their X/Z footprints are identical, so one representative per attack
+    -- container preserves the dodge shape while halving every solver query.
+    local dragonChosen = {}
+    local filteredActive = {}
+    for _, data in ipairs(self.CachedActive) do
+        local container = data.Container
+        local dragon = container
+            and DRAGON_ATTACK_CONTAINERS[string.lower(container.Name or "")]
+        if dragon then
+            local previous = dragonChosen[container]
+            if not previous or (data.IsPrecast and not previous.IsPrecast) then
+                dragonChosen[container] = data
+            end
+        else
+            table.insert(filteredActive, data)
+        end
+    end
+    for _, data in pairs(dragonChosen) do table.insert(filteredActive, data) end
+    if #filteredActive ~= #self.CachedActive then
+        table.clear(self.CachedActive)
+        table.clear(self.CachedParts)
+        for _, data in ipairs(filteredActive) do
+            table.insert(self.CachedActive, data)
+            table.insert(self.CachedParts, data.Part)
+        end
+    end
+
     self.OverlapParams.FilterDescendantsInstances = self.CachedParts
 end
 
@@ -2596,7 +2765,8 @@ function HazardTracker:IsTrajectoryClear(startPosition, direction, yaw, distance
 
     distance = math.max(distance or 0, 0)
 
-    local step = 2.25
+    local controller = getgenv().UIW
+    local step = controller and controller.EnchantedDragonPerf and 4.5 or 2.25
     local sample = 0
 
     while sample < distance do
@@ -2718,7 +2888,6 @@ end
 function HazardTracker:Destroy()
     self.Maid:Clean()
 end
-
 local HitboxESP = {}
 HitboxESP.__index = HitboxESP
 
@@ -3388,6 +3557,9 @@ function DungeonModel.new()
         LastKnownRoom = 1,
         EnemyCache = {},
         LastEnemyRefresh = 0,
+        HasSeenEnemies = false,
+        LastStreamRequest = 0,
+        StreamRequestPending = false,
     }, DungeonModel)
 end
 
@@ -3439,15 +3611,36 @@ function DungeonModel:GetAliveEnemies(force)
 
     table.clear(self.EnemyCache)
 
+    local character = LocalPlayer.Character
+    local playerRoot = character and character:FindFirstChild("HumanoidRootPart")
+    local nearestMissingPosition, nearestMissingDistance = nil, math.huge
+
+    local function collectEnemy(model, roomNumber)
+        local enemy = self:WrapEnemy(model, roomNumber)
+        if enemy then
+            table.insert(self.EnemyCache, enemy)
+            return
+        end
+
+        -- A streamed-out enemy can keep its Model and Humanoid while all
+        -- body parts are absent. The model pivot still locates it.
+        if not playerRoot or not model:IsA("Model") then return end
+        local humanoid = model:FindFirstChildOfClass("Humanoid")
+        if not humanoid or humanoid.Health <= 0 then return end
+        local ok, pivot = pcall(function() return model:GetPivot().Position end)
+        if not ok then return end
+        local distance = (pivot - playerRoot.Position).Magnitude
+        if distance < nearestMissingDistance then
+            nearestMissingPosition, nearestMissingDistance = pivot, distance
+        end
+    end
+
     for roomNumber, room in pairs(self.Rooms) do
         local folder = room:FindFirstChild("enemyFolder")
 
         if folder then
             for _, model in ipairs(folder:GetChildren()) do
-                local enemy = self:WrapEnemy(model, roomNumber)
-                if enemy then
-                    table.insert(self.EnemyCache, enemy)
-                end
+                collectEnemy(model, roomNumber)
             end
         end
     end
@@ -3458,12 +3651,24 @@ function DungeonModel:GetAliveEnemies(force)
 
         if folder then
             for _, model in ipairs(folder:GetChildren()) do
-                local enemy = self:WrapEnemy(model, 999)
-                if enemy then
-                    table.insert(self.EnemyCache, enemy)
-                end
+                collectEnemy(model, 999)
             end
         end
+    end
+
+    if #self.EnemyCache > 0 then
+        self.HasSeenEnemies = true
+    elseif nearestMissingPosition and not self.StreamRequestPending
+        and now - self.LastStreamRequest >= 2
+    then
+        self.LastStreamRequest = now
+        self.StreamRequestPending = true
+        task.spawn(function()
+            pcall(function()
+                LocalPlayer:RequestStreamAroundAsync(nearestMissingPosition)
+            end)
+            self.StreamRequestPending = false
+        end)
     end
 
     return self.EnemyCache
@@ -3672,6 +3877,15 @@ function DungeonModel:GetNextReachableCheckpointTowardRoom(position, targetRoom,
 end
 
 function DungeonModel:GetProgressionGoal(position)
+    -- Underworld's first wave appears after the dungeon-start signal. Before
+    -- that, the only checkpoints are several locked rooms away.
+    local dungeonName = Workspace:FindFirstChild("dungeonName")
+    if not self.HasSeenEnemies
+        and (not dungeonName or dungeonName.Value == "The Underworld")
+    then
+        return nil
+    end
+
     for roomNumber = math.max(self.LastKnownRoom, 1), 9 do
         local room = self.Rooms[roomNumber]
 
@@ -3690,7 +3904,6 @@ function DungeonModel:GetProgressionGoal(position)
 
     return nil
 end
-
 local RoutePlanner = {}
 RoutePlanner.__index = RoutePlanner
 
@@ -3722,6 +3935,7 @@ function RoutePlanner.new(characterService, geometry, hazards, dungeon)
         LastNoPathGoal = nil,
         ConsecutiveNoPath = 0,
         LastHeavyFallbackAt = 0,
+        Use3DGoalDistance = false,
         FrontierCacheGoal = nil,
         FrontierCacheResult = nil,
         FrontierCacheAt = 0,
@@ -4851,10 +5065,15 @@ function RoutePlanner:GetRawDirection(goal, reachDistance)
     end
 
     local root = character.Root
-    local goalDelta = flatten(goal - root.Position)
+    local fullGoalDelta = goal - root.Position
+    local goalDelta = flatten(fullGoalDelta)
     local effectiveReachDistance = tonumber(reachDistance) or CONFIG.PathGoalReachDistance
 
-    if goalDelta.Magnitude <= effectiveReachDistance then
+    -- Healer following needs true 3D distance for stairs, ladders and drops.
+    -- Combat navigation intentionally uses horizontal distance because enemy
+    -- root heights and animation offsets are not walkable destinations.
+    local reachDelta = self.Use3DGoalDistance and fullGoalDelta or goalDelta
+    if reachDelta.Magnitude <= effectiveReachDistance then
         self.CachedSafeDirection = Vector3.zero
         return Vector3.zero
     end
@@ -4922,6 +5141,18 @@ function RoutePlanner:GetSafeDirection(goal, targetYaw, reachDistance)
     return self:GetRawDirection(goal, reachDistance)
 end
 
+function RoutePlanner:HasPendingVerticalTransition()
+    if not self.CharacterService:IsAlive() or #self.Waypoints == 0 then return false end
+    local rootY = self.CharacterService.Root.Position.Y
+    local last = math.min(#self.Waypoints, self.WaypointIndex + 8)
+    for index = self.WaypointIndex, last do
+        local waypoint = self.Waypoints[index]
+        if waypoint and math.abs(waypoint.Position.Y - rootY) >= 3 then
+            return true
+        end
+    end
+    return false
+end
 local DodgeSolver = {}
 DodgeSolver.__index = DodgeSolver
 
@@ -5932,6 +6163,8 @@ function CombatController.new(characterService, selfTracker)
             q = 0,
             e = 0,
         },
+        LastSwing = 0,
+        SwingCount = 0,
         LastAction = nil,
         AttackCommitTarget = nil,
         AttackCommitUntil = 0,
@@ -6083,12 +6316,67 @@ function CombatController:Press(slot)
     self.LastAction = slot
 end
 
+function CombatController:TrySwing()
+    local character = self.CharacterService.Character
+    local player = LocalPlayer
+    if not self.CharacterService:IsAlive() or not character or not player then
+        return false
+    end
+
+    local peaceful = player:FindFirstChild("peaceful")
+    if not peaceful or peaceful.Value ~= false or self:IsBusyCasting() then
+        return false
+    end
+
+    local dungeonStarted = Workspace:FindFirstChild("dungeonStarted")
+    if dungeonStarted and dungeonStarted.Value ~= true then
+        return false
+    end
+
+    local weapon, swingRemote
+    for _, accessory in ipairs(character:GetChildren()) do
+        if accessory:IsA("Accessory") and accessory:FindFirstChild("Weapon") then
+            local candidate = accessory:FindFirstChildOfClass("RemoteEvent")
+            if candidate then
+                weapon, swingRemote = accessory, candidate
+                break
+            end
+        end
+    end
+    if not weapon then
+        return false
+    end
+
+    local attackSpeed = weapon:FindFirstChild("attackSpeed")
+    local swingsPerSecond = attackSpeed and tonumber(attackSpeed.Value) or 2
+    local interval = 1 / math.clamp(swingsPerSecond or 2, 0.5, 5)
+    local now = os.clock()
+    if now - self.LastSwing < interval then
+        return false
+    end
+
+    local remotes = game:GetService("ReplicatedStorage"):FindFirstChild("remotes")
+    local weaponUsed = remotes and remotes:FindFirstChild("weaponUsed")
+    if not weaponUsed or not weaponUsed:IsA("RemoteEvent") then
+        return false
+    end
+
+    self.LastSwing = now
+    local ok = pcall(function()
+        swingRemote:FireServer()
+        weaponUsed:FireServer()
+    end)
+    if ok then
+        self.SwingCount += 1
+    end
+    return ok
+end
+
 function CombatController:Update(enemy)
     -- Replaced by the v38 combat + dodge section near the end of this file.
     self.LastAction = nil
     return false
 end
-
 local TargetHealthBar = {}
 TargetHealthBar.__index = TargetHealthBar
 
@@ -6204,14 +6492,16 @@ end
 local PathESP = {}
 PathESP.__index = PathESP
 
-function PathESP.new()
+function PathESP.new(folderName, color, maxSegments)
     local folder = Instance.new("Folder")
-    folder.Name = "UIW_PathESP"
+    folder.Name = folderName or "UIW_PathESP"
     folder.Parent = Workspace
 
     return setmetatable({
         Folder = folder,
         LastUpdate = 0,
+        Color = color or Color3.fromRGB(240, 195, 55),
+        MaxSegments = math.max(1, tonumber(maxSegments) or 24),
     }, PathESP)
 end
 
@@ -6233,7 +6523,7 @@ function PathESP:GetSegment(index)
     part.CanTouch = false
     part.CastShadow = false
     part.Material = Enum.Material.Neon
-    part.Color = Color3.fromRGB(240, 195, 55)
+    part.Color = self.Color
     part.Transparency = 1
     part.Parent = self.Folder
     self.Pool[index] = part
@@ -6264,7 +6554,7 @@ function PathESP:Update(waypoints, currentIndex, rootPosition)
 
     local points = {rootPosition}
     for i = currentIndex, #waypoints do
-        if #points > PATH_ESP_MAX_SEGMENTS then break end
+        if #points > (self.MaxSegments or PATH_ESP_MAX_SEGMENTS) then break end
         if waypoints[i] then
             table.insert(points, waypoints[i].Position)
         end
@@ -6299,7 +6589,6 @@ function PathESP:Destroy()
         self.Folder:Destroy()
     end
 end
-
 local TacticalDisplay = {}
 TacticalDisplay.__index = TacticalDisplay
 
@@ -17268,9 +17557,11 @@ function HUD.new(controller)
 
     tabButton("Home", "⌂", 1)
     tabButton("Automation", "⚔", 2)
-    tabButton("Settings", "⚙", 3)
-    tabButton("Configs", "▤", 4)
-    tabButton("Inventory", "▦", 5)
+    tabButton("Carry", "♣", 3)
+    tabButton("Healer", "+", 4)
+    tabButton("Settings", "⚙", 5)
+    tabButton("Configs", "▤", 6)
+    tabButton("Inventory", "▦", 7)
     local inventoryPage = newPage("Inventory", false)
     if UIKit.BuildInventoryPage then UIKit.BuildInventoryPage(self, inventoryPage, controller) end
 
@@ -17530,6 +17821,201 @@ function HUD.new(controller)
             end
         end)
 
+    toggleRow(automationPage, 10, "Use Recorded Auto Route",
+        "For hosts, healers and alts: follows the saved path and pauses for combat",
+        function() return controller.HealerUseRecordedPath end,
+        function(value) controller:SetHealerOption("HealerUseRecordedPath", value) end)
+
+    toggleRow(automationPage, 11, "Show Recorded Route",
+        "Draws the saved route in blue without hiding the live yellow path",
+        function() return controller.ShowRecordedPath end,
+        function(value) controller:SetHealerOption("ShowRecordedPath", value) end)
+
+    local routeCard = UIKit.Card(automationPage, { Size = UDim2.new(1, 0, 0, 112), LayoutOrder = 12 })
+    self.HealerRouteStatusLabel = UIKit.Label(routeCard, {
+        Position = UDim2.fromOffset(14, 8), Size = UDim2.new(1, -28, 0, 38),
+        Font = UIKit.Fonts.Semi, TextSize = 11, TextWrapped = true,
+        TextYAlignment = Enum.TextYAlignment.Top,
+        Text = "No recorded route for this dungeon", ZIndex = 3,
+    })
+    self.HealerRecordButton = UIKit.Button(routeCard, {
+        Position = UDim2.fromOffset(14, 58), Size = UDim2.new(0.6, -18, 0, 38),
+        Text = "Start recording", ZIndex = 3,
+    })
+    local clearRouteButton = UIKit.Button(routeCard, {
+        Position = UDim2.new(0.6, 4, 0, 58), Size = UDim2.new(0.4, -18, 0, 38),
+        Text = "Clear", ZIndex = 3,
+    })
+    UIKit.Corner(self.HealerRecordButton, 8)
+    UIKit.Corner(clearRouteButton, 8)
+    self.HealerRecordButton.MouseButton1Click:Connect(function()
+        if controller.HealerRecording then
+            controller:StopHealerRouteRecording()
+        else
+            controller:StartHealerRouteRecording()
+        end
+        self:RefreshHealer()
+    end)
+    clearRouteButton.MouseButton1Click:Connect(function()
+        controller:ClearHealerRecordedPath()
+        self:RefreshHealer()
+    end)
+
+    -----------------------------------------------------------------------
+    -- Carry
+    -----------------------------------------------------------------------
+    local carryPage = newPage("Carry", true)
+    pageHeader(carryPage, 0, "Carry", "Keep the host and listed alts together")
+
+    local carryStatusCard = UIKit.Card(carryPage, { Size = UDim2.new(1, 0, 0, 100), LayoutOrder = 1 })
+    self.CarryTargetLabel = UIKit.Label(carryStatusCard, {
+        Position = UDim2.fromOffset(14, 8), Size = UDim2.new(1, -28, 0, 35),
+        Font = UIKit.Fonts.Semi, TextSize = 13, TextWrapped = true,
+        TextYAlignment = Enum.TextYAlignment.Top, Text = "Set a host and alts", ZIndex = 3,
+    })
+    self.CarryStatusLabel = UIKit.Label(carryStatusCard, {
+        Position = UDim2.fromOffset(14, 48), Size = UDim2.new(1, -28, 0, 43),
+        TextSize = 11, TextColor3 = T.SubText, TextWrapped = true,
+        TextYAlignment = Enum.TextYAlignment.Top, Text = "Carry off", ZIndex = 3,
+    })
+
+    toggleRow(carryPage, 2, "Carry System", "Host creates parties; alts follow and join",
+        function() return controller.CarryEnabled end,
+        function(value) controller:SetCarryOption("CarryEnabled", value) end)
+
+    local function carryInput(order, title, placeholder, height, getter, key)
+        local card = UIKit.Card(carryPage, { Size = UDim2.new(1, 0, 0, height), LayoutOrder = order })
+        UIKit.Label(card, { Position = UDim2.fromOffset(14, 8), Size = UDim2.new(1, -28, 0, 18),
+            Font = UIKit.Fonts.Semi, TextSize = 13, Text = title, ZIndex = 3 })
+        local box = UIKit.New("TextBox", {
+            Position = UDim2.fromOffset(14, 30), Size = UDim2.new(1, -28, 0, height - 42),
+            BackgroundColor3 = T.Tile, BorderSizePixel = 0, ClearTextOnFocus = false,
+            Font = UIKit.Fonts.Body, TextSize = 12, TextColor3 = T.Text,
+            PlaceholderText = placeholder, PlaceholderColor3 = T.Muted,
+            Text = getter(), TextXAlignment = Enum.TextXAlignment.Left,
+            TextYAlignment = Enum.TextYAlignment.Top, TextWrapped = true,
+            MultiLine = key == "CarryAlts", ZIndex = 3, Parent = card,
+        })
+        UIKit.Corner(box, 8)
+        UIKit.Padding(box, 8, 5, 8, 5)
+        box.FocusLost:Connect(function()
+            controller:SetCarryOption(key, box.Text)
+            box.Text = getter()
+        end)
+        return box
+    end
+    self.CarryHostBox = carryInput(3, "Host username", "Main account username", 76,
+        function() return controller.CarryHostName end, "CarryHostName")
+    self.CarryAltsBox = carryInput(4, "Alt usernames", "Separate names with commas, spaces or new lines", 102,
+        function() return controller.CarryAlts end, "CarryAlts")
+
+    toggleRow(carryPage, 5, "Fixed Dungeon", "Off: progress by the lowest alt's level",
+        function() return controller.CarryMode == "Fixed" end,
+        function(value) controller:SetCarryOption("CarryMode", value and "Fixed" or "Auto") end)
+    toggleRow(carryPage, 6, "Hardcore", "Use Hardcore when the host creates the party",
+        function() return controller.CarryHardcore end,
+        function(value) controller:SetCarryOption("CarryHardcore", value) end)
+
+    local stageCard = UIKit.Card(carryPage, { Size = UDim2.new(1, 0, 0, 256), LayoutOrder = 7 })
+    UIKit.Label(stageCard, { Position = UDim2.fromOffset(14, 8), Size = UDim2.new(1, -28, 0, 18),
+        Font = UIKit.Fonts.Semi, TextSize = 13, Text = "Fixed dungeon and difficulty", ZIndex = 3 })
+    UIKit.Label(stageCard, { Position = UDim2.fromOffset(14, 27), Size = UDim2.new(1, -28, 0, 16),
+        TextSize = 10, TextColor3 = T.Muted,
+        Text = "Pick one below. Used when Fixed Dungeon is on.", ZIndex = 3 })
+    local stageList = UIKit.New("ScrollingFrame", {
+        Position = UDim2.fromOffset(10, 48), Size = UDim2.new(1, -20, 1, -58),
+        BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 4,
+        CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
+        ZIndex = 3, Parent = stageCard,
+    })
+    UIKit.New("UIListLayout", { Padding = UDim.new(0, 4),
+        SortOrder = Enum.SortOrder.LayoutOrder, Parent = stageList })
+    self.CarryStageButtons = {}
+    for index, stage in ipairs(CARRY_STAGES) do
+        local button = UIKit.Button(stageList, {
+            Size = UDim2.new(1, -8, 0, 30), BackgroundColor3 = T.Tile,
+            Font = UIKit.Fonts.Body, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left,
+            Text = string.format("  %s · %s (Lv %d)", stage.Name, stage.Difficulty, stage.Level),
+            LayoutOrder = index, ZIndex = 4,
+        })
+        UIKit.Corner(button, 6)
+        button.MouseButton1Click:Connect(function()
+            controller:SetCarryOption("CarryFixedStage", index)
+            self:RefreshCarry()
+        end)
+        self.CarryStageButtons[index] = button
+    end
+
+    -----------------------------------------------------------------------
+    -- Healer
+    -----------------------------------------------------------------------
+    local healerPage = newPage("Healer", true)
+    pageHeader(healerPage, 0, "Healer", "Follow and continuously support one player")
+
+    local healerStatusCard = UIKit.Card(healerPage, { Size = UDim2.new(1, 0, 0, 108), LayoutOrder = 1 })
+    self.HealerStatusLabel = UIKit.Label(healerStatusCard, {
+        Position = UDim2.fromOffset(14, 9), Size = UDim2.new(1, -28, 0, 42),
+        Font = UIKit.Fonts.Semi, TextSize = 13, TextWrapped = true,
+        TextYAlignment = Enum.TextYAlignment.Top, Text = "Healer off", ZIndex = 3,
+    })
+    self.HealerLoadoutLabel = UIKit.Label(healerStatusCard, {
+        Position = UDim2.fromOffset(14, 54), Size = UDim2.new(1, -28, 0, 45),
+        TextSize = 10, TextColor3 = T.SubText, TextWrapped = true,
+        TextYAlignment = Enum.TextYAlignment.Top, Text = "Loadout: waiting", ZIndex = 3,
+    })
+
+    toggleRow(healerPage, 2, "Healer System", "Disables attacks, follows the target and forces Auto Dodge on",
+        function() return controller.HealerEnabled end,
+        function(value) controller:SetHealerOption("HealerEnabled", value) end)
+
+    local targetCard = UIKit.Card(healerPage, { Size = UDim2.new(1, 0, 0, 78), LayoutOrder = 3 })
+    UIKit.Label(targetCard, { Position = UDim2.fromOffset(14, 8), Size = UDim2.new(1, -28, 0, 18),
+        Font = UIKit.Fonts.Semi, TextSize = 13, Text = "Player to heal", ZIndex = 3 })
+    self.HealerTargetBox = UIKit.New("TextBox", {
+        Position = UDim2.fromOffset(14, 34), Size = UDim2.new(1, -28, 0, 32),
+        BackgroundColor3 = T.Tile, BorderSizePixel = 0, ClearTextOnFocus = false,
+        Font = UIKit.Fonts.Body, TextSize = 12, TextColor3 = T.Text,
+        PlaceholderText = "Blank = Carry host", PlaceholderColor3 = T.Muted,
+        Text = controller.HealerTargetName, TextXAlignment = Enum.TextXAlignment.Left,
+        ZIndex = 3, Parent = targetCard,
+    })
+    UIKit.Corner(self.HealerTargetBox, 8)
+    UIKit.Padding(self.HealerTargetBox, 8, 0, 8, 0)
+    self.HealerTargetBox.FocusLost:Connect(function()
+        controller:SetHealerOption("HealerTargetName", self.HealerTargetBox.Text)
+        self.HealerTargetBox.Text = controller.HealerTargetName
+    end)
+
+    toggleRow(healerPage, 4, "Auto Tank Armor",
+        "Equips the owned chest and helmet with the highest health; turn off for manual armor",
+        function() return controller.HealerAutoEquip end,
+        function(value) controller:SetHealerOption("HealerAutoEquip", value) end)
+
+    toggleRow(healerPage, 5, "Auto Healing Spells",
+        "Equips the two best owned heals; turn off to keep your own Q and E spells",
+        function() return controller.HealerAutoSpells end,
+        function(value) controller:SetHealerOption("HealerAutoSpells", value) end)
+
+    local distanceCard = UIKit.Card(healerPage, { Size = UDim2.new(1, 0, 0, 80), LayoutOrder = 6 })
+    UIKit.Label(distanceCard, { Position = UDim2.fromOffset(14, 9), Size = UDim2.new(1, -110, 0, 18),
+        Font = UIKit.Fonts.Semi, TextSize = 13, Text = "Follow distance", ZIndex = 3 })
+    UIKit.Label(distanceCard, { Position = UDim2.fromOffset(14, 29), Size = UDim2.new(1, -110, 0, 35),
+        TextSize = 10, TextColor3 = T.SubText, TextWrapped = true,
+        Text = "Fixed at 10 studs so every local healing spell reaches the host", ZIndex = 3 })
+    self.HealerDistanceBox = UIKit.New("TextBox", {
+        AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -14, 0.5, 0),
+        Size = UDim2.fromOffset(76, 34), BackgroundColor3 = T.Tile, BorderSizePixel = 0,
+        ClearTextOnFocus = false, Font = UIKit.Fonts.Semi, TextSize = 13,
+        TextEditable = false,
+        TextColor3 = T.Text, Text = tostring(controller.HealerFollowDistance),
+        TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 3, Parent = distanceCard,
+    })
+    UIKit.Corner(self.HealerDistanceBox, 8)
+    self.HealerDistanceBox.FocusLost:Connect(function()
+        controller:SetHealerOption("HealerFollowDistance", self.HealerDistanceBox.Text)
+        self.HealerDistanceBox.Text = tostring(controller.HealerFollowDistance)
+    end)
+
     -----------------------------------------------------------------------
     -- Settings
     -----------------------------------------------------------------------
@@ -17671,7 +18157,23 @@ function HUD.new(controller)
         function() return CONFIG.DamageCastRange end,
         function(value) CONFIG.DamageCastRange = value end, 30, 80, 1)
 
-    local keysCard = UIKit.Card(settingsPage, { Size = UDim2.new(1, 0, 0, 92), LayoutOrder = 4 })
+    toggleRow(settingsPage, 4, "FPS Limiter", "Caps frame rate while UIW runs",
+        function() return controller.FPSLimitEnabled end,
+        function(value)
+            controller.FPSLimitEnabled = value
+            controller:ApplyDisplaySettings()
+        end)
+    sliderRow(5, "FPS Limit", "Active when the limiter is on (15-120 FPS)",
+        function() return controller.FPSCap end,
+        function(value)
+            controller.FPSCap = value
+            controller:ApplyDisplaySettings()
+        end, 15, 120, 5)
+    toggleRow(settingsPage, 6, "Black Screen", "Hides 3D, caps at 15 FPS and resumes after teleport; F8 shows game",
+        function() return controller.BlackScreen end,
+        function(value) controller:SetBlackScreen(value) end)
+
+    local keysCard = UIKit.Card(settingsPage, { Size = UDim2.new(1, 0, 0, 92), LayoutOrder = 7 })
     UIKit.Label(keysCard, { Position = UDim2.fromOffset(14, 8), Size = UDim2.new(1, -28, 0, 18),
         Font = UIKit.Fonts.Semi, TextSize = 13, Text = "Window", ZIndex = 3 })
     UIKit.Label(keysCard, { Position = UDim2.fromOffset(14, 26), Size = UDim2.new(1, -28, 0, 14),
@@ -17704,7 +18206,7 @@ function HUD.new(controller)
     -- Configs
     -----------------------------------------------------------------------
     local configsPage = newPage("Configs", true)
-    pageHeader(configsPage, 0, "Configs", "Save, load and delete your setups")
+    pageHeader(configsPage, 0, "Configs", "Saved separately for this Roblox account")
 
     -- save row
     local saveCard = UIKit.Card(configsPage, { Size = UDim2.new(1, 0, 0, 56), LayoutOrder = 1 })
@@ -17899,7 +18401,7 @@ function HUD.new(controller)
         function() return controller.AutoExecuteOnTeleport end,
         function(value) controller:SetAutoExecute(value) end, configSwitches)
 
-    local infoCard = UIKit.Card(configsPage, { Size = UDim2.new(1, 0, 0, 84), LayoutOrder = 5 })
+    local infoCard = UIKit.Card(configsPage, { Size = UDim2.new(1, 0, 0, 122), LayoutOrder = 5 })
     self.ScriptPathLabel = UIKit.Label(infoCard, {
         Position = UDim2.fromOffset(14, 8),
         Size = UDim2.new(1, -28, 0, 30),
@@ -17934,6 +18436,19 @@ function HUD.new(controller)
     UIKit.Corner(refreshButton, 8)
     refreshButton.MouseButton1Click:Connect(function()
         self:RefreshConfigs()
+    end)
+    local importButton = UIKit.Button(infoCard, {
+        Position = UDim2.new(0, 14, 0, 82),
+        Size = UDim2.new(0, 268, 0, 30),
+        BackgroundColor3 = T.Tile,
+        Font = UIKit.Fonts.Semi,
+        TextSize = 12,
+        Text = "Import old shared configs to this account",
+        ZIndex = 3,
+    })
+    UIKit.Corner(importButton, 8)
+    importButton.MouseButton1Click:Connect(function()
+        controller:ImportLegacyConfigs()
     end)
 
     table.insert(self.ConfigRefreshers, function()
@@ -18053,6 +18568,8 @@ function HUD.new(controller)
     selectTab(Workspace:FindFirstChild("dungeonName") and "Home" or "Inventory")
     self:RefreshControls()
     self:RefreshConfigs()
+    self:RefreshCarry()
+    self:RefreshHealer()
     if controller.StartupNotice then
         task.delay(0.5, function()
             self:Notify(controller.StartupNotice, "success")
@@ -18211,6 +18728,49 @@ function HUD:RefreshControls()
     end
     if not enabled then
         self:SetStatus("IDLE", "paused")
+    end
+end
+
+function HUD:RefreshCarry()
+    if not self.CarryStatusLabel then return end
+    local controller = self.Controller
+    self.CarryStatusLabel.Text = controller.CarryStatus or (controller.CarryEnabled and "Starting carry" or "Carry off")
+    local index, reason, lowest = controller:CarryTarget()
+    if index then
+        local stage = CARRY_STAGES[index]
+        local nextStage = CARRY_STAGES[index + 1]
+        self.CarryTargetLabel.Text = string.format("Target: %s %s | lowest alt Lv %d%s",
+            stage.Name, stage.Difficulty, lowest,
+            controller.CarryMode == "Auto" and nextStage and (" | next at " .. nextStage.Level) or "")
+    else
+        self.CarryTargetLabel.Text = reason or "Set a host and alts"
+    end
+    for buttonIndex, button in ipairs(self.CarryStageButtons or {}) do
+        button.BackgroundColor3 = buttonIndex == controller.CarryFixedStage
+            and UIKit.Theme.Accent or UIKit.Theme.Tile
+    end
+end
+
+function HUD:RefreshHealer()
+    if not self.HealerStatusLabel then return end
+    local controller = self.Controller
+    self.HealerStatusLabel.Text = controller.HealerStatus
+        or (controller.HealerEnabled and "Starting healer" or "Healer off")
+    self.HealerLoadoutLabel.Text = "Loadout: " .. tostring(controller.HealerLoadout or "waiting")
+    if self.HealerRouteStatusLabel then
+        self.HealerRouteStatusLabel.Text = controller.HealerRouteStatus
+            or "No recorded route for this dungeon"
+    end
+    if self.HealerRecordButton then
+        self.HealerRecordButton.Text = controller.HealerRecording and "Stop & save" or "Start recording"
+        self.HealerRecordButton.BackgroundColor3 = controller.HealerRecording
+            and UIKit.Theme.Warn or UIKit.Theme.Tile
+    end
+    if self.HealerTargetBox and not self.HealerTargetBox:IsFocused() then
+        self.HealerTargetBox.Text = controller.HealerTargetName or ""
+    end
+    if self.HealerDistanceBox and not self.HealerDistanceBox:IsFocused() then
+        self.HealerDistanceBox.Text = tostring(controller.HealerFollowDistance or 10)
     end
 end
 
@@ -18717,6 +19277,7 @@ function UIWController.new()
     self.Combat = CombatController.new(self.Character, self.SelfAbilities)
     self.ESP = HitboxESP.new(self.Hazards)
     self.PathESP = PathESP.new()
+    self.RecordedPathESP = PathESP.new("UIW_RecordedPathESP", Color3.fromRGB(70, 190, 255), 80)
     self.TargetHealth = TargetHealthBar.new()
 
     self.Enabled = true
@@ -18728,6 +19289,23 @@ function UIWController.new()
     self.ShowAura = true
     self.ShowMobGroups = true
     self.AutoExecuteOnTeleport = false
+    self.FPSLimitEnabled = false
+    self.FPSCap = 30
+    self.BlackScreen = false
+    self.CarryEnabled = false
+    self.CarryHostName = ""
+    self.CarryAlts = ""
+    self.CarryMode = "Auto"
+    self.CarryFixedStage = 1
+    self.CarryHardcore = false
+    self.CarryRunStage = nil
+    self.HealerEnabled = false
+    self.HealerTargetName = ""
+    self.HealerAutoEquip = true
+    self.HealerAutoSpells = false
+    self.HealerFollowDistance = 10
+    self.HealerUseRecordedPath = false
+    self.ShowRecordedPath = false
     self.ActiveConfig = nil
     self.AutoLoadConfig = ""
 
@@ -18795,6 +19373,30 @@ function UIWController:ApplySettings(settings)
     self.AutoRetryEnabled = readBoolean("AutoRetryEnabled", self.AutoRetryEnabled)
     self.ShowAura = readBoolean("ShowAura", self.ShowAura)
     self.ShowMobGroups = readBoolean("ShowMobGroups", self.ShowMobGroups)
+    self.FPSLimitEnabled = readBoolean("FPSLimitEnabled", self.FPSLimitEnabled)
+    self.BlackScreen = readBoolean("BlackScreen", self.BlackScreen)
+    self.FPSCap = validNumber(settings.FPSCap, 15, 120, self.FPSCap)
+    self.CarryEnabled = readBoolean("CarryEnabled", self.CarryEnabled)
+    if type(settings.CarryHostName) == "string" then
+        self.CarryHostName = string.sub(settings.CarryHostName, 1, 32)
+    end
+    if type(settings.CarryAlts) == "string" then
+        self.CarryAlts = string.sub(settings.CarryAlts, 1, 10000)
+    end
+    if settings.CarryMode == "Auto" or settings.CarryMode == "Fixed" then
+        self.CarryMode = settings.CarryMode
+    end
+    self.CarryFixedStage = math.floor(validNumber(settings.CarryFixedStage, 1, #CARRY_STAGES, self.CarryFixedStage))
+    self.CarryHardcore = readBoolean("CarryHardcore", self.CarryHardcore)
+    self.HealerEnabled = readBoolean("HealerEnabled", self.HealerEnabled)
+    if type(settings.HealerTargetName) == "string" then
+        self.HealerTargetName = string.sub(settings.HealerTargetName, 1, 32)
+    end
+    self.HealerAutoEquip = readBoolean("HealerAutoEquip", self.HealerAutoEquip)
+    self.HealerAutoSpells = readBoolean("HealerAutoSpells", self.HealerAutoSpells)
+    self.HealerFollowDistance = 10
+    self.HealerUseRecordedPath = readBoolean("HealerUseRecordedPath", self.HealerUseRecordedPath)
+    self.ShowRecordedPath = readBoolean("ShowRecordedPath", self.ShowRecordedPath)
 
     CONFIG.WalkSpeed = validNumber(settings.WalkSpeed, 12, 40, CONFIG.WalkSpeed)
     CONFIG.DesiredCombatRange = validNumber(settings.DesiredCombatRange, 24, 60, CONFIG.DesiredCombatRange)
@@ -18813,6 +19415,7 @@ function UIWController:ApplySettings(settings)
         end)
     end
 
+    if self.DisplayStarted then self:ApplyDisplaySettings() end
     if self.HUD then self.HUD:RefreshControls() end
     return true
 end
@@ -18827,10 +19430,85 @@ function UIWController:GetSettings()
         AutoRetryEnabled = self.AutoRetryEnabled,
         ShowAura = self.ShowAura,
         ShowMobGroups = self.ShowMobGroups,
+        FPSLimitEnabled = self.FPSLimitEnabled,
+        FPSCap = self.FPSCap,
+        BlackScreen = self.BlackScreen,
+        CarryEnabled = self.CarryEnabled,
+        CarryHostName = self.CarryHostName,
+        CarryAlts = self.CarryAlts,
+        CarryMode = self.CarryMode,
+        CarryFixedStage = self.CarryFixedStage,
+        CarryHardcore = self.CarryHardcore,
+        HealerEnabled = self.HealerEnabled,
+        HealerTargetName = self.HealerTargetName,
+        HealerAutoEquip = self.HealerAutoEquip,
+        HealerAutoSpells = self.HealerAutoSpells,
+        HealerFollowDistance = self.HealerFollowDistance,
+        HealerUseRecordedPath = self.HealerUseRecordedPath,
+        ShowRecordedPath = self.ShowRecordedPath,
         WalkSpeed = CONFIG.WalkSpeed,
         DesiredCombatRange = CONFIG.DesiredCombatRange,
         DamageCastRange = CONFIG.DamageCastRange,
     }
+end
+
+function UIWController:ApplyDisplaySettings()
+    local env = getgenv()
+    if env.UIW_OriginalFPSCap == nil then
+        local ok, cap = pcall(function() return getfpscap() end)
+        env.UIW_OriginalFPSCap = ok and tonumber(cap) or 60
+    end
+
+    local cap = self.BlackScreen and 15
+        or (self.FPSLimitEnabled and self.FPSCap or env.UIW_OriginalFPSCap)
+    if type(setfpscap) == "function" then
+        pcall(setfpscap, cap)
+    end
+
+    if self.BlackScreen then
+        if not self.BlackScreenGui or not self.BlackScreenGui.Parent then
+            local gui = Instance.new("ScreenGui")
+            gui.Name = "UIW_BlackScreen"
+            gui.IgnoreGuiInset = true
+            gui.ResetOnSpawn = false
+            gui.DisplayOrder = 10000
+            gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+            local cover = Instance.new("Frame")
+            cover.Size = UDim2.fromScale(1, 1)
+            cover.BackgroundColor3 = Color3.new(0, 0, 0)
+            cover.BorderSizePixel = 0
+            cover.Parent = gui
+
+            local exit = Instance.new("TextButton")
+            exit.AnchorPoint = Vector2.new(1, 0)
+            exit.Position = UDim2.new(1, -16, 0, 16)
+            exit.Size = UDim2.fromOffset(170, 36)
+            exit.BackgroundColor3 = Color3.fromRGB(32, 32, 38)
+            exit.TextColor3 = Color3.new(1, 1, 1)
+            exit.Font = Enum.Font.GothamMedium
+            exit.TextSize = 13
+            exit.Text = "Show game (F8)"
+            exit.Parent = cover
+            exit.MouseButton1Click:Connect(function()
+                self:SetBlackScreen(false)
+            end)
+            self.BlackScreenGui = gui
+        end
+        pcall(function() RunService:Set3dRenderingEnabled(false) end)
+    else
+        pcall(function() RunService:Set3dRenderingEnabled(true) end)
+        safeDestroy(self.BlackScreenGui)
+        self.BlackScreenGui = nil
+    end
+end
+
+function UIWController:SetBlackScreen(enabled)
+    self.BlackScreen = enabled == true
+    self:ApplyDisplaySettings()
+    self:WriteMeta()
+    if self.BlackScreen then self:ConfigureAutoExecute() end
+    if self.HUD then self.HUD:RefreshControls() end
 end
 
 ---------------------------------------------------------------------------
@@ -18847,6 +19525,22 @@ function UIWController:WriteMeta()
     meta.AutoLoad = self.AutoLoadConfig or ""
     meta.AutoExecute = self.AutoExecuteOnTeleport == true
     meta.ScriptPath = self:GetScriptPath()
+    meta.BlackScreen = self.BlackScreen == true
+    meta.RestoreFPSCap = tonumber(getgenv().UIW_OriginalFPSCap) or meta.RestoreFPSCap
+    meta.CarryEnabled = self.CarryEnabled == true
+    meta.CarryHostName = self.CarryHostName
+    meta.CarryAlts = self.CarryAlts
+    meta.CarryMode = self.CarryMode
+    meta.CarryFixedStage = self.CarryFixedStage
+    meta.CarryHardcore = self.CarryHardcore
+    meta.CarryRunStage = self.CarryRunStage
+    meta.HealerEnabled = self.HealerEnabled == true
+    meta.HealerTargetName = self.HealerTargetName
+    meta.HealerAutoEquip = self.HealerAutoEquip ~= false
+    meta.HealerAutoSpells = self.HealerAutoSpells == true
+    meta.HealerFollowDistance = self.HealerFollowDistance
+    meta.HealerUseRecordedPath = self.HealerUseRecordedPath == true
+    meta.ShowRecordedPath = self.ShowRecordedPath == true
     return ConfigStore.WriteMeta(meta)
 end
 
@@ -18862,10 +19556,30 @@ function UIWController:GetScriptPath()
 end
 
 function UIWController:InitConfigs()
-    pcall(ConfigStore.Migrate)
     local meta = ConfigStore.ReadMeta()
     self.AutoExecuteOnTeleport = meta.AutoExecute
     self.AutoLoadConfig = meta.AutoLoad
+    self.CarryRunStage = meta.CarryRunStage
+    self.HealerEnabled = meta.HealerEnabled
+    self.HealerTargetName = meta.HealerTargetName
+    self.HealerAutoEquip = meta.HealerAutoEquip
+    self.HealerAutoSpells = meta.HealerAutoSpells == true
+    self.HealerFollowDistance = 10
+    self.HealerUseRecordedPath = meta.HealerUseRecordedPath == true
+    self.ShowRecordedPath = meta.ShowRecordedPath == true
+    if meta.BlackScreen and meta.RestoreFPSCap then
+        getgenv().UIW_OriginalFPSCap = meta.RestoreFPSCap
+    end
+    if meta.BlackScreen ~= nil then
+        self.BlackScreen = meta.BlackScreen
+    end
+    self.CarryEnabled = meta.CarryEnabled
+    self.CarryHostName = meta.CarryHostName
+    self.CarryAlts = meta.CarryAlts
+    self.CarryMode = meta.CarryMode
+    self.CarryFixedStage = math.floor(math.clamp(meta.CarryFixedStage, 1, #CARRY_STAGES))
+    self.CarryHardcore = meta.CarryHardcore
+    self.CarryRunStage = meta.CarryRunStage
     if meta.AutoLoad ~= "" then
         local data = ConfigStore.Load(meta.AutoLoad)
         if data then
@@ -18878,10 +19592,21 @@ function UIWController:InitConfigs()
             self:WriteMeta()
         end
     end
+    if meta.BlackScreen ~= nil then
+        self.BlackScreen = meta.BlackScreen
+    end
 end
 
 function UIWController:ListConfigs()
     return ConfigStore.List()
+end
+
+function UIWController:ImportLegacyConfigs()
+    local copied = ConfigStore.ImportLegacy()
+    self:Notify(copied > 0 and ("Imported " .. copied .. " old config(s) for this account")
+        or "No old configs to import", copied > 0 and "success" or "info")
+    if self.HUD then self.HUD:RefreshConfigs() end
+    return copied
 end
 
 function UIWController:SaveConfig(name)
@@ -18900,6 +19625,7 @@ function UIWController:LoadConfig(name)
     local ok = data ~= nil and self:ApplySettings(data)
     if ok then
         self.ActiveConfig = name
+        self:WriteMeta()
     end
     self:Notify(ok and ("Loaded config \"" .. name .. "\"") or message, ok and "success" or "error")
     if self.HUD then self.HUD:RefreshConfigs() end
@@ -18965,6 +19691,7 @@ end
 
 function UIWController:ResetSettings()
     self:ApplySettings(DEFAULT_SETTINGS)
+    self:WriteMeta()
     self:Notify("Switches and sliders reset to defaults (saved configs kept)", "info")
     if self.HUD then self.HUD:RefreshConfigs() end
 end
@@ -18983,8 +19710,8 @@ end
 
 ---------------------------------------------------------------------------
 -- Auto execute: the executor runs this code once after the next teleport.
--- It re-reads uiw_meta.json at that moment, so turning the switch off later
--- still stops it, and it loads the script file named in the meta file.
+-- It re-reads this account's meta file then, so disabling Auto Execute and
+-- Black Screen later stops it. Black Screen queues a continuation on its own.
 ---------------------------------------------------------------------------
 local AUTO_EXECUTE_CODE = [==[
 if getgenv().UIW_AUTOEXEC_STARTED then
@@ -19001,9 +19728,13 @@ task.spawn(function()
         return ok and result == true
     end
     local okMeta, meta = pcall(function()
-        return HttpService:JSONDecode(readfile("UIW/uiw_meta.json"))
+        local userId = game:GetService("Players").LocalPlayer.UserId
+        return HttpService:JSONDecode(readfile("UIW/accounts/" .. tostring(userId) .. "/uiw_meta.json"))
     end)
-    if not okMeta or type(meta) ~= "table" or meta.AutoExecute ~= true then
+    if not okMeta or type(meta) ~= "table"
+        or (meta.AutoExecute ~= true and meta.BlackScreen ~= true
+            and meta.CarryEnabled ~= true and meta.HealerEnabled ~= true)
+    then
         return
     end
     task.wait(1)
@@ -19031,7 +19762,9 @@ end)
 ]==]
 
 function UIWController:ConfigureAutoExecute(announce)
-    if not self.AutoExecuteOnTeleport then
+    if not self.AutoExecuteOnTeleport and not self.BlackScreen
+        and not self.CarryEnabled and not self.HealerEnabled
+    then
         return false
     end
 
@@ -20227,6 +20960,13 @@ function UIWController:Step()
         self.PathESP:Hide()
     end
 
+    if self.ShowRecordedPath and type(self.GetRecordedPathVisual) == "function" then
+        local recorded, recordedIndex = self:GetRecordedPathVisual()
+        self.RecordedPathESP:Update(recorded, recordedIndex, self.Character.Root.Position)
+    else
+        self.RecordedPathESP:Hide()
+    end
+
     self:SelectTarget()
     self.TargetHealth:Update()
 
@@ -20247,7 +20987,17 @@ function UIWController:Step()
 
     local mechanicActive = mechanicGoal ~= nil
 
-    self.Dodger.ForceRouteMovement = mechanicActive
+    local verticalTransition = self.Route:HasPendingVerticalTransition()
+    if verticalTransition then
+        -- Continue past the stair crest instead of immediately switching to
+        -- boss orbiting at the final step. At normal speed this carries the
+        -- character roughly 20-30 studs onto the platform/edge.
+        self.VerticalRouteCommitUntil = now + 1.25
+    end
+    local navigationCommit = self.RecordedRouteTraversalActive == true
+        or now < (self.VerticalRouteCommitUntil or 0)
+
+    self.Dodger.ForceRouteMovement = mechanicActive or navigationCommit
     self.Dodger.ForcedRegionPart = nil
 
     if mechanicActive
@@ -20285,7 +21035,7 @@ function UIWController:Step()
 
     local recoveryFallback
 
-    if mechanicActive then
+    if mechanicActive or navigationCommit then
         recoveryFallback = routeDirection
     else
         recoveryFallback = self.Dodger:GetCombatPreferred(routeDirection, self.CurrentEnemy, targetYaw)
@@ -20294,6 +21044,7 @@ function UIWController:Step()
     local cooldownHold = false
     if self.AutoCombat
         and not mechanicActive
+        and not navigationCommit
         and not (self.CurrentEnemy and isBossEnemy(self.CurrentEnemy))
     then
         cooldownHold = self.Combat:ShouldHoldApproach(self.CurrentEnemy, self.Dodger.TravelMode)
@@ -20307,7 +21058,9 @@ function UIWController:Step()
     end
 
     local retreating = false
-    if self.AutoCombat and not mechanicActive and not targetBlocked and not self.InWaterStream then
+    if self.AutoCombat and not mechanicActive and not navigationCommit
+        and not targetBlocked and not self.InWaterStream
+    then
         retreating = self.Combat:ShouldRetreat(self.CurrentEnemy)
     else
         self.Combat.RetreatActive = false
@@ -20389,6 +21142,7 @@ function UIWController:Step()
     local attacked = false
     if self.AutoCombat then
         attacked = self.Combat:Update(self.CurrentEnemy)
+        self.Combat:TrySwing()
     end
 
     local overlaps = self.Hazards:GetCurrentOverlaps(yaw)
@@ -20488,6 +21242,11 @@ function UIWController:Step()
             "COMBAT",
             "engaging " .. (self.CurrentEnemy and self.CurrentEnemy.Model.Name or "enemy")
         )
+    elseif not self.Dungeon.HasSeenEnemies
+        and Workspace:FindFirstChild("dungeonName")
+        and Workspace.dungeonName.Value == "The Underworld"
+    then
+        self.HUD:SetStatus("PATHING", "waiting for the first wave")
     elseif self.Route.Computing and #self.Route.Waypoints == 0 then
         self.HUD:SetStatus("PATHING", "calculating initial dungeon route")
     elseif self.ProgressionOverridePart and self.ProgressionOverridePart.Parent then
@@ -20527,6 +21286,8 @@ end
 
 function UIWController:Start()
     self:RefreshWorld()
+    self.DisplayStarted = true
+    self:ApplyDisplaySettings()
 
     self.SelfAbilities:Start()
     self.Route:Start()
@@ -20697,7 +21458,13 @@ function UIWController:Start()
     end
 
     local function tryReplay()
-        if self.ReplayTriggered or not self.AutoRetryEnabled or self.Destroyed then
+        if self.ReplayTriggered or (not self.AutoRetryEnabled and not self.CarryEnabled) or self.Destroyed then
+            return
+        end
+        if self.CarryEnabled and string.lower(LocalPlayer.Name)
+            ~= string.lower(self.CarryHostName or "")
+        then
+            self.HUD:SetRetryStatus("carry: host controls replay", COLORS.Pathing)
             return
         end
 
@@ -20713,7 +21480,7 @@ function UIWController:Start()
         end
         local deadLongEnough = self.DeadSince and os.clock() - self.DeadSince >= CONFIG.ReplayOnDeathDelay
 
-        if not dungeonFinished() and not deadLongEnough then
+        if not dungeonFinished() and (self.CarryEnabled or not deadLongEnough) then
             self.CompletionSeenAt = nil
             if self.HUD and os.clock() - self.RunStartTime > 5 then
                 local fighting = readValue(
@@ -20728,8 +21495,22 @@ function UIWController:Start()
             return
         end
 
+
+        if self.CarryEnabled and not self:CarryRewardReady() then
+            self.HUD:SetRetryStatus("carry: waiting for reward and updated levels", COLORS.Pathing)
+            return
+        end
+
+        if self.CarryEnabled and self:CarryNeedsLobby() then
+            self.HUD:SetRetryStatus("carry: next level reached; returning to lobby", COLORS.Pathing)
+            return
+        end
+
         self.CompletionSeenAt = self.CompletionSeenAt or os.clock()
-        local remaining = CONFIG.ReplayDelay - (os.clock() - self.CompletionSeenAt)
+        -- Carry has only a short window before the completed server sends the
+        -- party back to the lobby. RewardReady already waited for level data.
+        local delay = self.CarryEnabled and 0.25 or CONFIG.ReplayDelay
+        local remaining = delay - (os.clock() - self.CompletionSeenAt)
 
         if remaining > 0 then
             if self.HUD then
@@ -20760,17 +21541,22 @@ function UIWController:Start()
 
         self.ReplayTriggered = true
         self.ReplayToken += 1
+        self.ReplaySourceJob = game.JobId
         local token = self.ReplayToken
 
         task.spawn(function()
-            for attempt = 1, CONFIG.ReplayAttempts do
-                if token ~= self.ReplayToken or not self.AutoRetryEnabled or self.Destroyed then
+            local attemptLimit = self.CarryEnabled and 1 or CONFIG.ReplayAttempts
+            for attempt = 1, attemptLimit do
+                if token ~= self.ReplayToken
+                    or (not self.AutoRetryEnabled and not self.CarryEnabled)
+                    or self.Destroyed or (self.CarryEnabled and self:CarryNeedsLobby())
+                then
                     return
                 end
 
                 if self.HUD then
                     self.HUD:SetRetryStatus(
-                        string.format("replaying %s • request %d/%d", data.dungeonName, attempt, CONFIG.ReplayAttempts),
+                        string.format("replaying %s • request %d/%d", data.dungeonName, attempt, attemptLimit),
                         COLORS.Pathing
                     )
                 end
@@ -20781,16 +21567,18 @@ function UIWController:Start()
                 if not ok then
                     warn("[UIW] replay request failed: " .. tostring(err))
                 end
+                if self.HUD then
+                    self.HUD:SetRetryStatus("replay sent • waiting for teleport", COLORS.Running)
+                end
 
-                task.wait(CONFIG.ReplayRetryInterval)
+                -- A successful request teleports the party asynchronously.
+                -- Multiple requests a few seconds apart can split the party
+                -- into different destination servers.
+                task.wait(self.CarryEnabled and 30 or 12)
+                if self.Destroyed or game.JobId ~= self.ReplaySourceJob then return end
             end
 
-            if self.HUD then
-                self.HUD:SetRetryStatus("replay sent • waiting for teleport", COLORS.Running)
-            end
-
-            -- Still here after a while? Allow another round.
-            task.wait(10)
+            -- Still in this server after all attempts? Allow another round.
             if token == self.ReplayToken then
                 self.ReplayTriggered = false
                 self.CompletionSeenAt = nil
@@ -20862,6 +21650,8 @@ function UIWController:Start()
 
         if input.KeyCode == Enum.KeyCode.RightShift then
             self.HUD:Toggle()
+        elseif input.KeyCode == Enum.KeyCode.F8 and self.BlackScreen then
+            self:SetBlackScreen(false)
         end
     end))
 
@@ -20890,6 +21680,15 @@ function UIWController:Destroy()
 
     self.Destroyed = true
 
+    local unwedgeCleanup = getgenv().UIW_UnwedgeCleanup
+    if type(unwedgeCleanup) == "function" then
+        pcall(unwedgeCleanup)
+    end
+
+    self.BlackScreen = false
+    self.FPSLimitEnabled = false
+    self:ApplyDisplaySettings()
+
     self:ClearDeathConnection()
 
     self.Maid:Clean()
@@ -20898,6 +21697,7 @@ function UIWController:Destroy()
     self.Route:Destroy()
     self.ESP:Destroy()
     self.PathESP:Destroy()
+    self.RecordedPathESP:Destroy()
     self.TacticalDisplay:Destroy()
     self.TargetHealth:Destroy()
     self.HUD:Destroy()
@@ -20914,7 +21714,6 @@ function UIWController:Destroy()
 
     log("Destroyed")
 end
-
 --[[
     UIW v38 — Combat + Dodge upgrade patch
 
@@ -21571,6 +22370,9 @@ do
     function DodgeSolver:FindEmergencyOrientation(preferred, targetYaw)
         local bestDirection, bestYaw = nil, nil
         local bestScore = -math.huge
+        local controller = getgenv().UIW
+        local yawOffsets = controller and controller.EnchantedDragonPerf
+            and { 0 } or { 90, -90, 0 }
 
         for _, angle in ipairs(CONFIG.DodgeAngles) do
             local direction = unit(rotateXZ(preferred, angle))
@@ -21578,7 +22380,7 @@ do
 
             -- 0 = facing the movement (thin along travel),
             -- ±90 = side-on (thin across travel, squeezes between hitboxes).
-            for _, yawOffset in ipairs({ 90, -90, 0 }) do
+            for _, yawOffset in ipairs(yawOffsets) do
                 local yaw = movementYaw + math.rad(yawOffset)
                 local score = self:ScoreCandidate(direction, preferred, yaw)
 
@@ -22510,7 +23312,6 @@ do
 
     print("[UIW] v42 combat + dodge section applied")
 end
-
 -- v44: bounded hazard prediction, attack opportunities, and wide navigation.
 do
     CONFIG.PathPreferredRadius = 4.5
@@ -25051,7 +25852,9 @@ end
 -- v44.14: always-on attack census (read with getgenv().UIW_EF). For every new
 -- attack model: name, nearest enemy, size, warning timing and lifetime.
 do
-    CONFIG.AttackCensus = true
+    -- The attack catalogue is complete. Leaving this diagnostic enabled makes
+    -- every dragon volley start deferred inspection and sampling tasks.
+    CONFIG.AttackCensus = false
     CONFIG.AttackCensusExamples = 3
 
     local function topModel(inst)
@@ -25130,6 +25933,7 @@ do
         local self = oldNew()
         self.Version = "44.14"
         if not CONFIG.AttackCensus then
+            getgenv().UIW_EF = nil
             return self
         end
         local log = { Started = os.clock(), ByName = {}, Count = 0, Dungeon = "?" }
@@ -25251,7 +26055,6 @@ do
         return self
     end
 end
-
 -- v44.15: never dodge our own spells. Live finding: casting E spawns a
 -- top-level "lightningBurstHitbox" (55x21x93) in front of us that lives >10 s;
 -- it was tracked as an enemy attack, so the script ran away from its own hits.
@@ -26515,7 +27318,8 @@ end
 --   * particles / trails / beams become fully transparent and stop emitting
 --     (their Enabled flag is left alone - hazard detection reads it)
 --   * lights, explosions and screen post effects are switched off
--- Warning (precast) and hitBox parts are never touched.
+-- Dragon warning parts can be hidden locally, while HazardTracker continues
+-- reading their original transparency for Smart Dodge.
 do
     CONFIG.LowEffectsDefault = true
     CONFIG.LowEffectsScanBudget = 400     -- descendants handled per frame
@@ -26526,20 +27330,69 @@ do
         map = true, dungeon = true, Terrain = true, Camera = true,
         UIW_HitboxESP = true, UIW_PathESP = true,
     }
+    local DRAGON_EFFECTS = {
+        thirdbossxshot = true,
+        thirdbosscrossshot = true,
+        thirdbossflamebreathe = true,
+        thirdbossoneshot = true,
+        thirdbossoneshotbeam = true,
+    }
 
-    local function quiet(object)
+    local function dragonEffectContainer(object)
+        local current = object
+        while current and current ~= Workspace do
+            if DRAGON_EFFECTS[string.lower(current.Name or "")] then return current end
+            current = current.Parent
+        end
+        return nil
+    end
+
+    local function quiet(object, aggressive)
         local class = object.ClassName
         if class == "ParticleEmitter" then
+            if aggressive then object:Destroy() return end
             object.Rate = 0
             object.Transparency = INVISIBLE
+            pcall(function() object:Clear() end)
         elseif class == "Trail" or class == "Beam" then
+            if aggressive then object:Destroy() return end
             object.Transparency = INVISIBLE
+        elseif class == "Decal" or class == "Texture" then
+            if aggressive then object:Destroy() return end
+            object.Transparency = 1
+        elseif class == "SurfaceGui" then
+            if aggressive then object:Destroy() return end
+            object.Enabled = false
         elseif class == "PointLight" or class == "SpotLight" or class == "SurfaceLight"
             or class == "Fire" or class == "Smoke" or class == "Sparkles"
         then
+            if aggressive then object:Destroy() return end
             object.Enabled = false
         elseif class == "Explosion" then
+            if aggressive then object:Destroy() return end
             object.Visible = false
+        elseif class == "Sound" and aggressive then
+            object:Stop()
+            object:Destroy()
+        elseif object:IsA("BasePart") then
+            -- Dragon attacks use enormous visible parts. Hide them locally,
+            -- but mark warnings so HazardTracker still treats their original
+            -- transparency as active for Smart Dodge.
+            if dragonEffectContainer(object) then
+                local lower = string.lower(object.Name or "")
+                local essential = string.find(lower, "precast", 1, true)
+                    or string.find(lower, "hitbox", 1, true)
+                if string.find(lower, "precast", 1, true) then
+                    object:SetAttribute("UIWHiddenDragonWarning", true)
+                end
+                object.LocalTransparencyModifier = 1
+                object.CastShadow = false
+                if aggressive and not essential then
+                    object.CanCollide = false
+                    object.CanTouch = false
+                    object.CanQuery = false
+                end
+            end
         end
     end
 
@@ -26574,12 +27427,12 @@ do
             return
         end
         self.Done[child] = true
-        table.insert(self.Queue, child)
+        table.insert(self.Queue, { Root = child, Descendants = nil, Index = 1 })
         if not self.Watched[child] then
             self.Watched[child] = true
             child.DescendantAdded:Connect(function(object)
                 if self.Active then
-                    pcall(quiet, object)
+                    pcall(quiet, object, self.Controller.EnchantedDragonPerf == true)
                 end
             end)
         end
@@ -26651,6 +27504,21 @@ do
                 self:QueueRoot(child)
             end
         end))
+        self.Maid:Give(Workspace.DescendantAdded:Connect(function(object)
+            if not self.Active then return end
+            local class = object.ClassName
+            local visual = class == "ParticleEmitter" or class == "Trail" or class == "Beam"
+                or class == "Decal" or class == "Texture" or class == "SurfaceGui"
+                or class == "PointLight" or class == "SpotLight" or class == "SurfaceLight"
+                or class == "Fire" or class == "Smoke" or class == "Sparkles"
+                or class == "Explosion" or class == "Sound"
+            local beamPart = object:IsA("BasePart") and object.Parent
+                and string.lower(object.Parent.Name or "") == "thirdbossoneshotbeam"
+            if not visual and not beamPart then return end
+            local character = LocalPlayer.Character
+            if character and (object == character or object:IsDescendantOf(character)) then return end
+            pcall(quiet, object, self.Controller.EnchantedDragonPerf == true)
+        end))
     end
 
     -- process queued roots a little every frame (no frame spikes)
@@ -26660,17 +27528,25 @@ do
         end
         local budget = CONFIG.LowEffectsScanBudget
         while budget > 0 and #self.Queue > 0 do
-            local root = table.remove(self.Queue)
-            if root.Parent then
-                pcall(quiet, root)
-                local descendants = root:GetDescendants()
-                budget -= #descendants
-                for _, object in ipairs(descendants) do
-                    local ok = pcall(quiet, object)
-                    if ok then
-                        self.Quieted += 1
-                    end
-                end
+            local item = self.Queue[#self.Queue]
+            local root = item.Root
+            if not root.Parent then
+                table.remove(self.Queue)
+                continue
+            end
+            if not item.Descendants then
+                pcall(quiet, root, self.Controller.EnchantedDragonPerf == true)
+                item.Descendants = root:GetDescendants()
+            end
+            while budget > 0 and item.Index <= #item.Descendants do
+                local object = item.Descendants[item.Index]
+                item.Index += 1
+                budget -= 1
+                local ok = pcall(quiet, object, self.Controller.EnchantedDragonPerf == true)
+                if ok then self.Quieted += 1 end
+            end
+            if item.Index > #item.Descendants then
+                table.remove(self.Queue)
             end
         end
     end
@@ -26688,6 +27564,21 @@ do
         end
         local root = controller.Character.Root
         return root ~= nil and (enemy.Root.Position - root.Position).Magnitude <= 260
+    end
+
+    local function enchantedDragonNearby(controller)
+        local root = controller.Character and controller.Character.Root
+        if not root then return false end
+        local function isNearby(enemy)
+            return enemy and enemy.Model and enemy.Root and enemy.Root.Parent
+                and normalizeEnemyName(enemy.Model.Name) == "enchanted forest dragon"
+                and (enemy.Root.Position - root.Position).Magnitude <= 340
+        end
+        if isNearby(controller.CurrentEnemy) then return true end
+        for _, enemy in ipairs(controller.Dungeon:GetAliveEnemies()) do
+            if isNearby(enemy) then return true end
+        end
+        return false
     end
 
     local oldNew = UIWController.new
@@ -26718,7 +27609,9 @@ do
             self.LowFxCheckAt = now
             local perf = getgenv().UIW_Perf
             local lagging = type(perf) == "table" and perf.Lite == true
-            local want = self.LowEffects and (inBossFight(self) or lagging)
+            local dragon = enchantedDragonNearby(self)
+            self.EnchantedDragonPerf = dragon
+            local want = self.LowEffects and (dragon or inBossFight(self) or lagging)
             if want then
                 self.LowFxHoldUntil = now + 8
                 self.LowFx:Enable()
@@ -26750,7 +27643,6 @@ do
         return settings
     end
 end
-
 -- v44.23: keep facing the target until the spell actually leaves.
 -- Measured live (Frost Cone, 125 ms ping): the spell model appears ~0.70 s
 -- after the key press and its direction is the character's facing at THAT
@@ -27226,12 +28118,33 @@ do
                 saved.DodgeSolveInterval = CONFIG.DodgeSolveInterval
                 saved.HazardCacheInterval = CONFIG.HazardCacheInterval
             end
-            CONFIG.DodgeSolveInterval = math.max(CONFIG.DodgeSolveInterval, 1 / 15)
-            CONFIG.HazardCacheInterval = math.max(CONFIG.HazardCacheInterval, 1 / 15)
+            CONFIG.DodgeSolveInterval = math.max(CONFIG.DodgeSolveInterval, 1 / 6)
+            CONFIG.HazardCacheInterval = math.max(CONFIG.HazardCacheInterval, 1 / 6)
         elseif saved.DodgeSolveInterval ~= nil then
             CONFIG.DodgeSolveInterval = saved.DodgeSolveInterval
             CONFIG.HazardCacheInterval = saved.HazardCacheInterval
             saved.DodgeSolveInterval, saved.HazardCacheInterval = nil, nil
+        end
+    end
+
+    function Smooth:SetDragonCompute(active)
+        local saved = self.Saved
+        if active then
+            if saved.DragonDodgeAngles == nil then
+                saved.DragonDodgeAngles = CONFIG.DodgeAngles
+                saved.DragonAuraScanRadii = CONFIG.AuraScanRadii
+                saved.DragonAuraDotsPerRing = CONFIG.AuraDotsPerRing
+            end
+            CONFIG.DodgeAngles = { 0, 45, -45, 90, -90, 180 }
+            CONFIG.AuraScanRadii = { 8, 18, 28, 34 }
+            CONFIG.AuraDotsPerRing = 8
+        elseif saved.DragonDodgeAngles ~= nil then
+            CONFIG.DodgeAngles = saved.DragonDodgeAngles
+            CONFIG.AuraScanRadii = saved.DragonAuraScanRadii
+            CONFIG.AuraDotsPerRing = saved.DragonAuraDotsPerRing
+            saved.DragonDodgeAngles = nil
+            saved.DragonAuraScanRadii = nil
+            saved.DragonAuraDotsPerRing = nil
         end
     end
 
@@ -27266,6 +28179,17 @@ do
         self.Frames = 0
         self.LastSample = now
         self.Controller.SmoothFps = math.floor(self.Fps)
+
+        -- Enter the lightest mode before the Enchanted Forest Dragon fills
+        -- the arena. Waiting for the measured FPS drop makes the first volley
+        -- hitch badly and leaves the healer several frames behind hazards.
+        if self.Controller.EnchantedDragonPerf then
+            self.GoodSince = nil
+            self:SetDragonCompute(true)
+            self:Apply(2)
+            return
+        end
+        self:SetDragonCompute(false)
 
         if self.Fps < CONFIG.SmoothLowFps then
             self.GoodSince = nil
@@ -27306,6 +28230,7 @@ do
             if self.SmoothConn then
                 self.SmoothConn:Disconnect()
             end
+            self.Smooth:SetDragonCompute(false)
             self.Smooth:Apply(0)
         end)
         return oldDestroy(self)
@@ -27528,11 +28453,11 @@ do
         return self
     end
 end
--- EXPERIMENT (branch experiment-flatmap): flat boss arenas + sharper dodging.
+-- Northern Lands only: clear arena scenery locally and sharpen dodging.
 --
 -- In a boss fight the decoration around the arena (trees, rocks, bridges,
 -- railings) is switched off on this client only: collisions off and hidden.
--- The floor is never touched, so there is nothing to fall through. With the
+-- The floor is never touched. With the
 -- clutter gone every direction the dodge solver picks is actually walkable,
 -- the frame rate goes up, and the hazard tracker gets more time per frame.
 --
@@ -27575,9 +28500,13 @@ do
         return false
     end
 
-    local function deepMode()
+    local function inNorthernLands()
         local value = Workspace:FindFirstChild("dungeonName")
-        return CONFIG.FlatArenaDeep and value and value.Value == "Northern Lands"
+        return value and value.Value == "Northern Lands"
+    end
+
+    local function deepMode()
+        return CONFIG.FlatArenaDeep and inNorthernLands()
     end
 
     -- sharper reactions while the arena is flat
@@ -27629,6 +28558,10 @@ do
     end
 
     function FlatArena:Sweep(center)
+        if not inNorthernLands() then
+            self:Disable()
+            return
+        end
         local roots = self:MapRoots()
         if #roots == 0 then
             return
@@ -27691,6 +28624,7 @@ do
     end
 
     function FlatArena:Enable()
+        if not inNorthernLands() then return end
         if self.Active then
             return
         end
@@ -27721,6 +28655,10 @@ do
     end
 
     function FlatArena:Step(now)
+        if not inNorthernLands() then
+            self:Disable()
+            return
+        end
         if not self.Active then
             return
         end
@@ -27738,12 +28676,8 @@ do
     end
 
     ---------------------------------------------------------------------------
-    local function inNorthernLands()
-        local value = Workspace:FindFirstChild("dungeonName")
-        return value and value.Value == "Northern Lands"
-    end
-
     local function bossNearby(controller)
+        if not inNorthernLands() then return false end
         local enemy = controller.CurrentEnemy
         local root = controller.Character.Root
         if not root or not enemy or not enemy.Root or not enemy.Root.Parent then
@@ -27771,7 +28705,7 @@ do
         local hud = self.HUD
         if hud and hud.AddToggleRow and hud.Pages and hud.Pages.Automation then
             hud.AddToggleRow(hud.Pages.Automation, 10, "Flat Arena (test)",
-                "In boss fights: hides and un-solids the scenery, sharper dodging",
+                "Northern Lands only: clears arena scenery and sharpens dodging",
                 function() return self.FlatArena ~= false end,
                 function(value)
                     self.FlatArena = value
@@ -27787,6 +28721,10 @@ do
     function UIWController:Step()
         oldStep(self)
         if self.Destroyed then
+            return
+        end
+        if not inNorthernLands() then
+            self.Flat:Disable()
             return
         end
         local now = os.clock()
@@ -27823,7 +28761,6 @@ do
         return settings
     end
 end
-
 -- EXPERIMENT (branch experiment-flatmap): time-based escape field.
 --
 -- The old dodge asks "is this direction clear right now?" and throws away any
@@ -31181,6 +32118,11 @@ do
 
     local connection = RunService.Heartbeat:Connect(function()
         if not CONFIG.ForceWalkSpeed then return end
+        -- Healer movement must stay server-authoritative. Life Dash and
+        -- Revitalize may grant their own speed, but this loop must never
+        -- manufacture or hold that buff for the healer account.
+        local controller = getgenv().UIW
+        if controller and controller.HealerEnabled then return end
         local h = humanoid()
         if not h then return end
         local want = (os.clock() < buffUntil)
@@ -31339,6 +32281,11 @@ end
 -- the ones a player has - walk, jump - plus turning our OWN collision off for
 -- a few seconds, which is the same trick the map layer uses and is reversible.
 do
+    local env = getgenv()
+    if type(env.UIW_UnwedgeCleanup) == "function" then
+        pcall(env.UIW_UnwedgeCleanup)
+    end
+
     CONFIG.Unwedge = true
     CONFIG.UnwedgeMoved = 2.5      -- studs in a second: less than this is stuck
     CONFIG.UnwedgeFor = 5          -- consecutive stuck seconds before we act
@@ -31417,8 +32364,21 @@ do
         end
     end
 
+    local connection
+    local function cleanup()
+        if connection then
+            connection:Disconnect()
+            connection = nil
+        end
+        ghost(nil, false)
+        if env.UIW_UnwedgeCleanup == cleanup then
+            env.UIW_UnwedgeCleanup = nil
+        end
+    end
+    env.UIW_UnwedgeCleanup = cleanup
+
     local jumpAt = 0
-    RunService.Heartbeat:Connect(function()
+    connection = RunService.Heartbeat:Connect(function()
         if not CONFIG.Unwedge then return end
         local controller = getgenv().UIW
         if not controller or controller.Destroyed or not controller.Enabled then return end
@@ -31429,6 +32389,26 @@ do
             return
         end
         local now = os.clock()
+
+        -- Steampunk's boss approach has a long drop below its walkway.
+        -- Turning off every character collision here can send us through it.
+        local dungeonName = workspace:FindFirstChild("dungeonName")
+        if dungeonName and dungeonName.Value == "Steampunk Sewers" then
+            state.Stuck, state.Until = 0, 0
+            state.Last, state.At = root.Position, now
+            ghost(model, false)
+            return
+        end
+
+        local dungeonStarted = workspace:FindFirstChild("dungeonStarted")
+        if not dungeonStarted or dungeonStarted.Value ~= true
+            or not (controller.Dungeon and controller.Dungeon.HasSeenEnemies)
+        then
+            state.Stuck, state.Until = 0, 0
+            state.Last, state.At = root.Position, now
+            ghost(model, false)
+            return
+        end
 
         -- an escape in progress owns the character until it is done
         if now < state.Until then
@@ -31479,8 +32459,1743 @@ do
         end
     end)
 end
+-- Keep the Steampunk boss approach on solid ground. Its last walkway can
+-- expose a long drop; a dodge or route direction must not step into the gap.
+do
+    local function groundAt(position, map)
+        local params = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Include
+        params.FilterDescendantsInstances = { map }
+        params.RespectCanCollide = true
+        local hit = Workspace:Raycast(
+            position + Vector3.new(0, 2, 0),
+            Vector3.new(0, -18, 0),
+            params
+        )
+        if hit and hit.Normal.Y >= 0.55 then
+            return hit.Position.Y
+        end
+        return nil
+    end
+
+    local oldStep = UIWController.Step
+    function UIWController:Step()
+        oldStep(self)
+        if self.Destroyed or not self.Enabled or not self.Character:IsAlive() then
+            return
+        end
+        local name = Workspace:FindFirstChild("dungeonName")
+        if not name or name.Value ~= "Steampunk Sewers" then return end
+
+        local root = self.Character.Root
+        if root.Position.X < 1320 or root.Position.X > 1460
+            or root.Position.Y < -65 or root.Position.Y > 15
+        then
+            return
+        end
+
+        local movement = flatten(self.LastCommandedMovement or Vector3.zero)
+        if movement.Magnitude < 0.25 then return end
+        local map = Workspace:FindFirstChild("Map") or Workspace:FindFirstChild("map")
+        if not map then return end
+
+        local currentGround = groundAt(root.Position, map)
+        local ahead = root.Position + movement.Unit * 6
+        local aheadGround = groundAt(ahead, map)
+        if not aheadGround or (currentGround and currentGround - aheadGround > 8) then
+            self.Character.Humanoid:Move(Vector3.zero, false)
+            self.LastCommandedMovement = Vector3.zero
+            if os.clock() - (self.SteamEdgeRepathAt or 0) > 1 then
+                self.SteamEdgeRepathAt = os.clock()
+                self.Route:InvalidateGoal()
+            end
+            self.HUD:SetStatus("PATHING", "boss walkway edge | finding safe ground")
+        end
+    end
+
+    local oldNew = UIWController.new
+    function UIWController.new()
+        local self = oldNew()
+        self.Version = tostring(self.Version) .. "+steamedge"
+        return self
+    end
+end
+-- Carry progression. The host chooses the highest stage available to the
+-- lowest listed alt; everyone else follows and joins the host's private party.
+do
+    local Remotes = game:GetService("ReplicatedStorage"):WaitForChild("remotes")
+
+    local function sameName(a, b)
+        return type(a) == "string" and type(b) == "string"
+            and string.lower(a) == string.lower(b)
+    end
+
+    local function cleanName(name)
+        return string.match(tostring(name or ""), "^%s*([%w_]+)%s*$")
+    end
+
+    local function altNames(raw)
+        local names, seen = {}, {}
+        for value in string.gmatch(tostring(raw or ""), "[^,%s;]+") do
+            local name = cleanName(value)
+            if name and not seen[string.lower(name)] then
+                seen[string.lower(name)] = true
+                table.insert(names, name)
+            end
+        end
+        return names
+    end
+
+    local function playerNamed(name)
+        for _, player in ipairs(Players:GetPlayers()) do
+            if sameName(player.Name, name) then return player end
+        end
+    end
+
+    local function playerLevel(player)
+        local loaded = player and player:FindFirstChild("dataLoaded")
+        if not loaded or loaded.Value ~= true then return nil end
+        local stats = player and player:FindFirstChild("leaderstats")
+        local level = stats and stats:FindFirstChild("Level")
+        return level and tonumber(level.Value)
+    end
+
+    local function stageForLevel(level)
+        local choice = 1
+        for index, stage in ipairs(CARRY_STAGES) do
+            if level >= stage.Level then choice = index else break end
+        end
+        return choice
+    end
+
+    local function stageForParty(party)
+        local map = party and party:FindFirstChild("mapName")
+        local diff = map and map:FindFirstChild("difficulty")
+        if not map or not diff then return nil end
+        for index, stage in ipairs(CARRY_STAGES) do
+            if stage.Name == map.Value and stage.Difficulty == diff.Value then
+                return index
+            end
+        end
+    end
+
+    local function inLobby()
+        local name = Workspace:FindFirstChild("dungeonName")
+        return name and name.Value == "" and Workspace:FindFirstChild("games") ~= nil
+    end
+
+    local function ownParty()
+        local games = Workspace:FindFirstChild("games")
+        local lobbies = games and games:FindFirstChild("inLobby")
+        if not lobbies then return nil end
+        for _, party in ipairs(lobbies:GetChildren()) do
+            if party:FindFirstChild(LocalPlayer.Name) then return party end
+        end
+    end
+
+    local function hostParty(hostName)
+        local games = Workspace:FindFirstChild("games")
+        local lobbies = games and games:FindFirstChild("inLobby")
+        if not lobbies then return nil end
+        for _, party in ipairs(lobbies:GetChildren()) do
+            if party:FindFirstChild(hostName)
+                and (sameName(party.Name, hostName)
+                    or string.sub(string.lower(party.Name), 1, #hostName + 1)
+                        == string.lower(hostName) .. "_")
+            then
+                return party
+            end
+        end
+    end
+
+    local function dungeonFinished()
+        local dungeon = Workspace:FindFirstChild("dungeon")
+        local bossRoom = dungeon and dungeon:FindFirstChild("bossRoom")
+        local flag = bossRoom and bossRoom:FindFirstChild("dungeonFinished")
+        return (flag and flag.Value == true)
+            or (dungeon and dungeon:GetAttribute("dungeonFinished") == true)
+    end
+
+    function UIWController:CarryRewardReady()
+        return self.CarryRewardAt ~= nil
+            and os.clock() - self.CarryRewardAt >= 1
+    end
+
+    local function pressPlay()
+        local intro = LocalPlayer:FindFirstChild("PlayerGui")
+        intro = intro and intro:FindFirstChild("introGui")
+        local title = intro and intro:FindFirstChild("title")
+        local frame = title and title:FindFirstChild("Frame")
+        local button = frame and frame:FindFirstChild("TextButton")
+        if not button or not frame.Visible then return false end
+        if type(firesignal) == "function" then
+            pcall(firesignal, button.Activated)
+        else
+            local center = button.AbsolutePosition + button.AbsoluteSize * 0.5
+            pcall(function()
+                VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, true, game, 0)
+                VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, false, game, 0)
+            end)
+        end
+        return true
+    end
+
+    function UIWController:CarryMembers()
+        local host = cleanName(self.CarryHostName)
+        local alts = altNames(self.CarryAlts)
+        local filtered = {}
+        for _, name in ipairs(alts) do
+            if not sameName(name, host) then table.insert(filtered, name) end
+        end
+        return host, filtered
+    end
+
+    function UIWController:CarryTarget()
+        if os.clock() < (self.CarryLevelReadyAt or 0) then
+            return nil, "Waiting for player levels to load"
+        end
+        local host, alts = self:CarryMembers()
+        if not host or #alts == 0 then return nil, "Set a host and at least one alt" end
+        local hostPlayer = playerNamed(host)
+        local hostLevel = playerLevel(hostPlayer)
+        if not hostLevel then return nil, "Waiting for host " .. host end
+        local lowest = math.huge
+        for _, name in ipairs(alts) do
+            local level = playerLevel(playerNamed(name))
+            if not level then return nil, "Waiting for alt " .. name end
+            if level > hostLevel then return nil, name .. " is higher level than the host" end
+            lowest = math.min(lowest, level)
+        end
+        local index = self.CarryMode == "Fixed"
+            and math.floor(math.clamp(tonumber(self.CarryFixedStage) or 1, 1, #CARRY_STAGES))
+            or stageForLevel(lowest)
+        local stage = CARRY_STAGES[index]
+        if hostLevel < stage.Level then return nil, "Host needs level " .. stage.Level end
+        if lowest < stage.Level then return nil, "Lowest alt needs level " .. stage.Level end
+        return index, nil, lowest
+    end
+
+    function UIWController:CarryNeedsLobby()
+        if not self.CarryEnabled then return false end
+        local host, alts = self:CarryMembers()
+        if not playerNamed(host) then return true end
+        for _, name in ipairs(alts) do
+            if not playerNamed(name) then return true end
+        end
+        local index = self:CarryTarget()
+        if not index then return false end
+        local runStage = tonumber(self.CarryRunStage)
+        if runStage and runStage ~= index then return true end
+        if not runStage then
+            local name = Workspace:FindFirstChild("dungeonName")
+            if name and name.Value ~= "" and name.Value ~= CARRY_STAGES[index].Name then
+                return true
+            end
+        end
+        if self.CarryMode == "Fixed" then
+            local name = Workspace:FindFirstChild("dungeonName")
+            return name and name.Value ~= "" and name.Value ~= CARRY_STAGES[index].Name
+        end
+        return false
+    end
+
+    function UIWController:SetCarryOption(key, value)
+        if key == "CarryHostName" then
+            self.CarryHostName = cleanName(value) or ""
+        elseif key == "CarryAlts" then
+            self.CarryAlts = string.sub(tostring(value or ""), 1, 10000)
+        elseif key == "CarryMode" then
+            self.CarryMode = value == "Fixed" and "Fixed" or "Auto"
+        elseif key == "CarryFixedStage" then
+            self.CarryFixedStage = math.floor(math.clamp(tonumber(value) or 1, 1, #CARRY_STAGES))
+        elseif key == "CarryHardcore" then
+            self.CarryHardcore = value == true
+        elseif key == "CarryEnabled" then
+            self.CarryEnabled = value == true
+            self.CarryLastActionAt = 0
+        else
+            return
+        end
+        self:WriteMeta()
+        if self.CarryEnabled then self:ConfigureAutoExecute() end
+        if self.HUD then self.HUD:RefreshControls() end
+    end
+
+    function UIWController:SetCarryRunStage(index)
+        if self.CarryRunStage == index then return end
+        self.CarryRunStage = index
+        self:WriteMeta()
+    end
+
+    function UIWController:CarryHostLobby(host, alts, index, lowest)
+        local stage = CARRY_STAGES[index]
+        local party = hostParty(host)
+        local mine = ownParty()
+        if mine and mine ~= party then
+            self.CarryStatus = "Leaving another party"
+            if os.clock() - (self.CarryLastActionAt or 0) > 5 then
+                self.CarryLastActionAt = os.clock()
+                Remotes.leaveGame:FireServer()
+            end
+            return
+        end
+        if party and stageForParty(party) ~= index then
+            self.CarryStatus = "Switching to " .. stage.Name .. " " .. stage.Difficulty
+            if os.clock() - (self.CarryLastActionAt or 0) > 5 then
+                self.CarryLastActionAt = os.clock()
+                Remotes.leaveGame:FireServer()
+            end
+            return
+        end
+        if not party then
+            self.CarryStatus = "Creating " .. stage.Name .. " " .. stage.Difficulty
+            if self.CarryBusy or os.clock() - (self.CarryLastActionAt or 0) < 8 then return end
+            self.CarryBusy = true
+            self.CarryLastActionAt = os.clock()
+            task.spawn(function()
+                local ok, result = pcall(function()
+                    return Remotes.createLobby:InvokeServer(
+                        stage.Name, stage.Difficulty, stage.Level,
+                        self.CarryHardcore == true, true, false
+                    )
+                end)
+                self.CarryBusy = false
+                if not ok or result ~= true then
+                    self.CarryStatus = "Create failed; retrying"
+                end
+            end)
+            return
+        end
+
+        self:SetCarryRunStage(index)
+        local private = party.mapName and party.mapName:FindFirstChild("private")
+        for _, name in ipairs(alts) do
+            local player = playerNamed(name)
+            local actualName = player and player.Name or name
+            if private and private.Value and not private:FindFirstChild(actualName) then
+                Remotes.addPlayerToWhitelist:FireServer(actualName)
+            end
+            if not party:FindFirstChild(actualName) then
+                self.CarryStatus = "Waiting for " .. actualName .. " to join"
+                return
+            end
+        end
+        self.CarryStatus = string.format("Starting %s %s | lowest level %d", stage.Name, stage.Difficulty, lowest)
+        if os.clock() - (self.CarryLastActionAt or 0) > 12 then
+            self.CarryLastActionAt = os.clock()
+            Remotes.startDungeon:FireServer()
+        end
+    end
+
+    function UIWController:CarryAltLobby(host)
+        local hostPlayer = playerNamed(host)
+        if not hostPlayer then
+            self.CarryStatus = "Following " .. host .. " to his lobby"
+            if os.clock() - (self.CarryLastActionAt or 0) < 15 then return end
+            self.CarryLastActionAt = os.clock()
+            if not self.CarryHostUserId then
+                task.spawn(function()
+                    local ok, id = pcall(function() return Players:GetUserIdFromNameAsync(host) end)
+                    if ok then self.CarryHostUserId = id end
+                end)
+            else
+                Remotes.teleportToFriend:FireServer(self.CarryHostUserId)
+            end
+            return
+        end
+        self.CarryHostUserId = hostPlayer.UserId
+        local party = hostParty(hostPlayer.Name)
+        if not party then
+            self.CarryStatus = "Waiting for " .. host .. " to create a party"
+            return
+        end
+        local mine = ownParty()
+        if mine == party then
+            local index = stageForParty(party)
+            if index then self:SetCarryRunStage(index) end
+            self.CarryStatus = "In " .. host .. "'s party; waiting for everyone"
+            return
+        end
+        if mine then
+            self.CarryStatus = "Leaving another party"
+            if os.clock() - (self.CarryLastActionAt or 0) > 5 then
+                self.CarryLastActionAt = os.clock()
+                Remotes.leaveGame:FireServer()
+            end
+            return
+        end
+        local private = party.mapName and party.mapName:FindFirstChild("private")
+        if private and private.Value and not private:FindFirstChild(LocalPlayer.Name) then
+            self.CarryStatus = "Waiting for host whitelist"
+            return
+        end
+        self.CarryStatus = "Joining " .. host .. "'s party"
+        if self.CarryBusy or os.clock() - (self.CarryLastActionAt or 0) < 5 then return end
+        self.CarryBusy = true
+        self.CarryLastActionAt = os.clock()
+        task.spawn(function()
+            local ok, result = pcall(function()
+                return Remotes.joinDungeon:InvokeServer(party.Name)
+            end)
+            self.CarryBusy = false
+            if ok and result == true then
+                local index = stageForParty(party)
+                if index then self:SetCarryRunStage(index) end
+            else
+                self.CarryStatus = "Join failed; retrying"
+            end
+        end)
+    end
+
+    function UIWController:CarryStep()
+        if not self.CarryEnabled or self.Destroyed then return end
+        local host, alts = self:CarryMembers()
+        if not host or #alts == 0 then
+            self.CarryStatus = "Enter the host and alt usernames"
+            return
+        end
+        local isHost = sameName(LocalPlayer.Name, host)
+        if not isHost then
+            local listed = false
+            for _, name in ipairs(alts) do
+                if sameName(LocalPlayer.Name, name) then listed = true break end
+            end
+            if not listed then
+                self.CarryStatus = "This account is not listed in the carry group"
+                return
+            end
+        end
+
+        if inLobby() then
+            if pressPlay() then
+                self.CarryStatus = "Skipping lobby intro"
+                return
+            end
+            local intro = LocalPlayer.PlayerGui:FindFirstChild("introGui")
+            if intro then
+                self.CarryStatus = "Waiting for Play button"
+                return
+            end
+            if isHost then
+                local index, reason, lowest = self:CarryTarget()
+                if not index then self.CarryStatus = reason return end
+                self:CarryHostLobby(playerNamed(host).Name, alts, index, lowest)
+            else
+                self:CarryAltLobby(host)
+            end
+            return
+        end
+
+        local dungeonName = Workspace:FindFirstChild("dungeonName")
+        if not dungeonName or dungeonName.Value == "" then
+            self.CarryStatus = "Waiting for lobby or dungeon"
+            return
+        end
+        if not isHost and not playerNamed(host) and dungeonFinished() and self:CarryRewardReady() then
+            self.CarryHostMissingAt = self.CarryHostMissingAt or os.clock()
+            local waited = os.clock() - self.CarryHostMissingAt
+            self.CarryStatus = string.format("Host is teleporting; waiting for party retry (%.0fs)",
+                math.max(0, 18 - waited))
+            if waited >= 18 and os.clock() - (self.CarryLastActionAt or 0) > 10 then
+                -- The host used Return to Lobby for a newly unlocked stage, or
+                -- this alt missed the party teleport. Rejoin only after giving
+                -- the native Retry ample time to carry the whole party.
+                self.CarryLastActionAt = os.clock()
+                Remotes.ReturnToLobbyEvent:FireServer()
+            end
+            return
+        end
+        self.CarryHostMissingAt = nil
+        local index, reason, lowest = self:CarryTarget()
+        local stage = index and CARRY_STAGES[index]
+        local runStage = tonumber(self.CarryRunStage)
+        local stageChanged = index and runStage and index ~= runStage
+        if dungeonFinished() and self:CarryRewardReady() and stageChanged then
+            if isHost then
+                self.CarryStatus = stage
+                    and ("Level reached; returning for " .. stage.Name .. " " .. stage.Difficulty)
+                    or "Level reached; returning to lobby"
+                if os.clock() - (self.CarryLastActionAt or 0) > 10 then
+                    self.CarryLastActionAt = os.clock()
+                    Remotes.ReturnToLobbyEvent:FireServer()
+                end
+            else
+                self.CarryStatus = "Reward claimed; host controls the next stage"
+            end
+            return
+        end
+        if not index then
+            self.CarryStatus = reason
+            return
+        end
+        local nextStage = CARRY_STAGES[index + 1]
+        if dungeonFinished() and self:CarryRewardReady() then
+            self.CarryStatus = string.format("Reward claimed; retrying %s %s | lowest %d%s",
+                stage.Name, stage.Difficulty, lowest,
+                nextStage and (" -> " .. nextStage.Level) or " | latest dungeon")
+        else
+            self.CarryStatus = string.format("%s %s | lowest %d%s", stage.Name, stage.Difficulty,
+                lowest, nextStage and (" -> " .. nextStage.Level) or " | latest dungeon")
+        end
+    end
+
+    function UIWController:StartCarry()
+        self.CarryStatus = self.CarryEnabled and "Starting carry" or "Carry off"
+        self.CarryLevelReadyAt = os.clock() + 6
+        self.CarryRewardAt = nil
+        local rewardRemote = Remotes:FindFirstChild("cloneRewardGui")
+        if rewardRemote then
+            self.Maid:Give(rewardRemote.OnClientEvent:Connect(function()
+                self.CarryRewardAt = os.clock()
+            end))
+        end
+        self.Maid:Give(RunService.Heartbeat:Connect(function()
+            if os.clock() - (self.CarryCheckAt or 0) < 1 then return end
+            self.CarryCheckAt = os.clock()
+            local ok, err = pcall(self.CarryStep, self)
+            if not ok then self.CarryStatus = "Carry error: " .. tostring(err) end
+            if self.HUD and self.HUD.RefreshCarry then self.HUD:RefreshCarry() end
+        end))
+    end
+
+    local oldStart = UIWController.Start
+    function UIWController:Start()
+        oldStart(self)
+        self:StartCarry()
+    end
+end
+-- Healer mode follows one party member, keeps the normal hazard dodger active,
+-- equips the best owned spell-power armor and casts owned healing abilities.
+do
+    local Remotes = game:GetService("ReplicatedStorage"):WaitForChild("remotes")
+    local HEALER_ROUTE_FILE = ConfigStore.AccountFolder .. "/healer_routes.json"
+    local ROUTE_SAMPLE_DISTANCE = 4
+    local ROUTE_REACH_DISTANCE = 5
+    local ROUTE_RESYNC_DISTANCE = 32
+    local ROUTE_COMBAT_PAUSE_DISTANCE = 64
+
+    local function healerDungeonFinished()
+        local dungeon = Workspace:FindFirstChild("dungeon")
+        local bossRoom = dungeon and dungeon:FindFirstChild("bossRoom")
+        local flag = bossRoom and bossRoom:FindFirstChild("dungeonFinished")
+        return (flag and flag:IsA("ValueBase") and flag.Value == true)
+            or (dungeon and dungeon:GetAttribute("dungeonFinished") == true)
+    end
+
+    local HEAL_SCORE = {
+        ["revitalize"] = 900,
+        ["universal heal"] = 860,
+        ["chain heal"] = 820,
+        ["life pulse"] = 780,
+        ["life dash"] = 740,
+        ["aura of life"] = 620,
+        ["rejuvenating spray"] = 580,
+        ["holy circle"] = 520,
+        ["redemption"] = 420,
+    }
+
+    local HEAL_RANGE = {
+        ["universal heal"] = math.huge,
+        ["chain heal"] = 55,
+        ["revitalize"] = 32,
+        ["life pulse"] = 30,
+        ["life dash"] = 34,
+        ["aura of life"] = 28,
+        ["rejuvenating spray"] = 36,
+        ["holy circle"] = 28,
+        ["redemption"] = 24,
+    }
+
+    -- Most heals apply over time or leave an area behind. This shared coverage
+    -- window prevents the second equipped spell from firing immediately after
+    -- the first one. Critical health shortens the wait, but still separates
+    -- the casts so both heals are not wasted on the same instant of damage.
+    local HEAL_COVERAGE = {
+        ["revitalize"] = 4.0,
+        ["universal heal"] = 2.5,
+        ["chain heal"] = 2.0,
+        ["life pulse"] = 4.0,
+        ["life dash"] = 2.5,
+        ["aura of life"] = 4.0,
+        ["rejuvenating spray"] = 1.5,
+        ["holy circle"] = 4.0,
+        ["redemption"] = 2.0,
+    }
+
+    local MOBILITY_HEALS = {
+        ["life dash"] = 100,
+        ["revitalize"] = 90,
+    }
+
+    local function normalized(value)
+        return string.lower(string.match(tostring(value or ""), "^%s*(.-)%s*$"))
+    end
+
+    local function cleanName(value)
+        return string.match(tostring(value or ""), "^%s*([%w_]+)%s*$")
+    end
+
+    local function playerNamed(name)
+        name = normalized(name)
+        for _, player in ipairs(Players:GetPlayers()) do
+            if normalized(player.Name) == name then return player end
+        end
+    end
+
+    function UIWController:GetHealerApproachDistance()
+        return 10
+    end
+
+    local function routeVector(point)
+        if type(point) ~= "table" then return nil end
+        local x, y, z = tonumber(point.X or point.x or point[1]),
+            tonumber(point.Y or point.y or point[2]),
+            tonumber(point.Z or point.z or point[3])
+        if not x or not y or not z then return nil end
+        return Vector3.new(x, y, z)
+    end
+
+    local function routePoint(position)
+        return { X = position.X, Y = position.Y, Z = position.Z }
+    end
+
+    local function optimizeRoute(points)
+        if type(points) ~= "table" then return {} end
+        local valid = {}
+        for _, point in ipairs(points) do
+            local vector = routeVector(point)
+            if vector then table.insert(valid, routePoint(vector)) end
+        end
+        if #valid <= 2 then return valid end
+
+        local optimized = { valid[1] }
+        for index = 2, #valid - 1 do
+            local previous = routeVector(optimized[#optimized])
+            local current = routeVector(valid[index])
+            local following = routeVector(valid[index + 1])
+            local fromPrevious = current - previous
+            local toFollowing = following - current
+            local horizontalA = flatten(fromPrevious)
+            local horizontalB = flatten(toFollowing)
+            local turn = 1
+            if horizontalA.Magnitude > 0.05 and horizontalB.Magnitude > 0.05 then
+                turn = horizontalA.Unit:Dot(horizontalB.Unit)
+            end
+            local keep = fromPrevious.Magnitude >= 8
+                or math.abs(fromPrevious.Y) >= 2.5
+                or math.abs(toFollowing.Y) >= 2.5
+                or turn < 0.93
+            if keep then table.insert(optimized, valid[index]) end
+        end
+        table.insert(optimized, valid[#valid])
+        return optimized
+    end
+
+    local function itemNumber(key)
+        return tonumber(string.match(tostring(key or ""), "(%d+)$"))
+    end
+
+    local function isEquipped(item)
+        if item.equipped == true then return true end
+        if type(item.equipped) == "table" then
+            for _, value in pairs(item.equipped) do
+                if value == true then return true end
+            end
+        end
+        return false
+    end
+
+    local function bestTankArmor(container, level)
+        local bestKey, bestItem, bestHealth, bestSpell = nil, nil, -1, -1
+        for key, item in pairs(container or {}) do
+            if type(item) == "table" and (tonumber(item.levelReq) or 0) <= level then
+                local spell = tonumber(item.spellPower) or 0
+                local health = tonumber(item.health) or 0
+                if health > bestHealth or (health == bestHealth and spell > bestSpell) then
+                    bestKey, bestItem, bestHealth, bestSpell = key, item, health, spell
+                end
+            end
+        end
+        return bestKey, bestItem
+    end
+
+    local function healingAbilities(container, level)
+        local found, usedNames = {}, {}
+        for key, item in pairs(container or {}) do
+            local name = normalized(type(item) == "table" and item.name)
+            local score = HEAL_SCORE[name]
+            if score and (tonumber(item.levelReq) or 0) <= level and not usedNames[name] then
+                usedNames[name] = true
+                table.insert(found, { Key = key, Item = item, Score = score })
+            end
+        end
+        table.sort(found, function(a, b)
+            if a.Score == b.Score then
+                return (tonumber(a.Item.levelReq) or 0) > (tonumber(b.Item.levelReq) or 0)
+            end
+            return a.Score > b.Score
+        end)
+        return found
+    end
+
+    function UIWController:GetHealerTarget()
+        if not self.HealerEnabled then return nil end
+        local requested = cleanName(self.HealerTargetName)
+        if not requested or requested == "" then requested = cleanName(self.CarryHostName) end
+        local target = playerNamed(requested)
+        if target == LocalPlayer then return nil end
+        local character = target and target.Character
+        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+        local root = character and character:FindFirstChild("HumanoidRootPart")
+        if not humanoid or not root or humanoid.Health <= 0 then return nil end
+        return target, character, humanoid, root, requested
+    end
+
+    function UIWController:SetHealerOption(key, value)
+        if key == "HealerEnabled" then
+            self.HealerEnabled = value == true
+            if self.HealerEnabled then
+                self.AutoDodge = true
+            end
+        elseif key == "HealerTargetName" then
+            self.HealerTargetName = cleanName(value) or ""
+        elseif key == "HealerAutoEquip" then
+            self.HealerAutoEquip = value == true
+        elseif key == "HealerAutoSpells" then
+            self.HealerAutoSpells = value == true
+        elseif key == "HealerFollowDistance" then
+            self.HealerFollowDistance = 10
+        elseif key == "HealerUseRecordedPath" then
+            self.HealerUseRecordedPath = value == true
+            self.HealerRouteIndex = nil
+            self.RecordedRouteCompleteKey = nil
+            self.Route:InvalidateGoal()
+        elseif key == "ShowRecordedPath" then
+            self.ShowRecordedPath = value == true
+        else
+            return
+        end
+        self.HealerLastEquipAt = 0
+        if not self.HealerAutoEquip and not self.HealerAutoSpells then
+            self.HealerLoadout = "manual armor | manual spells"
+        elseif not self.HealerAutoEquip then
+            self.HealerLoadout = "manual armor | auto healing spells"
+        elseif not self.HealerAutoSpells then
+            self.HealerLoadout = "auto tank armor | manual spells"
+        end
+        self.Route:InvalidateGoal()
+        self:WriteMeta()
+        if self.HealerEnabled then self:ConfigureAutoExecute() end
+        if self.HUD then
+            self.HUD:RefreshControls()
+            if self.HUD.RefreshHealer then self.HUD:RefreshHealer() end
+        end
+    end
+
+    function UIWController:GetHealerRouteName()
+        local dungeon = Workspace:FindFirstChild("dungeonName")
+        local name = dungeon and dungeon:IsA("ValueBase") and tostring(dungeon.Value or "") or ""
+        return name ~= "" and name or ("Place " .. tostring(game.PlaceId))
+    end
+
+    function UIWController:GetHealerRouteKey()
+        return string.lower(string.gsub(self:GetHealerRouteName(), "[^%w]+", "_"))
+    end
+
+    function UIWController:LoadHealerRoutes()
+        if self.HealerRecordedRoutes then return self.HealerRecordedRoutes end
+        local saved = SafeFile.ReadJson(HEALER_ROUTE_FILE)
+        self.HealerRecordedRoutes = type(saved) == "table" and saved or {}
+        return self.HealerRecordedRoutes
+    end
+
+    function UIWController:SaveHealerRoutes()
+        ConfigStore.EnsureAccountFolder()
+        return SafeFile.WriteJson(HEALER_ROUTE_FILE, self:LoadHealerRoutes(), true)
+    end
+
+    function UIWController:GetRecordedHealerRoute()
+        local key = self:GetHealerRouteKey()
+        local route = self:LoadHealerRoutes()[key]
+        if type(route) ~= "table" then return nil end
+        self.HealerOptimizedRoutes = self.HealerOptimizedRoutes or {}
+        local cached = self.HealerOptimizedRoutes[key]
+        if cached and cached.Source == route then return cached.Points end
+        local points = optimizeRoute(route)
+        self.HealerOptimizedRoutes[key] = { Source = route, Points = points }
+        self.RecordedPathVisualCache = nil
+        return points
+    end
+
+    function UIWController:GetRecordedPathVisual()
+        local route = self:GetRecordedHealerRoute()
+        if not route or #route < 2 then return nil, 1 end
+        local cache = self.RecordedPathVisualCache
+        if not cache or cache.Route ~= route then
+            local waypoints = {}
+            for _, point in ipairs(route) do
+                local position = routeVector(point)
+                if position then table.insert(waypoints, { Position = position }) end
+            end
+            cache = { Route = route, Waypoints = waypoints }
+            self.RecordedPathVisualCache = cache
+        end
+        return cache.Waypoints, math.clamp(tonumber(self.HealerRouteIndex) or 1, 1, #cache.Waypoints)
+    end
+
+    function UIWController:StartHealerRouteRecording()
+        if not self.Character:IsAlive() then
+            self.HealerRouteStatus = "Cannot record until the character has spawned"
+            return false
+        end
+        self.HealerRecording = true
+        self.RecordedRouteCompleteKey = nil
+        self.HealerRecordingKey = self:GetHealerRouteKey()
+        self.HealerRecordingPoints = { routePoint(self.Character.Root.Position) }
+        self.HealerRouteStatus = "Recording " .. self:GetHealerRouteName()
+            .. " route: 1 point • saves automatically when complete"
+        self.Character:ReleaseAutomationFacing()
+        self.Route:Reset()
+        if self.HUD and self.HUD.RefreshHealer then self.HUD:RefreshHealer() end
+        return true
+    end
+
+    function UIWController:SampleHealerRoute(force)
+        if not self.HealerRecording or not self.Character:IsAlive() then return end
+        local points = self.HealerRecordingPoints
+        local position = self.Character.Root.Position
+        local previous = points and routeVector(points[#points])
+        local delta = previous and position - previous or Vector3.zero
+        if not previous
+            or flatten(delta).Magnitude >= ROUTE_SAMPLE_DISTANCE
+            or math.abs(delta.Y) >= 2
+            or (force and delta.Magnitude >= 0.5)
+        then
+            if #points < 800 then table.insert(points, routePoint(position)) end
+            self.HealerRouteStatus = string.format("Recording %s route: %d points • auto-saves when complete",
+                self:GetHealerRouteName(), #points)
+        end
+    end
+
+    function UIWController:StopHealerRouteRecording(automatic)
+        if not self.HealerRecording then return false end
+        self:SampleHealerRoute(true)
+        self.HealerRecording = false
+        local points = optimizeRoute(self.HealerRecordingPoints or {})
+        self.HealerRecordingPoints = points
+        if #points < 2 then
+            self.HealerRouteStatus = "Recording discarded: walk farther before saving"
+            return false
+        end
+        self:LoadHealerRoutes()[self.HealerRecordingKey or self:GetHealerRouteKey()] = points
+        self.HealerOptimizedRoutes = nil
+        self.RecordedPathVisualCache = nil
+        local saved = self:SaveHealerRoutes()
+        self.HealerRouteIndex = nil
+        self.RecordedRouteCompleteKey = nil
+        local dungeonName = self:GetHealerRouteName()
+        self.HealerRouteStatus = saved
+            and string.format("%s %s route: %d points",
+                automatic and "Auto-saved" or "Saved", dungeonName, #points)
+            or "Could not save route in the executor workspace"
+        if self.HUD and self.HUD.RefreshHealer then self.HUD:RefreshHealer() end
+        return saved
+    end
+
+    function UIWController:ClearHealerRecordedPath()
+        if self.HealerRecording then self.HealerRecording = false end
+        local routes = self:LoadHealerRoutes()
+        routes[self:GetHealerRouteKey()] = nil
+        self.HealerOptimizedRoutes = nil
+        self.RecordedPathVisualCache = nil
+        self.HealerRouteIndex = nil
+        self.RecordedRouteCompleteKey = nil
+        local saved = self:SaveHealerRoutes()
+        self.HealerRouteStatus = saved and ("Recorded route cleared for " .. self:GetHealerRouteName())
+            or "Could not clear the recorded route"
+        self.Route:Reset()
+        if self.HUD and self.HUD.RefreshHealer then self.HUD:RefreshHealer() end
+        return saved
+    end
+
+    function UIWController:GetHealerRecordedGoal(targetPosition)
+        if not self.HealerUseRecordedPath then return nil end
+        local points = self:GetRecordedHealerRoute()
+        if not points or #points < 2 or not self.Character:IsAlive() then
+            self.HealerRouteStatus = "Recorded route enabled • no route saved for this dungeon"
+            return nil
+        end
+
+        local currentPosition = self.Character.Root.Position
+        local function nearest(position)
+            local bestIndex, bestDistance = nil, math.huge
+            for index, point in ipairs(points) do
+                local vector = routeVector(point)
+                if vector then
+                    local distance = (vector - position).Magnitude
+                    if distance < bestDistance then
+                        bestIndex, bestDistance = index, distance
+                    end
+                end
+            end
+            return bestIndex, bestDistance
+        end
+
+        local currentIndex = tonumber(self.HealerRouteIndex)
+        local currentPoint = currentIndex and routeVector(points[currentIndex])
+        if not currentPoint or (currentPoint - currentPosition).Magnitude > ROUTE_RESYNC_DISTANCE then
+            currentIndex = nearest(currentPosition)
+        end
+        local targetIndex, targetDistance = nearest(targetPosition)
+        if not currentIndex or not targetIndex or targetDistance > 55 then
+            self.HealerRouteStatus = "Recorded route unavailable near the host • using live pathfinder"
+            self.HealerRouteIndex = nil
+            return nil
+        end
+
+        local direction = targetIndex > currentIndex and 1 or targetIndex < currentIndex and -1 or 0
+        if direction == 0 then
+            self.HealerRouteIndex = currentIndex
+            self.HealerRouteStatus = string.format("Recorded route active • point %d/%d", currentIndex, #points)
+            return nil
+        end
+
+        currentPoint = routeVector(points[currentIndex])
+        if currentPoint and (currentPoint - currentPosition).Magnitude <= ROUTE_REACH_DISTANCE then
+            currentIndex = math.clamp(currentIndex + direction, 1, #points)
+        end
+        self.HealerRouteIndex = currentIndex
+        self.HealerRouteStatus = string.format("Recorded route active • point %d/%d toward host", currentIndex, #points)
+        return routeVector(points[currentIndex])
+    end
+
+    function UIWController:GetRecordedProgressGoal()
+        if not self.HealerUseRecordedPath or not self.Character:IsAlive() then return nil end
+        local key = self:GetHealerRouteKey()
+        if self.RecordedRouteCompleteKey == key then return nil end
+        local points = self:GetRecordedHealerRoute()
+        if not points or #points < 2 then
+            self.HealerRouteStatus = "Recorded route enabled • no route saved for "
+                .. self:GetHealerRouteName()
+            return nil
+        end
+
+        local position = self.Character.Root.Position
+        local index = tonumber(self.HealerRouteIndex)
+        local point = index and routeVector(points[index])
+        if not point or (point - position).Magnitude > ROUTE_RESYNC_DISTANCE then
+            local nearestIndex, nearestDistance = 1, math.huge
+            local firstCandidate = index and math.max(1, index) or 1
+            local lastCandidate = index and math.min(#points, index + 80) or #points
+            for candidateIndex = firstCandidate, lastCandidate do
+                local candidate = points[candidateIndex]
+                local vector = routeVector(candidate)
+                if vector then
+                    local distance = (vector - position).Magnitude
+                    if distance < nearestDistance then
+                        nearestIndex, nearestDistance = candidateIndex, distance
+                    end
+                end
+            end
+            index = nearestIndex
+            point = routeVector(points[index])
+        end
+
+        if point and (point - position).Magnitude <= ROUTE_REACH_DISTANCE then
+            if index >= #points then
+                self.RecordedRouteCompleteKey = key
+                self.HealerRouteStatus = "Recorded " .. self:GetHealerRouteName()
+                    .. " route completed"
+                return nil
+            end
+            index += 1
+            point = routeVector(points[index])
+        end
+
+        -- Look ahead over a few straight, visible points. This removes the
+        -- stop-and-recompute pause at every dense recorder sample while still
+        -- preserving corners, stairs and large height changes.
+        local lookahead = index
+        for candidateIndex = math.min(#points, index + 3), index + 1, -1 do
+            local candidate = routeVector(points[candidateIndex])
+            local delta = candidate and candidate - position
+            local horizontal = delta and flatten(delta).Magnitude or 0
+            if candidate and horizontal > 0.1 and math.abs(delta.Y) <= 4
+                and self.Geometry:IsDirectionClear(delta, horizontal)
+            then
+                lookahead = candidateIndex
+                point = candidate
+                break
+            end
+        end
+        index = lookahead
+
+        self.HealerRouteIndex = index
+        self.HealerRouteStatus = string.format("Auto route active • %s • point %d/%d",
+            self:GetHealerRouteName(), index, #points)
+        return point
+    end
+
+    function UIWController:UpdateHealerNavigation(goal)
+        if not goal then return end
+        local previous = self.HealerNavigationGoal
+        if not previous or flatten(goal - previous).Magnitude >= 5
+            or math.abs(goal.Y - previous.Y) >= 2.5
+        then
+            self.HealerNavigationGoal = goal
+            self.Route:InvalidateGoal()
+        end
+    end
+
+    function UIWController:GetHealerLeadPosition(root)
+        if not root then return nil end
+        local velocity = flatten(root.AssemblyLinearVelocity or Vector3.zero)
+        local leadTime = velocity.Magnitude >= 12 and 0.65 or 0.4
+        local lead = velocity * leadTime
+        if lead.Magnitude > 18 then lead = lead.Unit * 18 end
+        return root.Position + lead
+    end
+
+    function UIWController:EquipHealerLoadout()
+        if not self.HealerEnabled or (not self.HealerAutoEquip and not self.HealerAutoSpells)
+            or self.HealerEquipBusy
+        then
+            return
+        end
+        self.HealerEquipBusy = true
+        task.spawn(function()
+            local ok, message = pcall(function()
+                local scripts = LocalPlayer:FindFirstChild("PlayerScripts")
+                local ui = scripts and scripts:FindFirstChild("Ui")
+                local inventoryScript = ui and ui:FindFirstChild("inventory")
+                if not inventoryScript then return "inventory is loading" end
+                local inventoryModule = require(inventoryScript)
+                local inventory = inventoryModule.GetPlayerInvy()
+                if type(inventory) ~= "table" then return "inventory is loading" end
+
+                local stats = LocalPlayer:FindFirstChild("leaderstats")
+                local levelValue = stats and stats:FindFirstChild("Level")
+                local level = tonumber(levelValue and levelValue.Value) or 1
+                local equipped = {}
+
+                if self.HealerAutoEquip then
+                    local chestKey, chest = bestTankArmor(inventory.chests, level)
+                    local helmetKey, helmet = bestTankArmor(inventory.helmets, level)
+                    if chestKey and not isEquipped(chest) then
+                        Remotes.equipItem:InvokeServer("chest", itemNumber(chestKey))
+                    end
+                    if helmetKey and not isEquipped(helmet) then
+                        Remotes.equipItem:InvokeServer("helmet", itemNumber(helmetKey))
+                    end
+                    if chest then table.insert(equipped, "Tank: " .. tostring(chest.name)) end
+                    if helmet then table.insert(equipped, tostring(helmet.name)) end
+                else
+                    table.insert(equipped, "manual armor")
+                end
+
+                if self.HealerAutoSpells then
+                    local abilities = healingAbilities(inventory.abilities, level)
+                    for index = 1, math.min(2, #abilities) do
+                        local chosen = abilities[index]
+                        local slot = index == 1 and "q" or "e"
+                        local slotEquipped = type(chosen.Item.equipped) == "table"
+                            and chosen.Item.equipped[slot] == true
+                        if not slotEquipped then
+                            Remotes.equipItem:InvokeServer("ability", itemNumber(chosen.Key), slot)
+                        end
+                        table.insert(equipped, tostring(chosen.Item.name))
+                    end
+                    if #abilities == 0 then table.insert(equipped, "no owned healing spell") end
+                else
+                    table.insert(equipped, "manual spells")
+                end
+                return table.concat(equipped, " | ")
+            end)
+            self.HealerEquipBusy = false
+            self.HealerLoadout = ok and message or ("equip error: " .. tostring(message))
+        end)
+    end
+
+    function UIWController:HealerCast(targetHumanoid, distance)
+        local healerHumanoid = self.Character and self.Character.Humanoid
+        local targetMissingHealth = targetHumanoid and targetHumanoid.MaxHealth > 0
+            and targetHumanoid.Health + 1 < targetHumanoid.MaxHealth
+        local healerMissingHealth = healerHumanoid and healerHumanoid.MaxHealth > 0
+            and healerHumanoid.Health > 0
+            and healerHumanoid.Health + 1 < healerHumanoid.MaxHealth
+        if not targetMissingHealth and not healerMissingHealth then
+            return false
+        end
+
+        local targetPercent = targetHumanoid and targetHumanoid.MaxHealth > 0
+            and targetHumanoid.Health / targetHumanoid.MaxHealth * 100 or 100
+        local healerPercent = healerHumanoid and healerHumanoid.MaxHealth > 0
+            and healerHumanoid.Health / healerHumanoid.MaxHealth * 100 or 100
+        local lowestPercent = math.min(targetMissingHealth and targetPercent or 100,
+            healerMissingHealth and healerPercent or 100)
+        local now = os.clock()
+        local minimumGap = lowestPercent <= 50 and 0.9 or 1.25
+        if now - (self.HealerLastCastAt or 0) < minimumGap then return false end
+        if lowestPercent > 50 and now < (self.HealerHealCoveredUntil or 0) then return false end
+
+        local ready = {}
+        for _, container in ipairs({ LocalPlayer.Backpack, LocalPlayer.Character }) do
+            if container then
+                for _, tool in ipairs(container:GetChildren()) do
+                    local spellName = tool:IsA("Tool") and normalized(tool.Name)
+                    local score = spellName and HEAL_SCORE[spellName]
+                    local cooldown = tool:FindFirstChild("cooldown")
+                    local event = tool:FindFirstChild("localEvent")
+                    -- A wounded healer may use a local spell for themselves.
+                    -- A wounded host still requires the spell to reach them.
+                    local reachesTarget = targetMissingHealth
+                        and distance <= (HEAL_RANGE[spellName] or 0)
+                    local inRange = healerMissingHealth or reachesTarget
+                    if score and inRange and event
+                        and (not cooldown or (tonumber(cooldown.Value) or 0) <= 0)
+                    then
+                        table.insert(ready, { Tool = tool, Event = event, Score = score })
+                    end
+                end
+            end
+        end
+        table.sort(ready, function(a, b) return a.Score > b.Score end)
+        local chosen = ready[1]
+        if not chosen then return false end
+
+        self.HealerLastCastAt = now
+        local ok = pcall(function() chosen.Event:Fire() end)
+        if ok then
+            self.HealerLastSpell = chosen.Tool.Name
+            self.HealerHealCoveredUntil = now + (HEAL_COVERAGE[normalized(chosen.Tool.Name)] or 2)
+            local healingName = cleanName(self.HealerTargetName)
+                or cleanName(self.CarryHostName) or "target"
+            self.HealerStatus = string.format("Healing %s with %s | host %.0f%% • healer %.0f%% | %.0f studs",
+                healingName, chosen.Tool.Name,
+                targetPercent, healerPercent, distance or 0)
+        end
+        return ok
+    end
+
+    function UIWController:HealerMobilityCast(distance, targetHumanoid)
+        distance = tonumber(distance) or 0
+        local followDistance = self:GetHealerApproachDistance()
+        local hostIsBoosted = targetHumanoid
+            and (tonumber(targetHumanoid.WalkSpeed) or 0) > 20
+        local longCatchup = distance >= 45
+        if not longCatchup and not (hostIsBoosted and distance > followDistance) then
+            return false
+        end
+        local now = os.clock()
+        if now - (self.HealerLastCastAt or 0) < 1.25
+            or now < (self.HealerHealCoveredUntil or 0)
+        then
+            return false
+        end
+
+        local ready = {}
+        for _, container in ipairs({ LocalPlayer.Backpack, LocalPlayer.Character }) do
+            if container then
+                for _, tool in ipairs(container:GetChildren()) do
+                    local name = tool:IsA("Tool") and normalized(tool.Name)
+                    local score
+                    -- Mirror a host speed spell with Revitalize. Life Dash is
+                    -- still preferred for ordinary long-distance catch-up.
+                    if hostIsBoosted and name == "revitalize" then
+                        score = 1000
+                    elseif longCatchup then
+                        score = name and MOBILITY_HEALS[name]
+                    end
+                    local cooldown = tool:FindFirstChild("cooldown")
+                    local event = tool:FindFirstChild("localEvent")
+                    if score and event and (not cooldown or (tonumber(cooldown.Value) or 0) <= 0) then
+                        table.insert(ready, { Tool = tool, Event = event, Score = score })
+                    end
+                end
+            end
+        end
+        table.sort(ready, function(a, b) return a.Score > b.Score end)
+        local chosen = ready[1]
+        if not chosen then return false end
+
+        self.HealerLastCastAt = now
+        local ok = pcall(function() chosen.Event:Fire() end)
+        if ok then
+            self.HealerLastSpell = chosen.Tool.Name
+            local coverage = HEAL_COVERAGE[normalized(chosen.Tool.Name)] or 2
+            self.HealerHealCoveredUntil = now + coverage
+            self.HealerMobilityBuffUntil = now + coverage
+            local reason = hostIsBoosted and "matching host speed" or "long-distance catch-up"
+            self.HealerStatus = string.format("Fast follow with %s • %s • host %.0f studs away",
+                chosen.Tool.Name, reason, distance)
+        end
+        return ok
+    end
+
+    function UIWController:HealerNavigationRecovery(targetRoot, distance)
+        if not targetRoot or not self.Character:IsAlive()
+            or distance <= self:GetHealerApproachDistance()
+        then
+            self.HealerProgressPosition = self.Character.Root and self.Character.Root.Position or nil
+            self.HealerProgressAt = os.clock()
+            return
+        end
+
+        local now = os.clock()
+        local position = self.Character.Root.Position
+        local goal = self.HealerNavigationGoal or targetRoot.Position
+        local delta = goal - position
+        local horizontal = flatten(delta).Magnitude
+        local humanoid = self.Character.Humanoid
+
+        -- Give climbing and short upward transitions an early jump instead of
+        -- waiting for the generic stuck detector to complete its full cycle.
+        if delta.Y >= 2 and horizontal <= 11 and humanoid
+            and humanoid.FloorMaterial ~= Enum.Material.Air
+            and now - (self.HealerLastClimbJumpAt or 0) >= 0.7
+        then
+            self.HealerLastClimbJumpAt = now
+            humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+        end
+
+        if not self.HealerProgressPosition then
+            self.HealerProgressPosition = position
+            self.HealerProgressAt = now
+            return
+        end
+        if (position - self.HealerProgressPosition).Magnitude >= 2 then
+            self.HealerProgressPosition = position
+            self.HealerProgressAt = now
+            return
+        end
+        if now - (self.HealerProgressAt or now) >= 1.25
+            and now - (self.HealerLastForcedRepathAt or 0) >= 1.25
+        then
+            self.HealerLastForcedRepathAt = now
+            self.HealerProgressAt = now
+            self.Route:ClearPath()
+            self.Route:ForceRepath(goal)
+            if humanoid and humanoid.FloorMaterial ~= Enum.Material.Air then
+                humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+            end
+            self.HealerRouteStatus = "Live pathfinder repathing around an obstacle"
+        end
+    end
+
+    function UIWController:SetHealerNoclip(enabled)
+        local character = self.Character and self.Character.Character
+        if not enabled or not character or not character.Parent then
+            for part, wasCollidable in pairs(self.HealerNoclipParts or {}) do
+                if part.Parent then part.CanCollide = wasCollidable end
+            end
+            self.HealerNoclipParts = nil
+            self.HealerNoclipCharacter = nil
+            return
+        end
+
+        if self.HealerNoclipCharacter ~= character then
+            self:SetHealerNoclip(false)
+            self.HealerNoclipCharacter = character
+            self.HealerNoclipParts = {}
+        end
+        for _, part in ipairs(character:GetDescendants()) do
+            if part:IsA("BasePart") and part.CanCollide then
+                if self.HealerNoclipParts[part] == nil then
+                    self.HealerNoclipParts[part] = true
+                end
+                part.CanCollide = false
+            end
+        end
+        -- Other local scripts may restore collision each frame.
+        for part in pairs(self.HealerNoclipParts) do
+            if part.Parent then part.CanCollide = false end
+        end
+    end
+
+    function UIWController:UpdateHealerNoclip(targetRoot, distance)
+        local approach = self:GetHealerApproachDistance()
+        if not self.HealerEnabled or not targetRoot or not self.Character:IsAlive()
+            or distance <= approach
+        then
+            self.HealerNoclipUntil = 0
+            self.HealerClosingSampleAt = nil
+            self.HealerClosingSampleDistance = nil
+            self.HealerClosingStalledUntil = nil
+            self:SetHealerNoclip(false)
+            return
+        end
+
+        local now = os.clock()
+        if not self.HealerClosingSampleAt then
+            self.HealerClosingSampleAt = now
+            self.HealerClosingSampleDistance = distance
+        elseif now - self.HealerClosingSampleAt >= 0.7 then
+            if distance >= (self.HealerClosingSampleDistance or distance) - 1 then
+                self.HealerClosingStalledUntil = now + 0.8
+            end
+            self.HealerClosingSampleAt = now
+            self.HealerClosingSampleDistance = distance
+        end
+        if now < (self.HealerNoclipUntil or 0) then
+            self:SetHealerNoclip(true)
+            local delta = flatten(targetRoot.Position - self.Character.Root.Position)
+            if delta.Magnitude > 0.1 then
+                self.Character.Humanoid:Move(delta.Unit, false)
+            end
+            return
+        end
+        self:SetHealerNoclip(false)
+        if now < (self.HealerNoclipCooldownUntil or 0) then return end
+
+        local delta = flatten(targetRoot.Position - self.Character.Root.Position)
+        local blocked = false
+        if delta.Magnitude > 0.1 then
+            local params = RaycastParams.new()
+            params.FilterType = Enum.RaycastFilterType.Exclude
+            params.FilterDescendantsInstances = {
+                self.Character.Character,
+                targetRoot.Parent,
+            }
+            params.IgnoreWater = true
+            local hit = Workspace:Raycast(self.Character.Root.Position,
+                delta.Unit * math.min(delta.Magnitude, 6), params)
+            blocked = hit ~= nil and hit.Instance.CanCollide
+        end
+        local stalled = now - (self.HealerProgressAt or now) >= 0.8
+        local notClosing = now < (self.HealerClosingStalledUntil or 0)
+        local farBehind = distance >= 20
+        if not blocked and not stalled and not notClosing and not farBehind then return end
+
+        -- Short pulses pass a wall or prop without leaving collision disabled
+        -- long enough for the character to fall through a floor.
+        local pulse = blocked and 0.3 or (farBehind and 0.2 or 0.4)
+        self.HealerNoclipUntil = now + pulse
+        self.HealerNoclipCooldownUntil = self.HealerNoclipUntil + 0.15
+        self:SetHealerNoclip(true)
+        self.Route:ClearPath()
+        self.Route:ForceRepath(targetRoot.Position)
+        self.HealerRouteStatus = blocked and "Healer collision recovery • passing obstacle"
+            or (farBehind and "Healer collision recovery • closing on host"
+                or "Healer collision recovery • escaping stuck point")
+    end
+
+    function UIWController:HealerUpdate()
+        if not self.HealerEnabled or self.Destroyed then return end
+        local target, _, humanoid, root, requested = self:GetHealerTarget()
+        if not target then
+            local fallback = cleanName(self.HealerTargetName) or cleanName(self.CarryHostName)
+            self.HealerStatus = fallback
+                and ("Waiting for " .. fallback)
+                or "Enter a player or configure a Carry host"
+            return
+        end
+        local distance = (root.Position - self.Character.Root.Position).Magnitude
+        self:HealerNavigationRecovery(root, distance)
+        self:UpdateHealerNoclip(root, distance)
+        local health = humanoid.Health / math.max(humanoid.MaxHealth, 1) * 100
+        local healerHumanoid = self.Character and self.Character.Humanoid
+        local healerHealth = healerHumanoid and healerHumanoid.MaxHealth > 0
+            and healerHumanoid.Health / healerHumanoid.MaxHealth * 100 or 0
+        if not self:HealerCast(humanoid, distance)
+            and not self:HealerMobilityCast(distance, humanoid)
+        then
+            self.HealerStatus = string.format("Following %s | host %.0f%% • healer %.0f%% | %.0f studs",
+                requested or target.Name, health, healerHealth, distance)
+        end
+    end
+
+    local oldGetGoal = UIWController.GetGoal
+    function UIWController:GetGoal()
+        if self.HealerEnabled then
+            self.RecordedRouteTraversalActive = false
+            local mechanicGoal = self:GetPriorityMechanicGoal()
+            if mechanicGoal then return oldGetGoal(self) end
+            local _, _, _, root = self:GetHealerTarget()
+            if not root then return nil end
+            local distance = (root.Position - self.Character.Root.Position).Magnitude
+            if distance > self:GetHealerApproachDistance() then
+                local goal
+                if distance >= 20 then
+                    -- When far behind, take the direct predicted host point;
+                    -- collision pulses handle props instead of sending the
+                    -- healer through a slower recorded-route detour.
+                    goal = self:GetHealerLeadPosition(root) or root.Position
+                    self.HealerRouteStatus = "Direct catch-up route to host"
+                else
+                    goal = self:GetHealerRecordedGoal(root.Position)
+                        or self:GetHealerLeadPosition(root) or root.Position
+                end
+                -- Healer following is always committed route travel. Nearby
+                -- dungeon enemies must not pull the healer away from its host.
+                self.RecordedRouteTraversalActive = true
+                self:UpdateHealerNavigation(goal)
+                return goal
+            end
+            return nil
+        end
+        if self.HealerUseRecordedPath then
+            self.RecordedRouteTraversalActive = false
+            local mechanicGoal = self:GetPriorityMechanicGoal()
+            if mechanicGoal then return oldGetGoal(self) end
+            local enemy = self.CurrentEnemy
+            local enemyDistance = enemy and enemy.Root and enemy.Root.Parent
+                and (enemy.Root.Position - self.Character.Root.Position).Magnitude or math.huge
+            local enemyHeight = enemy and enemy.Root and enemy.Root.Parent
+                and math.abs(enemy.Root.Position.Y - self.Character.Root.Position.Y) or 0
+            local readyForCombat = enemyDistance <= ROUTE_COMBAT_PAUSE_DISTANCE and enemyHeight <= 7
+            if not readyForCombat then
+                local routeGoal = self:GetRecordedProgressGoal()
+                if routeGoal then
+                    self.RecordedRouteTraversalActive = true
+                    self:UpdateHealerNavigation(routeGoal)
+                    return routeGoal
+                end
+            else
+                self.HealerRouteStatus = string.format("Auto route paused for combat • %.0f studs", enemyDistance)
+            end
+        end
+        self.RecordedRouteTraversalActive = false
+        return oldGetGoal(self)
+    end
+
+    local oldGetTargetYaw = UIWController.GetTargetYaw
+    function UIWController:GetTargetYaw()
+        if self.HealerEnabled then
+            local _, _, _, root = self:GetHealerTarget()
+            if root and self.Character.Root then
+                local direction = flatten(root.Position - self.Character.Root.Position)
+                if direction.Magnitude > 0.05 then return directionToYaw(direction) end
+            end
+        end
+        return oldGetTargetYaw(self)
+    end
+
+    local oldStep = UIWController.Step
+    function UIWController:Step()
+        if self.HealerRecording then
+            self:SetHealerNoclip(false)
+            self.Character:ReleaseAutomationFacing()
+            return
+        end
+        if not self.HealerEnabled then
+            self:SetHealerNoclip(false)
+            if not self.HealerUseRecordedPath then return oldStep(self) end
+            local dodge = self.AutoDodge
+            self.AutoDodge = true
+            local ok, err = pcall(oldStep, self)
+            self.AutoDodge = dodge
+            if not ok then error(err) end
+            return
+        end
+        local master, combat, dodge = self.Enabled, self.AutoCombat, self.AutoDodge
+        local configuredWalkSpeed = CONFIG.WalkSpeed
+        local healerHumanoid = self.Character and self.Character.Humanoid
+        if healerHumanoid and healerHumanoid.WalkSpeed > 20
+            and os.clock() >= (self.HealerMobilityBuffUntil or 0)
+        then
+            healerHumanoid.WalkSpeed = 20
+        end
+        self.Enabled = true
+        local use3DGoalDistance = self.Route.Use3DGoalDistance
+        self.AutoCombat = false
+        self.AutoDodge = true
+        CONFIG.WalkSpeed = math.min(tonumber(CONFIG.WalkSpeed) or 16, 20)
+        self.Route.Use3DGoalDistance = true
+        local ok, err = pcall(oldStep, self)
+        self.AutoCombat = combat
+        self.AutoDodge = dodge
+        self.Enabled = master
+        CONFIG.WalkSpeed = configuredWalkSpeed
+        self.Route.Use3DGoalDistance = use3DGoalDistance
+        if not ok then error(err) end
+        if self.Character:IsAlive() then self:HealerUpdate() end
+    end
+
+    function UIWController:StartHealer()
+        self.HealerFollowDistance = 10
+        self:LoadHealerRoutes()
+        local savedRoute = self:GetRecordedHealerRoute()
+        self.HealerRouteStatus = savedRoute
+            and string.format("Saved %s route: %d points", self:GetHealerRouteName(), #savedRoute)
+            or ("No recorded route for " .. self:GetHealerRouteName())
+        if self.HealerEnabled then
+            self.AutoDodge = true
+        end
+        self.HealerStatus = self.HealerEnabled and "Starting healer" or "Healer off"
+        self.Maid:Give(function() self:SetHealerNoclip(false) end)
+        self.Maid:Give(RunService.Heartbeat:Connect(function()
+            local now = os.clock()
+            if self.HealerRecording and now - (self.HealerLastRecordSampleAt or 0) >= 0.15 then
+                self.HealerLastRecordSampleAt = now
+                self:SampleHealerRoute(false)
+                if healerDungeonFinished() then
+                    self:StopHealerRouteRecording(true)
+                end
+            end
+            if now - (self.HealerHUDAt or 0) >= 0.5 then
+                self.HealerHUDAt = now
+                if self.HUD and self.HUD.RefreshHealer then self.HUD:RefreshHealer() end
+            end
+            if not self.HealerEnabled then return end
+            if (self.HealerAutoEquip or self.HealerAutoSpells)
+                and now - (self.HealerLastEquipAt or 0) >= 12
+            then
+                self.HealerLastEquipAt = now
+                self:EquipHealerLoadout()
+            end
+        end))
+    end
+
+    local oldStart = UIWController.Start
+    function UIWController:Start()
+        oldStart(self)
+        self:StartHealer()
+    end
+end
+-- Keep moving into the Enchanted Forest Dragon arena. The Dragon can start
+-- spawning map-wide warnings before the player reaches it; treating those as
+-- normal combat hazards makes the dodge solver circle or stop outside the
+-- arena. During the approach, the route owns movement until casting range.
+do
+    local ENTRY_RELEASE_DISTANCE = 68
+    local ENTRY_REPATH_DELAY = 1.15
+    local ENTRY_PROGRESS_EPSILON = 2.0
+
+    local function inEnchantedForest()
+        local name = Workspace:FindFirstChild("dungeonName")
+        return name and name:IsA("StringValue") and name.Value == "Enchanted Forest"
+    end
+
+    local function isDragon(enemy)
+        return enemy and enemy.Model and enemy.Root and enemy.Root.Parent
+            and enemy.Humanoid and enemy.Humanoid.Health > 0
+            and normalizeEnemyName(enemy.Model.Name) == "enchanted forest dragon"
+    end
+
+    local function clearEntry(self)
+        self.EnchantedDragonEntryActive = false
+        self.EnchantedDragonEntryEnemy = nil
+        self.EnchantedDragonEntryBestDistance = nil
+        self.EnchantedDragonEntryProgressAt = nil
+    end
+
+    local oldMechanicGoal = UIWController.GetPriorityMechanicGoal
+    function UIWController:GetPriorityMechanicGoal()
+        local enemy = self.CurrentEnemy
+        if inEnchantedForest() and isDragon(enemy) and self.Character:IsAlive() then
+            local distance = flatten(enemy.Root.Position - self.Character.Root.Position).Magnitude
+            if distance > ENTRY_RELEASE_DISTANCE then
+                if self.EnchantedDragonEntryEnemy ~= enemy.Model then
+                    self.EnchantedDragonEntryBestDistance = distance
+                    self.EnchantedDragonEntryProgressAt = os.clock()
+                end
+                self.EnchantedDragonEntryActive = true
+                self.EnchantedDragonEntryEnemy = enemy.Model
+                return enemy.Root.Position, "DragonArenaEntry", enemy.Root, distance
+            end
+        end
+
+        if self.EnchantedDragonEntryActive then
+            clearEntry(self)
+        end
+        return oldMechanicGoal(self)
+    end
+
+    -- Large Dragon warnings are often already active in the arena while the
+    -- player is still on the approach. Follow the computed path unless the
+    -- character is physically inside a live hitbox right now.
+    local oldSolve = DodgeSolver.Solve
+    function DodgeSolver:Solve(routeDirection, enemy, targetYaw)
+        local owner = self.Owner
+        if owner and owner.EnchantedDragonEntryActive and isDragon(enemy) then
+            local root = self.CharacterService.Root
+            local overlaps = self.Hazards:GetOverlapCountAt(root.Position, targetYaw)
+            local preferred = unit(flatten(routeDirection or Vector3.zero))
+
+            if overlaps <= 0 then
+                if preferred.Magnitude <= 0.05 then
+                    local toward = unit(flatten(enemy.Root.Position - root.Position))
+                    local future = root.Position + toward * 5
+                    if toward.Magnitude > 0.05
+                        and self.Geometry:IsDirectionClear(toward, 5, targetYaw)
+                        and self.Geometry:IsGroundPadded(future, CONFIG.EdgeHardPadding)
+                    then
+                        preferred = toward
+                    end
+                end
+
+                if preferred.Magnitude > 0.05 then
+                    self.CommittedDodgeDirection = Vector3.zero
+                    self.DodgeCommitUntil = 0
+                    self.CachedDirection = preferred
+                    self.CachedYaw = targetYaw
+                    self.CachedEmergency = false
+                    self.CachedDodging = false
+                    self.IsDodging = false
+                    self.LastDodgeReason = "dragon-entry"
+                    self.LastMovement = preferred
+                    return preferred, targetYaw, false, false
+                end
+            end
+        end
+        return oldSolve(self, routeDirection, enemy, targetYaw)
+    end
+
+    -- Recompute the path quickly if streaming or a stair edge leaves the
+    -- approach with no measurable forward progress.
+    local oldStep = UIWController.Step
+    function UIWController:Step()
+        oldStep(self)
+        if not self.EnchantedDragonEntryActive or not self.Character:IsAlive() then
+            return
+        end
+
+        local enemy = self.CurrentEnemy
+        if not isDragon(enemy) then
+            clearEntry(self)
+            return
+        end
+
+        local now = os.clock()
+        local distance = flatten(enemy.Root.Position - self.Character.Root.Position).Magnitude
+        local best = self.EnchantedDragonEntryBestDistance
+        if not best or distance <= best - ENTRY_PROGRESS_EPSILON then
+            self.EnchantedDragonEntryBestDistance = distance
+            self.EnchantedDragonEntryProgressAt = now
+        elseif now - (self.EnchantedDragonEntryProgressAt or now) >= ENTRY_REPATH_DELAY then
+            self.EnchantedDragonEntryBestDistance = distance
+            self.EnchantedDragonEntryProgressAt = now
+            self.Route:InvalidateGoal()
+            self.RecoveryUntil = 0
+            self.HardRecoveryActive = false
+        end
+
+        self.HUD:SetStatus("PATHING", "entering Dragon arena | " .. math.floor(distance) .. " away")
+    end
+
+    local oldNew = UIWController.new
+    function UIWController.new()
+        local self = oldNew()
+        self.Version = tostring(self.Version) .. "+dragonentry1"
+        return self
+    end
+end
+-- Prefer a safe attacking lane over a backward dodge. Backward movement is
+-- still available for immediate hitbox exits, melee panic, forced mechanics,
+-- and emergencies where no forward candidate passes every safety check.
+do
+    CONFIG.ForwardDodgeMaxTargetDistance = 180
+    CONFIG.ForwardDodgeBackwardDot = -0.05
+
+    local KEEP_ESCAPE_REASON = {
+        hitbox = true,
+        bullseye = true,
+        sweeper = true,
+        ["tree-sweeper"] = true,
+        melee = true,
+        ["large-attack"] = true,
+        fallback = true,
+    }
+
+    function DodgeSolver:FindForwardDamageDodge(enemy, targetYaw)
+        local root = self.CharacterService.Root
+        if not root or not enemy or not enemy.Root or not enemy.Root.Parent then
+            return nil
+        end
+
+        local offset = flatten(enemy.Root.Position - root.Position)
+        local distance = offset.Magnitude
+        if distance <= 0.05 or distance > CONFIG.ForwardDodgeMaxTargetDistance then
+            return nil
+        end
+
+        local toward = offset.Unit
+        local probe = CONFIG.DodgeDistance
+        local best, bestScore = nil, -math.huge
+
+        -- Every option keeps some forward progress. Wider diagonals remain
+        -- available for line and aura attacks without giving up attack range.
+        for _, angle in ipairs({ 0, 22, -22, 42, -42, 62, -62, 80, -80 }) do
+            local direction = unit(rotateXZ(toward, angle))
+            local point = root.Position + direction * probe
+            local after = flatten(enemy.Root.Position - point).Magnitude
+
+            local keepsBossBand = not isBossEnemy(enemy)
+                or distance < CONFIG.BossMinRange
+                or after >= CONFIG.BossMinRange
+
+            if keepsBossBand and not self.Dungeon:GetEnemyDangerAt(point) then
+                local safety = self:ScoreCandidate(direction, toward, targetYaw)
+                if safety then
+                    local progress = distance - after
+                    local score = safety + progress * 70
+                    score += direction:Dot(toward) * 240
+
+                    if after <= CONFIG.DamageCastRange - 3 then
+                        score += 220
+                    end
+                    if self.LastMovement and self.LastMovement.Magnitude > 0 then
+                        score += direction:Dot(self.LastMovement) * 15
+                    end
+
+                    if score > bestScore then
+                        best, bestScore = direction, score
+                    end
+                end
+            end
+        end
+
+        return best
+    end
+
+    local oldSolve = DodgeSolver.Solve
+    function DodgeSolver:Solve(routeDirection, enemy, targetYaw)
+        local direction, yaw, emergency, dodging = oldSolve(self, routeDirection, enemy, targetYaw)
+        if not direction or direction.Magnitude <= 0.05
+            or not enemy or not enemy.Root or not enemy.Root.Parent
+            or emergency or self.ForceRouteMovement or self.ForcedRegionPart
+            or self.TargetBlocked or self.RetreatActive
+            or KEEP_ESCAPE_REASON[self.LastDodgeReason or ""]
+        then
+            return direction, yaw, emergency, dodging
+        end
+
+        local toward = unit(flatten(enemy.Root.Position - self.CharacterService.Root.Position))
+        local moving = unit(flatten(direction))
+        if toward.Magnitude <= 0.05
+            or moving:Dot(toward) >= CONFIG.ForwardDodgeBackwardDot
+        then
+            return direction, yaw, emergency, dodging
+        end
+
+        local replacement = self:FindForwardDamageDodge(enemy, targetYaw)
+        if not replacement then
+            return direction, yaw, emergency, dodging
+        end
+
+        self.LastDodgeReason = "forward-attack-lane"
+        self.ForwardDodgeSelections = (self.ForwardDodgeSelections or 0) + 1
+        self.CachedDirection = replacement
+        self.CachedYaw = targetYaw
+        self.CachedEmergency = false
+        self.CachedDodging = true
+        self.IsDodging = true
+        self.CommittedDodgeDirection = replacement
+        self.DodgeCommitUntil = os.clock() + CONFIG.DodgeCommitTime
+        self.LastMovement = replacement
+        return replacement, targetYaw, false, true
+    end
+
+    local oldNew = UIWController.new
+    function UIWController.new()
+        local self = oldNew()
+        self.Version = tostring(self.Version) .. "+forwarddodge1"
+        return self
+    end
+end
 
 local Controller = UIWController.new()
+Controller.Version = tostring(Controller.Version) .. "+streamtarget+carry12+route5+healer13+dragonlag7"
 
 getgenv().UIW = Controller
 getgenv().UNDERWORLD_AI = Controller
@@ -31488,7 +34203,6 @@ getgenv().UNDERWORLD_AI = Controller
 print("[UIW] NavigationV2-v44.20 loaded | persistent mob combos + safe-spot hold")
 
 Controller:Start()
-
 -- v38 telemetry: records every hit you take with the dodge state at that
 -- moment, plus dodge-solver timing. Read it from getgenv().UIW_Telemetry.
 do

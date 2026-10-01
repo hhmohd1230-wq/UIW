@@ -16,6 +16,7 @@ function UIWController.new()
     self.Combat = CombatController.new(self.Character, self.SelfAbilities)
     self.ESP = HitboxESP.new(self.Hazards)
     self.PathESP = PathESP.new()
+    self.RecordedPathESP = PathESP.new("UIW_RecordedPathESP", Color3.fromRGB(70, 190, 255), 80)
     self.TargetHealth = TargetHealthBar.new()
 
     self.Enabled = true
@@ -27,6 +28,23 @@ function UIWController.new()
     self.ShowAura = true
     self.ShowMobGroups = true
     self.AutoExecuteOnTeleport = false
+    self.FPSLimitEnabled = false
+    self.FPSCap = 30
+    self.BlackScreen = false
+    self.CarryEnabled = false
+    self.CarryHostName = ""
+    self.CarryAlts = ""
+    self.CarryMode = "Auto"
+    self.CarryFixedStage = 1
+    self.CarryHardcore = false
+    self.CarryRunStage = nil
+    self.HealerEnabled = false
+    self.HealerTargetName = ""
+    self.HealerAutoEquip = true
+    self.HealerAutoSpells = false
+    self.HealerFollowDistance = 10
+    self.HealerUseRecordedPath = false
+    self.ShowRecordedPath = false
     self.ActiveConfig = nil
     self.AutoLoadConfig = ""
 
@@ -94,6 +112,30 @@ function UIWController:ApplySettings(settings)
     self.AutoRetryEnabled = readBoolean("AutoRetryEnabled", self.AutoRetryEnabled)
     self.ShowAura = readBoolean("ShowAura", self.ShowAura)
     self.ShowMobGroups = readBoolean("ShowMobGroups", self.ShowMobGroups)
+    self.FPSLimitEnabled = readBoolean("FPSLimitEnabled", self.FPSLimitEnabled)
+    self.BlackScreen = readBoolean("BlackScreen", self.BlackScreen)
+    self.FPSCap = validNumber(settings.FPSCap, 15, 120, self.FPSCap)
+    self.CarryEnabled = readBoolean("CarryEnabled", self.CarryEnabled)
+    if type(settings.CarryHostName) == "string" then
+        self.CarryHostName = string.sub(settings.CarryHostName, 1, 32)
+    end
+    if type(settings.CarryAlts) == "string" then
+        self.CarryAlts = string.sub(settings.CarryAlts, 1, 10000)
+    end
+    if settings.CarryMode == "Auto" or settings.CarryMode == "Fixed" then
+        self.CarryMode = settings.CarryMode
+    end
+    self.CarryFixedStage = math.floor(validNumber(settings.CarryFixedStage, 1, #CARRY_STAGES, self.CarryFixedStage))
+    self.CarryHardcore = readBoolean("CarryHardcore", self.CarryHardcore)
+    self.HealerEnabled = readBoolean("HealerEnabled", self.HealerEnabled)
+    if type(settings.HealerTargetName) == "string" then
+        self.HealerTargetName = string.sub(settings.HealerTargetName, 1, 32)
+    end
+    self.HealerAutoEquip = readBoolean("HealerAutoEquip", self.HealerAutoEquip)
+    self.HealerAutoSpells = readBoolean("HealerAutoSpells", self.HealerAutoSpells)
+    self.HealerFollowDistance = 10
+    self.HealerUseRecordedPath = readBoolean("HealerUseRecordedPath", self.HealerUseRecordedPath)
+    self.ShowRecordedPath = readBoolean("ShowRecordedPath", self.ShowRecordedPath)
 
     CONFIG.WalkSpeed = validNumber(settings.WalkSpeed, 12, 40, CONFIG.WalkSpeed)
     CONFIG.DesiredCombatRange = validNumber(settings.DesiredCombatRange, 24, 60, CONFIG.DesiredCombatRange)
@@ -112,6 +154,7 @@ function UIWController:ApplySettings(settings)
         end)
     end
 
+    if self.DisplayStarted then self:ApplyDisplaySettings() end
     if self.HUD then self.HUD:RefreshControls() end
     return true
 end
@@ -126,10 +169,85 @@ function UIWController:GetSettings()
         AutoRetryEnabled = self.AutoRetryEnabled,
         ShowAura = self.ShowAura,
         ShowMobGroups = self.ShowMobGroups,
+        FPSLimitEnabled = self.FPSLimitEnabled,
+        FPSCap = self.FPSCap,
+        BlackScreen = self.BlackScreen,
+        CarryEnabled = self.CarryEnabled,
+        CarryHostName = self.CarryHostName,
+        CarryAlts = self.CarryAlts,
+        CarryMode = self.CarryMode,
+        CarryFixedStage = self.CarryFixedStage,
+        CarryHardcore = self.CarryHardcore,
+        HealerEnabled = self.HealerEnabled,
+        HealerTargetName = self.HealerTargetName,
+        HealerAutoEquip = self.HealerAutoEquip,
+        HealerAutoSpells = self.HealerAutoSpells,
+        HealerFollowDistance = self.HealerFollowDistance,
+        HealerUseRecordedPath = self.HealerUseRecordedPath,
+        ShowRecordedPath = self.ShowRecordedPath,
         WalkSpeed = CONFIG.WalkSpeed,
         DesiredCombatRange = CONFIG.DesiredCombatRange,
         DamageCastRange = CONFIG.DamageCastRange,
     }
+end
+
+function UIWController:ApplyDisplaySettings()
+    local env = getgenv()
+    if env.UIW_OriginalFPSCap == nil then
+        local ok, cap = pcall(function() return getfpscap() end)
+        env.UIW_OriginalFPSCap = ok and tonumber(cap) or 60
+    end
+
+    local cap = self.BlackScreen and 15
+        or (self.FPSLimitEnabled and self.FPSCap or env.UIW_OriginalFPSCap)
+    if type(setfpscap) == "function" then
+        pcall(setfpscap, cap)
+    end
+
+    if self.BlackScreen then
+        if not self.BlackScreenGui or not self.BlackScreenGui.Parent then
+            local gui = Instance.new("ScreenGui")
+            gui.Name = "UIW_BlackScreen"
+            gui.IgnoreGuiInset = true
+            gui.ResetOnSpawn = false
+            gui.DisplayOrder = 10000
+            gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+            local cover = Instance.new("Frame")
+            cover.Size = UDim2.fromScale(1, 1)
+            cover.BackgroundColor3 = Color3.new(0, 0, 0)
+            cover.BorderSizePixel = 0
+            cover.Parent = gui
+
+            local exit = Instance.new("TextButton")
+            exit.AnchorPoint = Vector2.new(1, 0)
+            exit.Position = UDim2.new(1, -16, 0, 16)
+            exit.Size = UDim2.fromOffset(170, 36)
+            exit.BackgroundColor3 = Color3.fromRGB(32, 32, 38)
+            exit.TextColor3 = Color3.new(1, 1, 1)
+            exit.Font = Enum.Font.GothamMedium
+            exit.TextSize = 13
+            exit.Text = "Show game (F8)"
+            exit.Parent = cover
+            exit.MouseButton1Click:Connect(function()
+                self:SetBlackScreen(false)
+            end)
+            self.BlackScreenGui = gui
+        end
+        pcall(function() RunService:Set3dRenderingEnabled(false) end)
+    else
+        pcall(function() RunService:Set3dRenderingEnabled(true) end)
+        safeDestroy(self.BlackScreenGui)
+        self.BlackScreenGui = nil
+    end
+end
+
+function UIWController:SetBlackScreen(enabled)
+    self.BlackScreen = enabled == true
+    self:ApplyDisplaySettings()
+    self:WriteMeta()
+    if self.BlackScreen then self:ConfigureAutoExecute() end
+    if self.HUD then self.HUD:RefreshControls() end
 end
 
 ---------------------------------------------------------------------------
@@ -146,6 +264,22 @@ function UIWController:WriteMeta()
     meta.AutoLoad = self.AutoLoadConfig or ""
     meta.AutoExecute = self.AutoExecuteOnTeleport == true
     meta.ScriptPath = self:GetScriptPath()
+    meta.BlackScreen = self.BlackScreen == true
+    meta.RestoreFPSCap = tonumber(getgenv().UIW_OriginalFPSCap) or meta.RestoreFPSCap
+    meta.CarryEnabled = self.CarryEnabled == true
+    meta.CarryHostName = self.CarryHostName
+    meta.CarryAlts = self.CarryAlts
+    meta.CarryMode = self.CarryMode
+    meta.CarryFixedStage = self.CarryFixedStage
+    meta.CarryHardcore = self.CarryHardcore
+    meta.CarryRunStage = self.CarryRunStage
+    meta.HealerEnabled = self.HealerEnabled == true
+    meta.HealerTargetName = self.HealerTargetName
+    meta.HealerAutoEquip = self.HealerAutoEquip ~= false
+    meta.HealerAutoSpells = self.HealerAutoSpells == true
+    meta.HealerFollowDistance = self.HealerFollowDistance
+    meta.HealerUseRecordedPath = self.HealerUseRecordedPath == true
+    meta.ShowRecordedPath = self.ShowRecordedPath == true
     return ConfigStore.WriteMeta(meta)
 end
 
@@ -161,10 +295,30 @@ function UIWController:GetScriptPath()
 end
 
 function UIWController:InitConfigs()
-    pcall(ConfigStore.Migrate)
     local meta = ConfigStore.ReadMeta()
     self.AutoExecuteOnTeleport = meta.AutoExecute
     self.AutoLoadConfig = meta.AutoLoad
+    self.CarryRunStage = meta.CarryRunStage
+    self.HealerEnabled = meta.HealerEnabled
+    self.HealerTargetName = meta.HealerTargetName
+    self.HealerAutoEquip = meta.HealerAutoEquip
+    self.HealerAutoSpells = meta.HealerAutoSpells == true
+    self.HealerFollowDistance = 10
+    self.HealerUseRecordedPath = meta.HealerUseRecordedPath == true
+    self.ShowRecordedPath = meta.ShowRecordedPath == true
+    if meta.BlackScreen and meta.RestoreFPSCap then
+        getgenv().UIW_OriginalFPSCap = meta.RestoreFPSCap
+    end
+    if meta.BlackScreen ~= nil then
+        self.BlackScreen = meta.BlackScreen
+    end
+    self.CarryEnabled = meta.CarryEnabled
+    self.CarryHostName = meta.CarryHostName
+    self.CarryAlts = meta.CarryAlts
+    self.CarryMode = meta.CarryMode
+    self.CarryFixedStage = math.floor(math.clamp(meta.CarryFixedStage, 1, #CARRY_STAGES))
+    self.CarryHardcore = meta.CarryHardcore
+    self.CarryRunStage = meta.CarryRunStage
     if meta.AutoLoad ~= "" then
         local data = ConfigStore.Load(meta.AutoLoad)
         if data then
@@ -177,10 +331,21 @@ function UIWController:InitConfigs()
             self:WriteMeta()
         end
     end
+    if meta.BlackScreen ~= nil then
+        self.BlackScreen = meta.BlackScreen
+    end
 end
 
 function UIWController:ListConfigs()
     return ConfigStore.List()
+end
+
+function UIWController:ImportLegacyConfigs()
+    local copied = ConfigStore.ImportLegacy()
+    self:Notify(copied > 0 and ("Imported " .. copied .. " old config(s) for this account")
+        or "No old configs to import", copied > 0 and "success" or "info")
+    if self.HUD then self.HUD:RefreshConfigs() end
+    return copied
 end
 
 function UIWController:SaveConfig(name)
@@ -199,6 +364,7 @@ function UIWController:LoadConfig(name)
     local ok = data ~= nil and self:ApplySettings(data)
     if ok then
         self.ActiveConfig = name
+        self:WriteMeta()
     end
     self:Notify(ok and ("Loaded config \"" .. name .. "\"") or message, ok and "success" or "error")
     if self.HUD then self.HUD:RefreshConfigs() end
@@ -264,6 +430,7 @@ end
 
 function UIWController:ResetSettings()
     self:ApplySettings(DEFAULT_SETTINGS)
+    self:WriteMeta()
     self:Notify("Switches and sliders reset to defaults (saved configs kept)", "info")
     if self.HUD then self.HUD:RefreshConfigs() end
 end
@@ -282,8 +449,8 @@ end
 
 ---------------------------------------------------------------------------
 -- Auto execute: the executor runs this code once after the next teleport.
--- It re-reads uiw_meta.json at that moment, so turning the switch off later
--- still stops it, and it loads the script file named in the meta file.
+-- It re-reads this account's meta file then, so disabling Auto Execute and
+-- Black Screen later stops it. Black Screen queues a continuation on its own.
 ---------------------------------------------------------------------------
 local AUTO_EXECUTE_CODE = [==[
 if getgenv().UIW_AUTOEXEC_STARTED then
@@ -300,9 +467,13 @@ task.spawn(function()
         return ok and result == true
     end
     local okMeta, meta = pcall(function()
-        return HttpService:JSONDecode(readfile("UIW/uiw_meta.json"))
+        local userId = game:GetService("Players").LocalPlayer.UserId
+        return HttpService:JSONDecode(readfile("UIW/accounts/" .. tostring(userId) .. "/uiw_meta.json"))
     end)
-    if not okMeta or type(meta) ~= "table" or meta.AutoExecute ~= true then
+    if not okMeta or type(meta) ~= "table"
+        or (meta.AutoExecute ~= true and meta.BlackScreen ~= true
+            and meta.CarryEnabled ~= true and meta.HealerEnabled ~= true)
+    then
         return
     end
     task.wait(1)
@@ -330,7 +501,9 @@ end)
 ]==]
 
 function UIWController:ConfigureAutoExecute(announce)
-    if not self.AutoExecuteOnTeleport then
+    if not self.AutoExecuteOnTeleport and not self.BlackScreen
+        and not self.CarryEnabled and not self.HealerEnabled
+    then
         return false
     end
 
@@ -1526,6 +1699,13 @@ function UIWController:Step()
         self.PathESP:Hide()
     end
 
+    if self.ShowRecordedPath and type(self.GetRecordedPathVisual) == "function" then
+        local recorded, recordedIndex = self:GetRecordedPathVisual()
+        self.RecordedPathESP:Update(recorded, recordedIndex, self.Character.Root.Position)
+    else
+        self.RecordedPathESP:Hide()
+    end
+
     self:SelectTarget()
     self.TargetHealth:Update()
 
@@ -1546,7 +1726,17 @@ function UIWController:Step()
 
     local mechanicActive = mechanicGoal ~= nil
 
-    self.Dodger.ForceRouteMovement = mechanicActive
+    local verticalTransition = self.Route:HasPendingVerticalTransition()
+    if verticalTransition then
+        -- Continue past the stair crest instead of immediately switching to
+        -- boss orbiting at the final step. At normal speed this carries the
+        -- character roughly 20-30 studs onto the platform/edge.
+        self.VerticalRouteCommitUntil = now + 1.25
+    end
+    local navigationCommit = self.RecordedRouteTraversalActive == true
+        or now < (self.VerticalRouteCommitUntil or 0)
+
+    self.Dodger.ForceRouteMovement = mechanicActive or navigationCommit
     self.Dodger.ForcedRegionPart = nil
 
     if mechanicActive
@@ -1584,7 +1774,7 @@ function UIWController:Step()
 
     local recoveryFallback
 
-    if mechanicActive then
+    if mechanicActive or navigationCommit then
         recoveryFallback = routeDirection
     else
         recoveryFallback = self.Dodger:GetCombatPreferred(routeDirection, self.CurrentEnemy, targetYaw)
@@ -1593,6 +1783,7 @@ function UIWController:Step()
     local cooldownHold = false
     if self.AutoCombat
         and not mechanicActive
+        and not navigationCommit
         and not (self.CurrentEnemy and isBossEnemy(self.CurrentEnemy))
     then
         cooldownHold = self.Combat:ShouldHoldApproach(self.CurrentEnemy, self.Dodger.TravelMode)
@@ -1606,7 +1797,9 @@ function UIWController:Step()
     end
 
     local retreating = false
-    if self.AutoCombat and not mechanicActive and not targetBlocked and not self.InWaterStream then
+    if self.AutoCombat and not mechanicActive and not navigationCommit
+        and not targetBlocked and not self.InWaterStream
+    then
         retreating = self.Combat:ShouldRetreat(self.CurrentEnemy)
     else
         self.Combat.RetreatActive = false
@@ -1688,6 +1881,7 @@ function UIWController:Step()
     local attacked = false
     if self.AutoCombat then
         attacked = self.Combat:Update(self.CurrentEnemy)
+        self.Combat:TrySwing()
     end
 
     local overlaps = self.Hazards:GetCurrentOverlaps(yaw)
@@ -1787,6 +1981,11 @@ function UIWController:Step()
             "COMBAT",
             "engaging " .. (self.CurrentEnemy and self.CurrentEnemy.Model.Name or "enemy")
         )
+    elseif not self.Dungeon.HasSeenEnemies
+        and Workspace:FindFirstChild("dungeonName")
+        and Workspace.dungeonName.Value == "The Underworld"
+    then
+        self.HUD:SetStatus("PATHING", "waiting for the first wave")
     elseif self.Route.Computing and #self.Route.Waypoints == 0 then
         self.HUD:SetStatus("PATHING", "calculating initial dungeon route")
     elseif self.ProgressionOverridePart and self.ProgressionOverridePart.Parent then
@@ -1826,6 +2025,8 @@ end
 
 function UIWController:Start()
     self:RefreshWorld()
+    self.DisplayStarted = true
+    self:ApplyDisplaySettings()
 
     self.SelfAbilities:Start()
     self.Route:Start()
@@ -1996,7 +2197,13 @@ function UIWController:Start()
     end
 
     local function tryReplay()
-        if self.ReplayTriggered or not self.AutoRetryEnabled or self.Destroyed then
+        if self.ReplayTriggered or (not self.AutoRetryEnabled and not self.CarryEnabled) or self.Destroyed then
+            return
+        end
+        if self.CarryEnabled and string.lower(LocalPlayer.Name)
+            ~= string.lower(self.CarryHostName or "")
+        then
+            self.HUD:SetRetryStatus("carry: host controls replay", COLORS.Pathing)
             return
         end
 
@@ -2012,7 +2219,7 @@ function UIWController:Start()
         end
         local deadLongEnough = self.DeadSince and os.clock() - self.DeadSince >= CONFIG.ReplayOnDeathDelay
 
-        if not dungeonFinished() and not deadLongEnough then
+        if not dungeonFinished() and (self.CarryEnabled or not deadLongEnough) then
             self.CompletionSeenAt = nil
             if self.HUD and os.clock() - self.RunStartTime > 5 then
                 local fighting = readValue(
@@ -2027,8 +2234,22 @@ function UIWController:Start()
             return
         end
 
+
+        if self.CarryEnabled and not self:CarryRewardReady() then
+            self.HUD:SetRetryStatus("carry: waiting for reward and updated levels", COLORS.Pathing)
+            return
+        end
+
+        if self.CarryEnabled and self:CarryNeedsLobby() then
+            self.HUD:SetRetryStatus("carry: next level reached; returning to lobby", COLORS.Pathing)
+            return
+        end
+
         self.CompletionSeenAt = self.CompletionSeenAt or os.clock()
-        local remaining = CONFIG.ReplayDelay - (os.clock() - self.CompletionSeenAt)
+        -- Carry has only a short window before the completed server sends the
+        -- party back to the lobby. RewardReady already waited for level data.
+        local delay = self.CarryEnabled and 0.25 or CONFIG.ReplayDelay
+        local remaining = delay - (os.clock() - self.CompletionSeenAt)
 
         if remaining > 0 then
             if self.HUD then
@@ -2059,17 +2280,22 @@ function UIWController:Start()
 
         self.ReplayTriggered = true
         self.ReplayToken += 1
+        self.ReplaySourceJob = game.JobId
         local token = self.ReplayToken
 
         task.spawn(function()
-            for attempt = 1, CONFIG.ReplayAttempts do
-                if token ~= self.ReplayToken or not self.AutoRetryEnabled or self.Destroyed then
+            local attemptLimit = self.CarryEnabled and 1 or CONFIG.ReplayAttempts
+            for attempt = 1, attemptLimit do
+                if token ~= self.ReplayToken
+                    or (not self.AutoRetryEnabled and not self.CarryEnabled)
+                    or self.Destroyed or (self.CarryEnabled and self:CarryNeedsLobby())
+                then
                     return
                 end
 
                 if self.HUD then
                     self.HUD:SetRetryStatus(
-                        string.format("replaying %s • request %d/%d", data.dungeonName, attempt, CONFIG.ReplayAttempts),
+                        string.format("replaying %s • request %d/%d", data.dungeonName, attempt, attemptLimit),
                         COLORS.Pathing
                     )
                 end
@@ -2080,16 +2306,18 @@ function UIWController:Start()
                 if not ok then
                     warn("[UIW] replay request failed: " .. tostring(err))
                 end
+                if self.HUD then
+                    self.HUD:SetRetryStatus("replay sent • waiting for teleport", COLORS.Running)
+                end
 
-                task.wait(CONFIG.ReplayRetryInterval)
+                -- A successful request teleports the party asynchronously.
+                -- Multiple requests a few seconds apart can split the party
+                -- into different destination servers.
+                task.wait(self.CarryEnabled and 30 or 12)
+                if self.Destroyed or game.JobId ~= self.ReplaySourceJob then return end
             end
 
-            if self.HUD then
-                self.HUD:SetRetryStatus("replay sent • waiting for teleport", COLORS.Running)
-            end
-
-            -- Still here after a while? Allow another round.
-            task.wait(10)
+            -- Still in this server after all attempts? Allow another round.
             if token == self.ReplayToken then
                 self.ReplayTriggered = false
                 self.CompletionSeenAt = nil
@@ -2161,6 +2389,8 @@ function UIWController:Start()
 
         if input.KeyCode == Enum.KeyCode.RightShift then
             self.HUD:Toggle()
+        elseif input.KeyCode == Enum.KeyCode.F8 and self.BlackScreen then
+            self:SetBlackScreen(false)
         end
     end))
 
@@ -2189,6 +2419,15 @@ function UIWController:Destroy()
 
     self.Destroyed = true
 
+    local unwedgeCleanup = getgenv().UIW_UnwedgeCleanup
+    if type(unwedgeCleanup) == "function" then
+        pcall(unwedgeCleanup)
+    end
+
+    self.BlackScreen = false
+    self.FPSLimitEnabled = false
+    self:ApplyDisplaySettings()
+
     self:ClearDeathConnection()
 
     self.Maid:Clean()
@@ -2197,6 +2436,7 @@ function UIWController:Destroy()
     self.Route:Destroy()
     self.ESP:Destroy()
     self.PathESP:Destroy()
+    self.RecordedPathESP:Destroy()
     self.TacticalDisplay:Destroy()
     self.TargetHealth:Destroy()
     self.HUD:Destroy()
@@ -2213,4 +2453,3 @@ function UIWController:Destroy()
 
     log("Destroyed")
 end
-

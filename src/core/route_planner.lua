@@ -29,6 +29,7 @@ function RoutePlanner.new(characterService, geometry, hazards, dungeon)
         LastNoPathGoal = nil,
         ConsecutiveNoPath = 0,
         LastHeavyFallbackAt = 0,
+        Use3DGoalDistance = false,
         FrontierCacheGoal = nil,
         FrontierCacheResult = nil,
         FrontierCacheAt = 0,
@@ -1158,10 +1159,15 @@ function RoutePlanner:GetRawDirection(goal, reachDistance)
     end
 
     local root = character.Root
-    local goalDelta = flatten(goal - root.Position)
+    local fullGoalDelta = goal - root.Position
+    local goalDelta = flatten(fullGoalDelta)
     local effectiveReachDistance = tonumber(reachDistance) or CONFIG.PathGoalReachDistance
 
-    if goalDelta.Magnitude <= effectiveReachDistance then
+    -- Healer following needs true 3D distance for stairs, ladders and drops.
+    -- Combat navigation intentionally uses horizontal distance because enemy
+    -- root heights and animation offsets are not walkable destinations.
+    local reachDelta = self.Use3DGoalDistance and fullGoalDelta or goalDelta
+    if reachDelta.Magnitude <= effectiveReachDistance then
         self.CachedSafeDirection = Vector3.zero
         return Vector3.zero
     end
@@ -1229,3 +1235,15 @@ function RoutePlanner:GetSafeDirection(goal, targetYaw, reachDistance)
     return self:GetRawDirection(goal, reachDistance)
 end
 
+function RoutePlanner:HasPendingVerticalTransition()
+    if not self.CharacterService:IsAlive() or #self.Waypoints == 0 then return false end
+    local rootY = self.CharacterService.Root.Position.Y
+    local last = math.min(#self.Waypoints, self.WaypointIndex + 8)
+    for index = self.WaypointIndex, last do
+        local waypoint = self.Waypoints[index]
+        if waypoint and math.abs(waypoint.Position.Y - rootY) >= 3 then
+            return true
+        end
+    end
+    return false
+end
